@@ -1,9 +1,4 @@
-import type { WakeEnqueueInput, WakeEvent, WakeQueue } from "../../contract/index.js";
-import { todo } from "../todo.js";
-
-/** T5 and T6. Webhook delivery, retry, email fallback, and the round cap. */
-export const wakeQueue: WakeQueue = {
-  enqueue(_input: WakeEnqueueInput): WakeEvent[] {
-    return todo("wakeup");
-  },
-};
+export { buildWakeEmail, wakeEmailText, wireWakeEvent } from "./event.js";
+export { WAKE_EMAIL_TIMEOUT_MS } from "./smtp.js";
+export { createWakeService } from "./service.js";
+export type { WakeDeliveryResult, WakeService, WakeServiceOptions } from "./service.js";
