@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BlockCategory, BlockLocation, type ContentGuard } from "../../contract/index.js";
+import { AuditAction, AuditResult, BlockCategory, BlockLocation, NoticeKind, ReasonCode, blockNoticeMessage, type ContentGuard } from "../../contract/index.js";
 import { loadFixtures } from "../helpers/fixtures.js";
 import { send, startRoom } from "./server.js";
 
@@ -75,6 +75,17 @@ describe("posts and files", () => {
       expect(actions).toContain("block");
       expect(actions).not.toContain("post");
       expect(room.wakes.calls).toEqual([]);
+      const notices = room.db
+        .prepare("SELECT owner_id, kind, category, location, message FROM notices")
+        .all() as { owner_id: string; kind: string; category: string; location: string; message: string }[];
+      const told = blockNoticeMessage({
+        roomId,
+        kind: "message",
+        category: BlockCategory.Name,
+        location: BlockLocation.Text,
+      });
+      expect(notices).toEqual([{ owner_id: "O1", kind: "block", category: "name", location: "text", message: told }]);
+      expect(told).not.toContain(text);
     } finally {
       await room.stop();
     }
@@ -118,6 +129,45 @@ describe("posts and files", () => {
       const mismatch = await send(room.baseUrl, "GET", `/rooms/${roomId}/feed?as=A2`, a1);
       expect(mismatch.status).toBe(403);
       expect(room.audit.all().some((row) => row.action === "read" && row.result === "refused")).toBe(true);
+    } finally {
+      await room.stop();
+    }
+  });
+
+  it("stops waking after 3 rounds and tells every owner in the room", async () => {
+    const room = await startRoom();
+    try {
+      const messages = loadFixtures().normalMessages;
+      const { roomId, a1, a2 } = await twoMembers(room);
+      const rounds: string[] = [];
+      let replyToId: string | undefined;
+      for (let i = 0; i < 4; i++) {
+        const token = i % 2 === 0 ? a1 : a2;
+        const body: { text: string; replyToId?: string } = { text: messages[i] ?? "" };
+        if (replyToId) body.replyToId = replyToId;
+        const posted = await send(room.baseUrl, "POST", `/rooms/${roomId}/posts`, token, body);
+        expect(posted.status).toBe(201);
+        const post = (posted.body as { post: { id: string; round: number } }).post;
+        expect(post.round).toBe(i + 1);
+        rounds.push(post.id);
+        replyToId = post.id;
+      }
+      expect(room.wakes.calls.map((call) => call.round)).toEqual([1, 2, 3]);
+      const stops = room.audit.all().filter((row) => row.action === AuditAction.LoopStop);
+      expect(stops).toHaveLength(1);
+      expect(stops[0]).toMatchObject({
+        agentId: "A2",
+        ownerId: "O2",
+        result: AuditResult.Ok,
+        detail: { reasonCode: ReasonCode.LoopCap, round: 4, itemId: rounds[3] },
+      });
+      const notices = room.db
+        .prepare("SELECT owner_id, kind FROM notices WHERE room_id = ? ORDER BY owner_id")
+        .all(roomId) as { owner_id: string; kind: string }[];
+      expect(notices).toEqual([
+        { owner_id: "O1", kind: NoticeKind.LoopStop },
+        { owner_id: "O2", kind: NoticeKind.LoopStop },
+      ]);
     } finally {
       await room.stop();
     }

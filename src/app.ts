@@ -7,18 +7,21 @@ import {
   type Clock,
   type ContentGuard,
   type HealthResponse,
+  type OwnerNotifier,
   type SharingDirectory,
   type TokenStore,
   type WakeQueue,
 } from "../contract/index.js";
 import { createAuditLog, registerLogRoute } from "./audit/index.js";
 import { createTokenStore } from "./auth/index.js";
-import { openDatabase } from "./db.js";
 import { guard } from "./guard/index.js";
+import { createOwnerNotifier, registerNoticeRoute } from "./notices/index.js";
 import type { RoomDeps } from "./room/deps.js";
 import { RoomHttpError } from "./room/http.js";
 import { registerRoomRoutes } from "./room/routes.js";
+import { closeDefaultRuntime, defaultRuntime } from "./runtime.js";
 import { createSharingDirectory } from "./sharing/index.js";
+import type { SmtpEndpoint } from "./wakeup/smtp.js";
 
 export interface BuildAppOptions {
   db?: Database.Database;
@@ -27,27 +30,44 @@ export interface BuildAppOptions {
   audit?: AuditLog;
   sharing?: SharingDirectory;
   guard?: ContentGuard;
+  notices?: OwnerNotifier;
   /**
    * Pass a queue to enqueue wakes after an accepted post or file.
-   * Omitted until the caller attaches the wake-up service.
+   * The no-argument app uses the wake-up service and delivers those wakes.
    */
   wakeQueue?: WakeQueue;
+  /** When set, accepted wakes are delivered. Ignored when `wakeQueue` is injected. */
+  deliverWake?: (wakeId: string) => Promise<void>;
+  /** `null` leaves email unconfigured. Omit it to read COMMONA_SMTP_HOST and COMMONA_SMTP_PORT. */
+  smtp?: SmtpEndpoint | null;
 }
 
-/** Room routes plus the audit log. The default database is `COMMONA_DB`, or memory when unset. */
+/**
+ * The no-argument app is what the harness starts. It opens COMMONA_DB (or memory),
+ * wires auth, audit, sharing, the name block, notices, and wake-up, and delivers
+ * to the webhook URLs stored on the agents.
+ */
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
-  const ownsDb = options.db === undefined;
-  const db = options.db ?? openDatabase(process.env.COMMONA_DB ?? ":memory:");
-  const clock = options.clock ?? systemClock;
-  const audit = options.audit ?? createAuditLog(db, clock);
+  const shared = options.db === undefined ? defaultRuntime() : undefined;
+  const db = options.db ?? shared!.db;
+  const clock = options.clock ?? shared?.clock ?? systemClock;
+  const audit = options.audit ?? shared?.audit ?? createAuditLog(db, clock);
+  const tokens = options.tokens ?? shared?.tokens ?? createTokenStore(db);
+  const notices = options.notices ?? shared?.notices ?? createOwnerNotifier(db, clock);
+  const smtp = resolveSmtp(options, shared?.smtp);
+  const wakeQueue = options.wakeQueue ?? shared?.wake;
+  const deliverWake = options.wakeQueue ? options.deliverWake : shared ? deliverWith(shared.wake) : options.deliverWake;
   const deps: RoomDeps = {
     db,
     clock,
-    tokens: options.tokens ?? createTokenStore(db),
+    tokens,
     audit,
-    sharing: options.sharing ?? createSharingDirectory(db),
-    guard: options.guard ?? guard,
-    ...(options.wakeQueue ? { wakeQueue: options.wakeQueue } : {}),
+    sharing: options.sharing ?? shared?.sharing ?? createSharingDirectory(db),
+    guard: options.guard ?? shared?.guard ?? guard,
+    notices,
+    ...(wakeQueue ? { wakeQueue } : {}),
+    ...(deliverWake ? { deliverWake } : {}),
+    ...(smtp ? { smtp } : {}),
   };
   const app = Fastify({
     logger: false,
@@ -68,12 +88,23 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.get("/health", async (): Promise<HealthResponse> => ({ ok: true, service: "commona" }));
   registerRoomRoutes(app, deps);
   registerLogRoute(app, { db, audit, clock });
-  if (ownsDb) {
+  registerNoticeRoute(app, { db, tokens, audit, clock });
+  if (shared) {
     app.addHook("onClose", async () => {
-      db.close();
+      closeDefaultRuntime();
     });
   }
   return app;
+}
+
+function resolveSmtp(options: BuildAppOptions, shared: SmtpEndpoint | undefined): SmtpEndpoint | undefined {
+  if (options.smtp === null) return undefined;
+  if (options.smtp) return options.smtp;
+  return shared;
+}
+
+function deliverWith(wake: { deliver(wakeId: string): Promise<unknown> }): (wakeId: string) => Promise<void> {
+  return (wakeId) => wake.deliver(wakeId).then(() => undefined);
 }
 
 function statusOf(error: unknown): number {

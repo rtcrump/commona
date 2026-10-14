@@ -27,6 +27,7 @@ import {
   type RoomFile,
   type UploadFileResponse,
 } from "../../contract/index.js";
+import { recordBlock, recordLoopStop } from "../notices/events.js";
 import { nowStamp, refuse, requireMember, requireRoom } from "./access.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
@@ -127,6 +128,16 @@ export function createPost(
         round,
       },
     });
+    if (block) {
+      recordBlock(deps, {
+        roomId,
+        ownerId: principal.ownerId,
+        kind: "message",
+        category: block.category,
+        location: block.location,
+        itemId: id,
+      });
+    }
     return block ? { outcome: "held", post, block } : { outcome: "held", post };
   }
   deps.audit.append({
@@ -220,6 +231,16 @@ export function uploadFile(
         itemId: id,
       },
     });
+    if (block) {
+      recordBlock(deps, {
+        roomId,
+        ownerId: principal.ownerId,
+        kind: "file",
+        category: block.category,
+        location: block.location,
+        itemId: id,
+      });
+    }
     return block ? { outcome: "held", file, block } : { outcome: "held", file };
   }
   deps.audit.append({
@@ -369,8 +390,16 @@ function enqueueWake(
     round: number;
   },
 ): void {
-  if (!deps.wakeQueue || wakeSuppressed(input.round)) return;
-  deps.wakeQueue.enqueue(input);
+  if (wakeSuppressed(input.round)) {
+    recordLoopStop(deps, input);
+    return;
+  }
+  if (!deps.wakeQueue) return;
+  const events = deps.wakeQueue.enqueue(input);
+  if (!deps.deliverWake) return;
+  for (const event of events) {
+    void deps.deliverWake(event.wakeId).catch(() => undefined);
+  }
 }
 
 function visible(

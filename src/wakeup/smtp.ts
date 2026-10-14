@@ -47,8 +47,59 @@ function dotStuff(data: string): string {
 /**
  * Minimal SMTP client for the in-process sink. It does not relay off the configured host.
  */
+export interface PlainMail {
+  from: string;
+  to: string;
+  subject: string;
+  text: string;
+}
+
+/** A short owner mail. Block notices use this. Wake mail keeps its own headers. */
+export function formatPlainMail(mail: PlainMail): string {
+  const headers = [
+    `From: ${safeHeader(mail.from)}`,
+    `To: ${safeHeader(mail.to)}`,
+    `Subject: ${safeHeader(mail.subject)}`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=utf-8",
+    "Content-Transfer-Encoding: 8bit",
+  ];
+  const body = mail.text.replaceAll("\r\n", "\n").replaceAll("\n", "\r\n");
+  return `${headers.join("\r\n")}\r\n\r\n${body}`;
+}
+
+/**
+ * SMTP host and port for the process. The contract does not name them.
+ * Both must be set. A missing pair means email cannot be sent.
+ */
+export function smtpFromEnv(env: NodeJS.ProcessEnv = process.env): SmtpEndpoint | undefined {
+  const host = env.COMMONA_SMTP_HOST?.trim();
+  const portText = env.COMMONA_SMTP_PORT?.trim();
+  if (!host || !portText || !/^\d+$/.test(portText)) return undefined;
+  const port = Number(portText);
+  if (port < 1 || port > 65535) return undefined;
+  return { host, port };
+}
+
+export function sendPlainMail(
+  endpoint: SmtpEndpoint,
+  mail: PlainMail,
+  timeoutMs = WAKE_EMAIL_TIMEOUT_MS,
+): Promise<void> {
+  return deliverMail(endpoint, mail.from, mail.to, formatPlainMail(mail), timeoutMs);
+}
+
 export function sendSmtp(endpoint: SmtpEndpoint, email: WakeEmail, timeoutMs = WAKE_EMAIL_TIMEOUT_MS): Promise<void> {
-  const data = formatWakeMessage(email);
+  return deliverMail(endpoint, email.from, email.to, formatWakeMessage(email), timeoutMs);
+}
+
+function deliverMail(
+  endpoint: SmtpEndpoint,
+  from: string,
+  to: string,
+  data: string,
+  timeoutMs: number,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const socket: Socket = connect(endpoint.port, endpoint.host);
     let buffer = "";
@@ -95,12 +146,12 @@ export function sendSmtp(endpoint: SmtpEndpoint, email: WakeEmail, timeoutMs = W
         case "helo":
           if (code !== 250) return failCode("ehlo", code);
           step = "mail";
-          write(`MAIL FROM:<${email.from}>`);
+          write(`MAIL FROM:<${from}>`);
           return;
         case "mail":
           if (code !== 250) return failCode("mail", code);
           step = "rcpt";
-          write(`RCPT TO:<${email.to}>`);
+          write(`RCPT TO:<${to}>`);
           return;
         case "rcpt":
           if (code !== 250) return failCode("rcpt", code);
