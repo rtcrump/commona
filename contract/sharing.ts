@@ -1,5 +1,6 @@
 import type { AuthPrincipal } from "./auth.js";
 import { ReasonCode } from "./audit.js";
+import { ContractError } from "./errors.js";
 
 /**
  * What one owner lets another owner's agents see.
@@ -76,6 +77,16 @@ export function feedIncludes(args: {
   return sharingAllows(args.level, args.itemKind, args.viewerOwnerId, args.authorOwnerId);
 }
 
+/**
+ * `ensurePair` and `update` call this before any write.
+ * The same owner twice throws, and the caller writes nothing.
+ */
+export function assertDistinctSharingOwners(ownerA: string, ownerB: string): void {
+  if (ownerA === ownerB) {
+    throw new ContractError("sharing row requires two different owners");
+  }
+}
+
 export interface SharingRow {
   roomId: string;
   fromOwnerId: string;
@@ -100,12 +111,16 @@ export interface SharingDirectory {
    */
   level(roomId: string, fromOwnerId: string, toOwnerId: string): SharingLevel;
   /**
-   * Create both directions at None if they are absent.
-   * Never overwrite a row that already exists.
+   * Insert both directions at None when they are absent.
+   * Does not overwrite a row that already exists.
+   * When `ownerA` and `ownerB` are the same owner, throws {@link ContractError}
+   * and writes nothing. Call {@link assertDistinctSharingOwners} before the write.
    */
   ensurePair(roomId: string, ownerA: string, ownerB: string): void;
   /**
    * The only public write. There is no exported `put`.
+   * Calls {@link assertDistinctSharingOwners} before any write. The same owner
+   * twice throws {@link ContractError} and writes nothing.
    * An agent token is refused with `agent_cannot_change_sharing`, even when that
    * agent belongs to `fromOwnerId`. An owner token is allowed only when its id
    * is `fromOwnerId`; otherwise the reason is `not_owner`.

@@ -10,6 +10,7 @@ import {
   activityOnlyText,
   assertAuditAppend,
   assertDetail,
+  assertDistinctSharingOwners,
   feedIncludes,
   l1Matches,
   roundForPost,
@@ -48,13 +49,15 @@ describe("sharing contract", () => {
     expect(sharingAllows(SharingLevel.None, "file", "O1", "O1")).toBe(true);
     expect(sharingAllows("public", "file", "O2", "O1")).toBe(false);
     expect(sharingAllows("public", "message", "O2", "O1")).toBe(false);
-    expect(feedIncludes({
-      held: false,
-      level: "public",
-      itemKind: "file",
-      viewerOwnerId: "O2",
-      authorOwnerId: "O1",
-    })).toBe(false);
+    expect(
+      feedIncludes({
+        held: false,
+        level: "public",
+        itemKind: "file",
+        viewerOwnerId: "O2",
+        authorOwnerId: "O1",
+      }),
+    ).toBe(false);
   });
 
   it("keeps held items out of the feed and sends activity-only wakes at None", () => {
@@ -76,6 +79,11 @@ describe("sharing contract", () => {
       }),
     ).toBe("activity_only");
     expect(activityOnlyText("room_1")).toBe("New activity in room room_1.");
+  });
+
+  it("rejects pairing an owner with itself", () => {
+    expect(() => assertDistinctSharingOwners("O1", "O1")).toThrow(/two different owners/);
+    expect(() => assertDistinctSharingOwners("O1", "O2")).not.toThrow();
   });
 });
 

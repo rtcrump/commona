@@ -25,6 +25,8 @@ A row is directional. `fromOwnerId` decides what `toOwnerId` may see. `level(roo
 
 `none` hides the other owner's messages and files. `messages` shows messages only. `messages_files` is the only level that shows files.
 
+`ensurePair` inserts both directions at `none` when two different owners are paired, and does not overwrite a row that already exists. The same owner twice throws `ContractError` and writes nothing.
+
 `SharingDirectory.update` is the only public write. There is no exported `put`. It accepts an owner token whose id is `fromOwnerId`. An agent token is refused with `agent_cannot_change_sharing`, including an agent of that owner. Another owner's token is refused with `not_owner`.
 
 The room route must audit the result. The sharing module does not write the log. A successful `update` is `setting_change` / `ok`, with `detail.level`, `detail.fromOwnerId`, and `detail.toOwnerId`, filed under the caller. A refusal is `setting_change_refused` / `refused` with the reason code from `update`. A thrown `ContractError` (the same owner twice, or a level outside the three values) is HTTP 400 and is not audited.
