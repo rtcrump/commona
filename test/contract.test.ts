@@ -5,11 +5,13 @@ import {
   AuditResult,
   DEFAULT_SHARING_LEVEL,
   GENESIS_PREV_HASH,
+  DOB_DATE_SHAPES,
   NAME_BLOCK_KNOWN_LIMIT,
   SharingLevel,
   activityOnlyText,
   assertAuditAppend,
   assertDetail,
+  assertDistinctSharingOwners,
   feedIncludes,
   l1Matches,
   roundForPost,
@@ -44,7 +46,19 @@ describe("sharing contract", () => {
     expect(sharingAllows(SharingLevel.Messages, "message", "O2", "O1")).toBe(true);
     expect(sharingAllows(SharingLevel.Messages, "file", "O2", "O1")).toBe(false);
     expect(sharingAllows(SharingLevel.MessagesFiles, "file", "O2", "O1")).toBe(true);
+    expect(sharingAllows(SharingLevel.MessagesFiles, "message", "O2", "O1")).toBe(true);
     expect(sharingAllows(SharingLevel.None, "file", "O1", "O1")).toBe(true);
+    expect(sharingAllows("public", "file", "O2", "O1")).toBe(false);
+    expect(sharingAllows("public", "message", "O2", "O1")).toBe(false);
+    expect(
+      feedIncludes({
+        held: false,
+        level: "public",
+        itemKind: "file",
+        viewerOwnerId: "O2",
+        authorOwnerId: "O1",
+      }),
+    ).toBe(false);
   });
 
   it("keeps held items out of the feed and sends activity-only wakes at None", () => {
@@ -66,6 +80,11 @@ describe("sharing contract", () => {
       }),
     ).toBe("activity_only");
     expect(activityOnlyText("room_1")).toBe("New activity in room room_1.");
+  });
+
+  it("rejects pairing an owner with itself", () => {
+    expect(() => assertDistinctSharingOwners("O1", "O1")).toThrow(/two different owners/);
+    expect(() => assertDistinctSharingOwners("O1", "O2")).not.toThrow();
   });
 });
 
@@ -138,5 +157,10 @@ describe("acceptance catalogue", () => {
     expect(ACCEPTANCE_TESTS).toHaveLength(19);
     expect(new Set(ACCEPTANCE_TESTS.map((test) => test.id)).size).toBe(19);
     expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/Misspellings/);
+    expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/zero-width characters/);
+    expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/decode encodings/);
+    expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/fold homoglyphs/);
+    expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/known limit, not a new finding/);
+    expect(DOB_DATE_SHAPES).toContain("D/M/YYYY");
   });
 });

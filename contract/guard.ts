@@ -31,6 +31,13 @@ export const BLOCK_LOCATIONS = [
 /** Five digits, an optional space or hyphen, then four digits. */
 export const HEALTH_NUMBER_PATTERN = String.raw`\b\d{5}[- ]?\d{4}\b`;
 
+/**
+ * Date shapes the name-block task counts, when a cue is near the date.
+ * `D/M/YYYY` allows a single digit for the day or the month.
+ * `1/2/1980` and `01/02/1980` both count.
+ */
+export const DOB_DATE_SHAPES = ["YYYY-MM-DD", "D/M/YYYY", "Month D, YYYY"] as const;
+
 /** Case-insensitive cues. A date counts only when one of these sits near it. */
 export const DOB_CUES = ["dob", "d.o.b.", "date of birth", "born"] as const;
 
@@ -115,6 +122,9 @@ export interface ContentGuard {
  *
  * The name list is injected (default `fixtures/names.txt`). The guard has no switch
  * to turn it off.
+ *
+ * These steps do not strip zero-width characters, decode encodings, or fold
+ * homoglyphs. That gap is {@link NAME_BLOCK_KNOWN_LIMIT}, not a detector to add in M1.
  */
 export const NAME_MATCH_STEPS = [
   "nfkc",
@@ -125,7 +135,7 @@ export const NAME_MATCH_STEPS = [
 ] as const;
 
 export const NAME_BLOCK_KNOWN_LIMIT =
-  "Misspellings and names that are not on the list may get through. Image and PDF bytes are not scanned in M1. File names and file details are still checked.";
+  "Misspellings and names that are not on the list may get through. Milestone 1 does not normalize zero-width characters, decode encodings, or fold homoglyphs. A bypass that only uses those is a known limit, not a new finding. Image and PDF bytes are not scanned in M1. File names and file details are still checked.";
 
 /** The block has no off switch in M1. */
 export const GUARD_ALWAYS_ON = true;

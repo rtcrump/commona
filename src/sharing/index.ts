@@ -1,8 +1,9 @@
 import {
   DEFAULT_SHARING_LEVEL,
+  type AuthPrincipal,
   type SharingDirectory,
   type SharingLevel,
-  type SharingRow,
+  type SharingUpdateResult,
 } from "../../contract/index.js";
 import { todo } from "../todo.js";
 
@@ -16,12 +17,13 @@ export const sharing: SharingDirectory = {
   ensurePair(_roomId: string, _ownerA: string, _ownerB: string): void {
     todo("sharing");
   },
-  put(
+  update(
+    _principal: AuthPrincipal,
     _roomId: string,
     _fromOwnerId: string,
     _toOwnerId: string,
     _level: SharingLevel,
-  ): SharingRow {
+  ): SharingUpdateResult {
     return todo("sharing");
   },
 };

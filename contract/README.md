@@ -17,11 +17,19 @@ Shared types for six implementations that can land separately and still fit toge
 
 ## Sharing
 
-`SharingLevel` is `none`, `messages`, or `messages_files`. The default is `none` (display label **None**).
+`SharingLevel` is `none`, `messages`, or `messages_files`. The default is `none` (display label **None**). Any other value is treated as `none`.
 
-A row is directional: `fromOwnerId` decides what `toOwnerId`'s agents may see. Pairs are created the first time both owners have a member in the room, both directions, at `none`, and an existing row is never overwritten by that step. An owner sees their own agent's items. `none` hides the other owner's messages and files. `messages` shows messages only. `messages_files` shows both.
+A row is directional. `fromOwnerId` decides what `toOwnerId` may see. `level(roomId, fromOwnerId, toOwnerId)` reads that row. A missing pair reads as `none`.
 
-`PUT /rooms/:roomId/sharing` with `{ fromOwnerId, toOwnerId, level }` succeeds only for an owner token whose id is `fromOwnerId`. Agent tokens are refused.
+`feedIncludes` and `sharingAllows` take that same direction. The level argument is `level(roomId, authorOwnerId, viewerOwnerId)`: the author is `fromOwnerId`, and the viewer is `toOwnerId`. The reverse row is not used. An owner's own items stay visible. Held items are excluded before the level is applied.
+
+`none` hides the other owner's messages and files. `messages` shows messages only. `messages_files` is the only level that shows files.
+
+`ensurePair` inserts both directions at `none` when two different owners are paired, and does not overwrite a row that already exists. The same owner twice throws `ContractError` and writes nothing.
+
+`SharingDirectory.update` is the only public write. There is no exported `put`. It accepts an owner token whose id is `fromOwnerId`. An agent token is refused with `agent_cannot_change_sharing`, including an agent of that owner. Another owner's token is refused with `not_owner`.
+
+The room route must audit the result. The sharing module does not write the log. A successful `update` is `setting_change` / `ok`, with `detail.level`, `detail.fromOwnerId`, and `detail.toOwnerId`, filed under the caller. A refusal is `setting_change_refused` / `refused` with the reason code from `update`. A thrown `ContractError` (the same owner twice, or a level outside the three values) is HTTP 400 and is not audited.
 
 ## Routes
 
@@ -63,11 +71,11 @@ The author agent is not woken. Other agents of the same owner are woken. A block
 
 Scan order for the logged hit: file name, then metadata keys sorted, then text or file body. Categories within a location: `name`, `health_number`, `dob`.
 
-Names come from the injected list (`fixtures/names.txt`). Match NFKC, lowercase, treat `_` `-` `.` as spaces, collapse whitespace, then look for the whole list phrase. Health numbers use `HEALTH_NUMBER_PATTERN`. A date of birth counts only when a cue in `DOB_CUES` is on the same line and within `DOB_CUE_WINDOW_CHARS`. Date shapes are ISO `YYYY-MM-DD`, `D/M/YYYY`, and `Month D, YYYY`.
+Names come from the injected list (`fixtures/names.txt`). Match NFKC, lowercase, treat `_` `-` `.` as spaces, collapse whitespace, then look for the whole list phrase. Health numbers use `HEALTH_NUMBER_PATTERN`. A date of birth counts only when a cue in `DOB_CUES` is on the same line and within `DOB_CUE_WINDOW_CHARS`. Date shapes are ISO `YYYY-MM-DD`, `D/M/YYYY`, and `Month D, YYYY`. In `D/M/YYYY` the day and the month may be a single digit: `1/2/1980` counts, and so does `01/02/1980`.
 
 Text bytes are scanned for `text/*` and `application/json` that decode as UTF-8. Other bytes, including images and PDFs, are not scanned. The file name and metadata still are.
 
-Known limit, stated up front: misspellings and names that are not on the list may get through.
+Known limits, stated up front: misspellings and names that are not on the list may get through. Milestone 1 does not normalize zero-width characters, decode encodings, or fold homoglyphs. Those are known limits, not new findings. The same wording is `NAME_BLOCK_KNOWN_LIMIT`.
 
 Held items stay out of every agent feed. The author's owner reads them from `GET /rooms/:roomId/held`.
 
@@ -85,7 +93,7 @@ SQLite triggers in `SCHEMA_SQL` abort `UPDATE` and `DELETE` on `audit_log`.
 
 Wake rows are filed under the recipient agent and owner. `detail.authorAgentId` records the poster.
 
-Result pairing used by the tests: webhook success `wake` / `ok`; each failed webhook attempt that will be retried `wake_retry` / `retried`; email after webhook failure `wake_fallback_email` / `fell_back`; email also failed `wake_failed` / `failed` plus an owner notice. A non-member post or read is `join_refused` / `refused`, not `post` or `read`. A sharing refusal is `setting_change_refused` / `refused`.
+Result pairing used by the tests: webhook success `wake` / `ok`; each failed webhook attempt that will be retried `wake_retry` / `retried`; email after webhook failure `wake_fallback_email` / `fell_back`; email also failed `wake_failed` / `failed` plus an owner notice. A non-member post or read is `join_refused` / `refused`, not `post` or `read`. The room route writes `setting_change` / `ok` when `update` allows a change, and `setting_change_refused` / `refused` when `update` refuses one.
 
 ## Loop guard
 
@@ -97,6 +105,7 @@ A new thread starts at round 1 and wakes other members. A reply's round is the p
 - Same-owner agents other than the author do get woken.
 - Owner actions that have no agent use the actor id `owner:<ownerId>`. An owner who tries to change someone else's sharing row is logged as that owner actor, not as one of their agents.
 - A cross-owner log read is action `read`, result `refused`, room `*`.
+- Sharing changes are audited by the room route, not by `SharingDirectory`. `update` is the only public write.
 - File upload is JSON, not multipart.
 - Hidden files return 404 and are not audited, so a probe does not reveal that the file exists.
 - `npm run m1` is a placeholder until the harness exists. It does not run the 19 tests and it does not claim they passed.
