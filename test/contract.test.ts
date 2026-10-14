@@ -44,7 +44,17 @@ describe("sharing contract", () => {
     expect(sharingAllows(SharingLevel.Messages, "message", "O2", "O1")).toBe(true);
     expect(sharingAllows(SharingLevel.Messages, "file", "O2", "O1")).toBe(false);
     expect(sharingAllows(SharingLevel.MessagesFiles, "file", "O2", "O1")).toBe(true);
+    expect(sharingAllows(SharingLevel.MessagesFiles, "message", "O2", "O1")).toBe(true);
     expect(sharingAllows(SharingLevel.None, "file", "O1", "O1")).toBe(true);
+    expect(sharingAllows("public", "file", "O2", "O1")).toBe(false);
+    expect(sharingAllows("public", "message", "O2", "O1")).toBe(false);
+    expect(feedIncludes({
+      held: false,
+      level: "public",
+      itemKind: "file",
+      viewerOwnerId: "O2",
+      authorOwnerId: "O1",
+    })).toBe(false);
   });
 
   it("keeps held items out of the feed and sends activity-only wakes at None", () => {

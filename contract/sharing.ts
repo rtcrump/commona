@@ -37,23 +37,27 @@ export function isSharingLevel(value: unknown): value is SharingLevel {
  * Whether a viewer may see an item of this kind.
  * An owner's own items are always visible at this layer. Held items are excluded
  * earlier, by {@link feedIncludes}.
+ *
+ * Fails closed. `messages` grants messages only. `messages_files` is the only
+ * value that grants files. `none` and any other value grant nothing.
  */
 export function sharingAllows(
-  level: SharingLevel,
+  level: string,
   itemKind: ItemKind,
   viewerOwnerId: string,
   authorOwnerId: string,
 ): boolean {
   if (viewerOwnerId === authorOwnerId) return true;
-  if (level === SharingLevel.None) return false;
   if (level === SharingLevel.Messages) return itemKind === "message";
-  return true;
+  if (level === SharingLevel.MessagesFiles) return true;
+  return false;
 }
 
 /** Room feed rule: held items are hidden from every agent, including the author. */
 export function feedIncludes(args: {
   held: boolean;
-  level: SharingLevel;
+  /** Grant from the author toward the viewer. Unknown values fail closed. */
+  level: string;
   itemKind: ItemKind;
   viewerOwnerId: string;
   authorOwnerId: string;
