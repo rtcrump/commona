@@ -12,8 +12,6 @@ import {
   ownerActorId,
   ReasonCode,
   roundForPost,
-  TEXT_MEDIA_TYPE_PREFIX,
-  TEXT_MEDIA_TYPES,
   wakeSuppressed,
   type AuthPrincipal,
   type CreatePostResponse,
@@ -27,6 +25,7 @@ import {
   type RoomFile,
   type UploadFileResponse,
 } from "../../contract/index.js";
+import { decodeUtf8Text } from "../guard/index.js";
 import { recordBlock, recordLoopStop } from "../notices/events.js";
 import { nowStamp, refuse, requireMember, requireRoom } from "./access.js";
 import type { RoomDeps } from "./deps.js";
@@ -74,7 +73,7 @@ export function createPost(
   if (principal.kind !== "agent") throw RoomHttpError.forbidden();
   const parent = resolveParent(deps, roomId, request.replyToId);
   const id = newId("post");
-  const round = roundForPost({ authorKind: "agent", parentRound: parent?.round ?? null });
+  const round = roundAfterOtherAgent(deps, roomId, principal.agentId);
   const threadId = parent?.threadId ?? id;
   const createdAt = nowStamp(deps);
   const decision = deps.guard.check({ kind: "message", text: request.text });
@@ -171,7 +170,7 @@ export function uploadFile(
   if (principal.kind !== "agent") throw RoomHttpError.forbidden();
   const bytes = decodeBase64(request.contentBase64);
   const metadata = request.metadata;
-  const text = scannedText(request.mediaType, bytes);
+  const text = decodeUtf8Text(bytes);
   const decision = deps.guard.check({
     kind: "file",
     fileName: request.filename,
@@ -499,6 +498,19 @@ function parsePost(body: unknown): { text: string; replyToId: string | null } {
   return { text: body.text, replyToId: typeof reply === "string" ? reply : null };
 }
 
+/** One more than the latest accepted post by a different agent. The reply flag is not used. */
+function roundAfterOtherAgent(deps: RoomDeps, roomId: string, authorAgentId: string): number {
+  const prior = deps.db
+    .prepare(
+      `SELECT round FROM posts
+       WHERE room_id = ? AND held = 0 AND author_agent_id <> ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+    )
+    .get(roomId, authorAgentId) as { round: number } | undefined;
+  return roundForPost({ authorKind: "agent", parentRound: prior?.round ?? null });
+}
+
 function resolveParent(
   deps: RoomDeps,
   roomId: string,
@@ -554,17 +566,6 @@ function decodeBase64(value: string): Buffer {
   const bytes = Buffer.from(value, "base64");
   if (bytes.length > MAX_FILE_BYTES) throw RoomHttpError.badRequest();
   return bytes;
-}
-
-function scannedText(mediaType: string, bytes: Buffer): string | undefined {
-  const base = mediaType.split(";")[0]?.trim().toLowerCase() ?? "";
-  const textual = base.startsWith(TEXT_MEDIA_TYPE_PREFIX) || (TEXT_MEDIA_TYPES as readonly string[]).includes(base);
-  if (!textual) return undefined;
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    return undefined;
-  }
 }
 
 function asBuffer(value: Buffer | Uint8Array): Buffer {

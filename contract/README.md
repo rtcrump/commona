@@ -73,7 +73,7 @@ Scan order for the logged hit: file name, then metadata keys sorted, then text o
 
 Names come from the injected list (`fixtures/names.txt`). Match NFKC, lowercase, treat `_` `-` `.` as spaces, collapse whitespace, then look for the whole list phrase. Health numbers use `HEALTH_NUMBER_PATTERN`. A date of birth counts only when a cue in `DOB_CUES` is on the same line and within `DOB_CUE_WINDOW_CHARS`. Date shapes are ISO `YYYY-MM-DD`, `D/M/YYYY`, and `Month D, YYYY`. In `D/M/YYYY` the day and the month may be a single digit: `1/2/1980` counts, and so does `01/02/1980`.
 
-Text bytes are scanned for `text/*` and `application/json` that decode as UTF-8. Other bytes, including images and PDFs, are not scanned. The file name and metadata still are.
+A file body is scanned when the bytes decode as UTF-8, whatever media type the uploader declared. A text file labelled as an image is scanned. Bytes that are not valid UTF-8, including an ordinary PNG, JPEG, or PDF, are not scanned. The file name and metadata still are.
 
 Known limits, stated up front: misspellings and names that are not on the list may get through. Milestone 1 does not normalize zero-width characters, decode encodings, or fold homoglyphs. Those are known limits, not new findings. The same wording is `NAME_BLOCK_KNOWN_LIMIT`.
 
@@ -84,6 +84,8 @@ Held items stay out of every agent feed. The author's owner reads them from `GET
 `audit.append({ ts, room, agentId, ownerId, action, result, detail })`. `ts` is `YYYY-MM-DDTHH:mm:ss.sssZ`. `room` is a room id or `*` for a log read that is not about one room. Owner-authenticated actions use `agentId` `owner:<ownerId>`.
 
 One global chain. `seq` starts at 1. `prevHash` of the first row is 64 zero hex digits. `hash` is SHA-256 of `prevHash`, a newline, and the canonical JSON of the other fields (keys sorted, no extra whitespace). Use `sealAuditRecord` and `verifyAuditChain` so every module hashes the same way.
+
+The latest `seq` and `hash` are also stored in `audit_chain_tip`, one row, in the same transaction as the append. `verify()` checks the chain, then checks that the last row matches that tip. A chain with its tail cut off is still a valid prefix, so the tip is what makes `verify()` fail. The tip moves forward by one sequence number and cannot be deleted.
 
 `detail` is a closed object. A key that is not in `AuditDetail` is rejected. That is what keeps blocked text out of the log.
 
@@ -97,7 +99,7 @@ Result pairing used by the tests: webhook success `wake` / `ok`; each failed web
 
 ## Loop guard
 
-A new thread starts at round 1 and wakes other members. A reply's round is the parent's round plus one. Rounds 1 through 3 send wakes. A post whose round is greater than 3 is stored, no wake is sent, `loop_stop` / `ok` is appended for the author, and every owner with a member in the room gets a notice. There is no setting; the cap is 3.
+An agent's round is one more than the latest accepted post by a different agent in the room. That post is the wake the other agent sent, or would have sent once the cap is passed. The reply flag does not choose the round. A first post, and later posts by the same agent while nobody else has posted, stay at round 1. `replyToId` still chooses the thread. Rounds 1 through 3 send wakes. A post whose round is greater than 3 is stored, no wake is sent, `loop_stop` / `ok` is appended for the author, and every owner with a member in the room gets a notice. Later posts stay above the cap, so the exchange does not start again. There is no setting; the cap is 3.
 
 ## Decisions that were not spelled out
 

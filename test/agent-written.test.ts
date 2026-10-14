@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyTrailers,
   collect,
+  hasGitHistory,
   parseLog,
   percent,
   readBadge,
@@ -71,16 +72,31 @@ describe("agent-written stats", () => {
     }
   });
 
-  it("matches the committed README badge", () => {
+  it("matches the committed README badge", (context) => {
+    if (!hasGitHistory()) {
+      context.skip("no git history (for example, a zip download)");
+      return;
+    }
     const stats = collect();
     expect(readBadge(readFileSync("README.md", "utf8"))).toBe(renderBadge(stats));
+  });
+
+  it("treats a folder with no commits as having no git history", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "commona-stats-empty-"));
+    try {
+      expect(hasGitHistory(cwd)).toBe(false);
+      git(cwd, ["init"]);
+      expect(hasGitHistory(cwd)).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
 
 function git(cwd: string, args: string[]): void {
   execFileSync(
     "git",
-    ["-C", cwd, "-c", "user.name=Stats Tester", "-c", "user.email=stats@example.test", "-c", "safe.directory=*", ...args],
-    { encoding: "utf8" },
+    ["-C", cwd, "-c", "user.name=Stats Tester", "-c", "user.email=stats@example.test", "-c", "init.defaultBranch=main", "-c", "safe.directory=*", ...args],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
 }

@@ -103,6 +103,25 @@ function assertAppendOnlyTriggers(db: Database.Database): void {
   if (!names.has("audit_log_no_update") || !names.has("audit_log_no_delete")) {
     throw new Error("audit log is missing append-only triggers");
   }
+  const tipRows = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'audit_chain_tip'",
+    )
+    .all() as { name: string }[];
+  const tipNames = new Set(tipRows.map((row) => row.name));
+  if (!tipNames.has("audit_chain_tip_no_delete") || !tipNames.has("audit_chain_tip_forward_only")) {
+    throw new Error("audit log is missing chain tip triggers");
+  }
+}
+
+/** Stores the latest seq and hash. The first append inserts the row; later appends move it forward by one. */
+export function recordChainTip(db: Database.Database, seq: number, hash: string): void {
+  const existing = db.prepare("SELECT seq FROM audit_chain_tip WHERE id = 1").get() as { seq: number } | undefined;
+  if (!existing) {
+    db.prepare("INSERT INTO audit_chain_tip (id, seq, hash) VALUES (1, ?, ?)").run(seq, hash);
+    return;
+  }
+  db.prepare("UPDATE audit_chain_tip SET seq = ?, hash = ? WHERE id = 1").run(seq, hash);
 }
 
 /**
@@ -126,6 +145,7 @@ export function createAuditLog(db: Database.Database, clock: Clock = systemClock
   const allRows = db.prepare(
     `SELECT ${SELECT_COLUMNS} FROM audit_log ORDER BY seq ASC`,
   );
+  const tipRow = db.prepare("SELECT seq, hash FROM audit_chain_tip WHERE id = 1");
 
   const write = db.transaction((input: AuditAppendInput): AuditRecord => {
     const tip = latest.get() as ChainTip | undefined;
@@ -156,6 +176,7 @@ export function createAuditLog(db: Database.Database, clock: Clock = systemClock
       prev_hash: record.prevHash,
       hash: record.hash,
     });
+    recordChainTip(db, record.seq, record.hash);
     return record;
   });
 
@@ -167,7 +188,15 @@ export function createAuditLog(db: Database.Database, clock: Clock = systemClock
     append,
     verify(): AuditVerifyResult {
       const rows = allRows.all() as StoredAuditRow[];
-      return verifyAuditChain(rows.map(rowToRecord));
+      const chain = verifyAuditChain(rows.map(rowToRecord));
+      if (!chain.ok) return chain;
+      const tip = tipRow.get() as ChainTip | undefined;
+      if (rows.length === 0) return tip ? { ok: false, brokenIndex: 0, seq: tip.seq } : { ok: true };
+      const last = rows[rows.length - 1] as StoredAuditRow;
+      if (!tip || tip.seq !== last.seq || tip.hash !== last.hash) {
+        return { ok: false, brokenIndex: rows.length, seq: tip?.seq ?? last.seq };
+      }
+      return { ok: true };
     },
     listForOwner(requesterOwnerId: string, ownerId: string): AuditRecord[] {
       if (requesterOwnerId !== ownerId) {

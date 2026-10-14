@@ -139,6 +139,24 @@ export function writeBadge(readme: string, badge: string): string {
   return `${readme.slice(0, start + START.length)}\n${badge}\n${readme.slice(end)}`;
 }
 
+/** False for a zip download or any folder that is not a git checkout with a commit. */
+export function hasGitHistory(cwd = process.cwd()): boolean {
+  try {
+    const inside = execFileSync("git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+    if (inside !== "true") return false;
+    execFileSync("git", ["-C", cwd, "rev-parse", "--verify", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function collect(cwd = process.cwd()): AgentWrittenStats {
   const text = execFileSync(
     "git",

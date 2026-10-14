@@ -137,12 +137,20 @@ function readDefaultNames(): readonly string[] {
 export const guard: ContentGuard = createContentGuard(readDefaultNames());
 
 /**
- * True when file bytes should be decoded as UTF-8 and passed as `text`.
- * Images, PDFs, and every other type are not byte-scanned. Callers still pass
- * the file name and metadata.
+ * True when the declared media type is text or JSON.
+ * A body that decodes as UTF-8 is scanned even when this is false.
  */
 export function fileBodyIsScanned(mediaType: string): boolean {
   const type = mediaType.split(";")[0]?.trim().toLowerCase() ?? "";
   if (type.startsWith(TEXT_MEDIA_TYPE_PREFIX)) return true;
   return (TEXT_MEDIA_TYPES as readonly string[]).includes(type);
+}
+
+/** The file body when it is valid UTF-8. The declared media type is not consulted. */
+export function decodeUtf8Text(bytes: Uint8Array): string | undefined {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return undefined;
+  }
 }

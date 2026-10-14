@@ -7,8 +7,6 @@ import {
   DEFAULT_SHARING_LEVEL,
   NoticeKind,
   ReasonCode,
-  TEXT_MEDIA_TYPE_PREFIX,
-  TEXT_MEDIA_TYPES,
   WAKE_ATTEMPT_LIMIT,
   WAKE_EVENT_TYPE,
   WAKE_RETRY_DELAYS_MS,
@@ -37,6 +35,7 @@ import {
 } from "../../contract/index.js";
 
 type Sqlite = BetterSqlite3.Database;
+import { decodeUtf8Text } from "../guard/index.js";
 import { buildWakeEmail, wireWakeEvent } from "./event.js";
 import { recordersFor } from "./record.js";
 import { sendSmtp, type SmtpEndpoint } from "./smtp.js";
@@ -493,7 +492,7 @@ function loadItem(db: Sqlite, input: WakeEnqueueInput): LoadedItem {
     byteLength: row.content.length,
     metadata,
   };
-  const textBody = scannedText(row.mediaType, row.content);
+  const textBody = decodeUtf8Text(row.content);
   if (textBody !== undefined) content.textBody = textBody;
   return {
     kind: "file",
@@ -546,17 +545,6 @@ function parseMetadata(json: string): Record<string, string> {
     metadata[key] = item;
   }
   return metadata;
-}
-
-function scannedText(mediaType: string, bytes: Buffer): string | undefined {
-  const base = mediaType.split(";")[0]?.trim().toLowerCase() ?? "";
-  const textual = base.startsWith(TEXT_MEDIA_TYPE_PREFIX) || (TEXT_MEDIA_TYPES as readonly string[]).includes(base);
-  if (!textual) return undefined;
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    return undefined;
-  }
 }
 
 function loadWake(db: Sqlite, wakeId: string): WakeRow | undefined {

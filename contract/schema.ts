@@ -115,6 +115,25 @@ BEGIN
   SELECT RAISE(ABORT, 'audit log is append-only');
 END;
 
+CREATE TABLE IF NOT EXISTS audit_chain_tip (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  seq INTEGER NOT NULL CHECK (seq >= 1),
+  hash TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS audit_chain_tip_no_delete
+BEFORE DELETE ON audit_chain_tip
+BEGIN
+  SELECT RAISE(ABORT, 'audit chain tip is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_chain_tip_forward_only
+BEFORE UPDATE ON audit_chain_tip
+WHEN NEW.id <> OLD.id OR NEW.seq <> OLD.seq + 1
+BEGIN
+  SELECT RAISE(ABORT, 'audit chain tip cannot rewind');
+END;
+
 CREATE TABLE IF NOT EXISTS wakes (
   id TEXT PRIMARY KEY,
   room_id TEXT NOT NULL REFERENCES rooms(id),

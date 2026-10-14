@@ -12,6 +12,7 @@ import {
   type OwnerNoticeInput,
   type OwnerNotifier,
 } from "../../contract/index.js";
+import { recordChainTip } from "../audit/log.js";
 
 type Sqlite = BetterSqlite3.Database;
 
@@ -70,6 +71,7 @@ function sqliteAudit(db: Sqlite): Pick<AuditLog, "append"> {
           prevHash: record.prevHash,
           hash: record.hash,
         });
+        recordChainTip(db, record.seq, record.hash);
         return record;
       });
       return write();

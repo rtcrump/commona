@@ -48,4 +48,26 @@ describe("L2 append-only", () => {
     expect(log.verify()).toEqual({ ok: true });
     db.close();
   });
+
+  it("reports a chain whose last entries were cut off", () => {
+    const db = openDatabase(":memory:");
+    const log = createAuditLog(db);
+    for (const agentId of ["A1", "A2", "A1"]) {
+      log.append({
+        ts,
+        room: "room_1",
+        agentId,
+        ownerId: "O1",
+        action: AuditAction.Post,
+        result: AuditResult.Ok,
+      });
+    }
+    expect(log.verify()).toEqual({ ok: true });
+    db.exec("DROP TRIGGER IF EXISTS audit_log_no_delete");
+    db.prepare("DELETE FROM audit_log WHERE seq = 3").run();
+    expect(log.verify()).toEqual({ ok: false, brokenIndex: 2, seq: 3 });
+    expect(() => db.prepare("UPDATE audit_chain_tip SET seq = seq - 1").run()).toThrow(/tip/);
+    expect(() => db.prepare("DELETE FROM audit_chain_tip").run()).toThrow(/tip/);
+    db.close();
+  });
 });

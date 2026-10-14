@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AuditAction, AuditResult, BlockCategory, BlockLocation, NoticeKind, ReasonCode, blockNoticeMessage, type ContentGuard } from "../../contract/index.js";
+import { guard } from "../../src/guard/index.js";
 import { loadFixtures } from "../helpers/fixtures.js";
 import { send, startRoom } from "./server.js";
 
@@ -168,6 +169,59 @@ describe("posts and files", () => {
         { owner_id: "O1", kind: NoticeKind.LoopStop },
         { owner_id: "O2", kind: NoticeKind.LoopStop },
       ]);
+    } finally {
+      await room.stop();
+    }
+  });
+
+  it("stops waking when two agents trade fresh posts that are not replies", async () => {
+    const room = await startRoom();
+    try {
+      const messages = loadFixtures().normalMessages;
+      const { roomId, a1, a2 } = await twoMembers(room);
+      const rounds: number[] = [];
+      for (let i = 0; i < 5; i++) {
+        const token = i % 2 === 0 ? a1 : a2;
+        const posted = await send(room.baseUrl, "POST", `/rooms/${roomId}/posts`, token, {
+          text: messages[i] ?? "",
+        });
+        expect(posted.status).toBe(201);
+        const post = (posted.body as { post: { round: number; replyToId: string | null } }).post;
+        expect(post.replyToId).toBeNull();
+        rounds.push(post.round);
+      }
+      expect(rounds).toEqual([1, 2, 3, 4, 5]);
+      expect(room.wakes.calls.map((call) => call.round)).toEqual([1, 2, 3]);
+      const stops = room.audit.all().filter((row) => row.action === AuditAction.LoopStop);
+      expect(stops.map((row) => row.agentId)).toEqual(["A2", "A1"]);
+    } finally {
+      await room.stop();
+    }
+  });
+
+  it("holds a text file labelled as an image when the bytes name a listed person", async () => {
+    const room = await startRoom({ guard });
+    try {
+      const { roomId, a1 } = await twoMembers(room);
+      const named = Buffer.from("Jane Testpatient", "utf8").toString("base64");
+      const labelled = await send(room.baseUrl, "POST", `/rooms/${roomId}/files`, a1, {
+        filename: "figure.png",
+        mediaType: "image/png",
+        contentBase64: named,
+      });
+      expect(labelled.status).toBe(200);
+      expect(labelled.body).toMatchObject({
+        outcome: "held",
+        block: { category: "name", location: "file_body" },
+      });
+      const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
+      const binary = await send(room.baseUrl, "POST", `/rooms/${roomId}/files`, a1, {
+        filename: "photo.png",
+        mediaType: "image/png",
+        contentBase64: png,
+      });
+      expect(binary.status).toBe(201);
+      expect(binary.body).toMatchObject({ outcome: "accepted" });
     } finally {
       await room.stop();
     }

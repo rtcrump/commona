@@ -25,6 +25,7 @@ import {
   type WakeEvent,
 } from "../../contract/index.js";
 import { audit } from "../../src/audit/index.js";
+import { recordChainTip } from "../../src/audit/log.js";
 import { openDatabase } from "../../src/db.js";
 import { expectRows, type Ctx } from "./ctx.js";
 import { AcceptanceFailure, classifyThrown, fail, thrownMessage, type FailureKind } from "./failure.js";
@@ -152,7 +153,8 @@ export async function test_R3_ten_posts_logged_with_owner(ctx: Ctx): Promise<voi
   for (let i = 0; i < 10; i++) {
     const agentId = i % 2 === 0 ? "A1" : "A2";
     const other = agentId === "A1" ? "A2" : "A1";
-    rows.push(posted(ctx, agentId), woke(ctx, other));
+    rows.push(posted(ctx, agentId));
+    rows.push(i < 3 ? woke(ctx, other) : loopStopped(ctx, agentId));
   }
   expectRows(ctx, rows);
   const roomId = await roomWithBoth(ctx);
@@ -774,6 +776,7 @@ function seedAuditRow(db: ReturnType<typeof openDatabase>): string {
     prevHash: sealed.prevHash,
     hash: sealed.hash,
   });
+  recordChainTip(db, sealed.seq, sealed.hash);
   return sealed.id;
 }
 
