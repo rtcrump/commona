@@ -56,10 +56,17 @@ export function sharingAllows(
   return false;
 }
 
-/** Room feed rule: held items are hidden from every agent, including the author. */
+/**
+ * Room feed rule. Held items are hidden from every agent, including the author.
+ *
+ * `level` is the row from the author toward the viewer:
+ * `level(roomId, authorOwnerId, viewerOwnerId)`.
+ * `fromOwnerId` is the author and decides what `toOwnerId` (the viewer) may see.
+ * The reverse row is not consulted.
+ */
 export function feedIncludes(args: {
   held: boolean;
-  /** Grant from the author toward the viewer. Unknown values fail closed. */
+  /** `level(roomId, authorOwnerId, viewerOwnerId)`. Unknown values fail closed. */
   level: string;
   itemKind: ItemKind;
   viewerOwnerId: string;
@@ -85,7 +92,12 @@ export interface SharingUpdateRefusal {
 export type SharingUpdateResult = { allowed: true; sharing: SharingRow } | SharingUpdateRefusal;
 
 export interface SharingDirectory {
-  /** Missing pairs read as {@link DEFAULT_SHARING_LEVEL} and are not an error. */
+  /**
+   * The row from `fromOwnerId` toward `toOwnerId`.
+   * `fromOwnerId` decides what `toOwnerId` may see.
+   * Feed and wake checks pass the author as `fromOwnerId` and the viewer as `toOwnerId`.
+   * A missing pair reads as {@link DEFAULT_SHARING_LEVEL} and is not an error.
+   */
   level(roomId: string, fromOwnerId: string, toOwnerId: string): SharingLevel;
   /**
    * Create both directions at None if they are absent.
