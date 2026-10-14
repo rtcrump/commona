@@ -1,0 +1,38 @@
+# Commona conventions check. Copied into the repo by spec T0 (after G2). Not active anywhere yet.
+name: conventions
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Self-test the checker
+        run: python3 scripts/test_check_conventions.py
+      - name: Commits (PR)
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/check_conventions.py git --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}" --mode pr --human-out human.txt
+      - name: Labels (PR)
+        if: github.event_name == 'pull_request'
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" > files.txt
+          python3 scripts/check_conventions.py labels --labels "$LABELS" --files files.txt --human-commits "$(cat human.txt)"
+      - name: Merge readiness (informational until branch protection is set at G2)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: python3 scripts/check_conventions.py labels --labels "$LABELS" --files files.txt --human-commits "$(cat human.txt)" --mode merge
+      - name: Commits landed on main
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        run: python3 scripts/check_conventions.py git --base "${{ github.event.before }}" --head "${{ github.event.after }}" --mode main
