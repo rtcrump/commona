@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db.js";
@@ -32,9 +33,10 @@ describe("fixtures", () => {
     expect(stdout).toContain("fake-data check ok");
   });
 
-  it("does not claim the acceptance run has passed", async () => {
-    const { stdout } = await exec("node", ["--import", "tsx", "scripts/m1-placeholder.ts"]);
-    expect(stdout).toContain("placeholder");
-    expect(stdout).toContain("not run");
+  it("keeps the acceptance harness on npm run m1", () => {
+    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: { m1: string; test: string } };
+    expect(pkg.scripts.m1).toBe("tsx scripts/m1.ts");
+    expect(pkg.scripts.test).toBe("vitest run");
+    expect(pkg.scripts.test).not.toContain("m1");
   });
 });

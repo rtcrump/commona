@@ -13,7 +13,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "m1": "tsx scripts/m1-placeholder.ts",
+    "m1": "tsx scripts/m1.ts",
+    "stats": "tsx scripts/agent-written.ts --write",
+    "stats:check": "tsx scripts/agent-written.ts --check",
     "check:fake-data": "bash scripts/check-fake-data.sh",
     "check:conventions": "python3 scripts/test_check_conventions.py"
   },
