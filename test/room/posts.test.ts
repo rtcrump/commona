@@ -199,6 +199,60 @@ describe("posts and files", () => {
     }
   });
 
+  it("stops waking when two agents trade files", async () => {
+    const room = await startRoom();
+    try {
+      const { roomId, a1, a2 } = await twoMembers(room);
+      const contentBase64 = Buffer.from("hello").toString("base64");
+      for (let i = 0; i < 5; i++) {
+        const token = i % 2 === 0 ? a1 : a2;
+        const uploaded = await send(room.baseUrl, "POST", `/rooms/${roomId}/files`, token, {
+          filename: `note-${i}.txt`,
+          mediaType: "text/plain",
+          contentBase64,
+        });
+        expect(uploaded.status).toBe(201);
+        expect(uploaded.body).toMatchObject({ outcome: "accepted" });
+      }
+      expect(room.wakes.calls.map((call) => call.round)).toEqual([1, 2, 3]);
+      expect(room.wakes.calls.map((call) => call.itemKind)).toEqual(["file", "file", "file"]);
+      const stops = room.audit.all().filter((row) => row.action === AuditAction.LoopStop);
+      expect(stops.map((row) => row.agentId)).toEqual(["A2", "A1"]);
+      expect(stops.map((row) => row.detail)).toMatchObject([
+        { reasonCode: ReasonCode.LoopCap, round: 4, itemKind: "file" },
+        { reasonCode: ReasonCode.LoopCap, round: 5, itemKind: "file" },
+      ]);
+    } finally {
+      await room.stop();
+    }
+  });
+
+  it("continues the round across a post and a file from the other agent", async () => {
+    const room = await startRoom();
+    try {
+      const messages = loadFixtures().normalMessages;
+      const { roomId, a1, a2 } = await twoMembers(room);
+      const contentBase64 = Buffer.from("hello").toString("base64");
+      const post = await send(room.baseUrl, "POST", `/rooms/${roomId}/posts`, a1, { text: messages[0] });
+      expect((post.body as { post: { round: number } }).post.round).toBe(1);
+      const file = await send(room.baseUrl, "POST", `/rooms/${roomId}/files`, a2, {
+        filename: "note.txt",
+        mediaType: "text/plain",
+        contentBase64,
+      });
+      expect(file.status).toBe(201);
+      const again = await send(room.baseUrl, "POST", `/rooms/${roomId}/posts`, a1, { text: messages[1] });
+      expect((again.body as { post: { round: number } }).post.round).toBe(3);
+      expect(room.wakes.calls.map((call) => [call.itemKind, call.round])).toEqual([
+        ["message", 1],
+        ["file", 2],
+        ["message", 3],
+      ]);
+    } finally {
+      await room.stop();
+    }
+  });
+
   it("holds a text file labelled as an image when the bytes name a listed person", async () => {
     const room = await startRoom({ guard });
     try {

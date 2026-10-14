@@ -181,13 +181,13 @@ export function uploadFile(
   const block = held ? decision.hits[0] : undefined;
   const id = newId("file");
   const createdAt = nowStamp(deps);
-  const round = 1;
+  const round = roundAfterOtherAgent(deps, roomId, principal.agentId);
   deps.db
     .prepare(
       `INSERT INTO files (
         id, room_id, author_agent_id, author_owner_id, name, media_type, content, metadata_json,
-        byte_length, held, block_category, block_location, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        byte_length, round, held, block_category, block_location, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -199,6 +199,7 @@ export function uploadFile(
       bytes,
       JSON.stringify(metadata),
       bytes.length,
+      round,
       held ? 1 : 0,
       block?.category ?? null,
       block?.location ?? null,
@@ -498,16 +499,21 @@ function parsePost(body: unknown): { text: string; replyToId: string | null } {
   return { text: body.text, replyToId: typeof reply === "string" ? reply : null };
 }
 
-/** One more than the latest accepted post by a different agent. The reply flag is not used. */
+/** One more than the latest accepted post or file by a different agent. The reply flag is not used. */
 function roundAfterOtherAgent(deps: RoomDeps, roomId: string, authorAgentId: string): number {
   const prior = deps.db
     .prepare(
-      `SELECT round FROM posts
-       WHERE room_id = ? AND held = 0 AND author_agent_id <> ?
+      `SELECT round FROM (
+         SELECT round, created_at, id FROM posts
+         WHERE room_id = ? AND held = 0 AND author_agent_id <> ?
+         UNION ALL
+         SELECT round, created_at, id FROM files
+         WHERE room_id = ? AND held = 0 AND author_agent_id <> ?
+       )
        ORDER BY created_at DESC, id DESC
        LIMIT 1`,
     )
-    .get(roomId, authorAgentId) as { round: number } | undefined;
+    .get(roomId, authorAgentId, roomId, authorAgentId) as { round: number } | undefined;
   return roundForPost({ authorKind: "agent", parentRound: prior?.round ?? null });
 }
 

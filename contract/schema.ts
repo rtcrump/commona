@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS files (
   content BLOB NOT NULL,
   metadata_json TEXT NOT NULL,
   byte_length INTEGER NOT NULL CHECK (byte_length >= 0),
+  round INTEGER NOT NULL DEFAULT 1 CHECK (round >= 1),
   held INTEGER NOT NULL CHECK (held IN (0, 1)),
   block_category TEXT CHECK (block_category IS NULL OR block_category IN (${quote(BLOCK_CATEGORIES)})),
   block_location TEXT CHECK (block_location IS NULL OR block_location IN (${quote(BLOCK_LOCATIONS)})),
