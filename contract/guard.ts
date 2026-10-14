@@ -115,6 +115,9 @@ export interface ContentGuard {
  *
  * The name list is injected (default `fixtures/names.txt`). The guard has no switch
  * to turn it off.
+ *
+ * These steps do not strip zero-width characters, decode encodings, or fold
+ * homoglyphs. That gap is {@link NAME_BLOCK_KNOWN_LIMIT}, not a detector to add in M1.
  */
 export const NAME_MATCH_STEPS = [
   "nfkc",
@@ -125,7 +128,7 @@ export const NAME_MATCH_STEPS = [
 ] as const;
 
 export const NAME_BLOCK_KNOWN_LIMIT =
-  "Misspellings and names that are not on the list may get through. Image and PDF bytes are not scanned in M1. File names and file details are still checked.";
+  "Misspellings and names that are not on the list may get through. Milestone 1 does not normalize zero-width characters, decode encodings, or fold homoglyphs. A bypass that only uses those is a known limit, not a new finding. Image and PDF bytes are not scanned in M1. File names and file details are still checked.";
 
 /** The block has no off switch in M1. */
 export const GUARD_ALWAYS_ON = true;

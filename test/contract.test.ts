@@ -156,5 +156,9 @@ describe("acceptance catalogue", () => {
     expect(ACCEPTANCE_TESTS).toHaveLength(19);
     expect(new Set(ACCEPTANCE_TESTS.map((test) => test.id)).size).toBe(19);
     expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/Misspellings/);
+    expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/zero-width characters/);
+    expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/decode encodings/);
+    expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/fold homoglyphs/);
+    expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/known limit, not a new finding/);
   });
 });

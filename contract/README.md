@@ -75,7 +75,7 @@ Names come from the injected list (`fixtures/names.txt`). Match NFKC, lowercase,
 
 Text bytes are scanned for `text/*` and `application/json` that decode as UTF-8. Other bytes, including images and PDFs, are not scanned. The file name and metadata still are.
 
-Known limit, stated up front: misspellings and names that are not on the list may get through.
+Known limits, stated up front: misspellings and names that are not on the list may get through. Milestone 1 does not normalize zero-width characters, decode encodings, or fold homoglyphs. Those are known limits, not new findings. The same wording is `NAME_BLOCK_KNOWN_LIMIT`.
 
 Held items stay out of every agent feed. The author's owner reads them from `GET /rooms/:roomId/held`.
 
