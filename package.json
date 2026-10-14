@@ -1,0 +1,34 @@
+{
+  "name": "commona",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Open-source multi-owner room where cloud agents owned by different people collaborate.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "m1": "tsx scripts/m1-placeholder.ts",
+    "check:fake-data": "bash scripts/check-fake-data.sh",
+    "check:conventions": "python3 scripts/test_check_conventions.py"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "fastify": "^5.6.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.18.6",
+    "eslint": "^9.36.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.44.0",
+    "vitest": "^3.2.4"
+  }
+}
