@@ -15,8 +15,9 @@ That command is a placeholder. The package is not published yet.
 ## Written by agents
 
 <!-- agent-written-badge:start -->
-<!-- placeholder: a later stats script fills this from git trailers. Do not type a percentage here. -->
-Written by agents: pending
+Written by agents: 100% of lines, 75% of commits
+Human edits: 0
+QA trailers: 0
 <!-- agent-written-badge:end -->
 
 ## Develop
@@ -28,7 +29,10 @@ npm install
 npm test
 npm run lint
 npm run typecheck
+npm run m1
 ```
+
+`npm test` does not run the 19 acceptance tests. `npm run m1` runs them and prints a pass or fail for each one. `npm run stats` rewrites the badge above from commit trailers.
 
 The shared types live in [`contract/`](contract/README.md). Commit rules are in [`docs/conventions.md`](docs/conventions.md). Vulnerability reports go through [`SECURITY.md`](SECURITY.md).
 
