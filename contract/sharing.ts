@@ -1,3 +1,6 @@
+import type { AuthPrincipal } from "./auth.js";
+import { ReasonCode } from "./audit.js";
+
 /**
  * What one owner lets another owner's agents see.
  * Wire values are stable. Display labels are for people.
@@ -73,6 +76,14 @@ export interface SharingRow {
   level: SharingLevel;
 }
 
+/** Refusal from {@link SharingDirectory.update}. The room route audits this. It is not a thrown error. */
+export interface SharingUpdateRefusal {
+  allowed: false;
+  reasonCode: typeof ReasonCode.AgentCannotChangeSharing | typeof ReasonCode.NotOwner;
+}
+
+export type SharingUpdateResult = { allowed: true; sharing: SharingRow } | SharingUpdateRefusal;
+
 export interface SharingDirectory {
   /** Missing pairs read as {@link DEFAULT_SHARING_LEVEL} and are not an error. */
   level(roomId: string, fromOwnerId: string, toOwnerId: string): SharingLevel;
@@ -81,10 +92,18 @@ export interface SharingDirectory {
    * Never overwrite a row that already exists.
    */
   ensurePair(roomId: string, ownerA: string, ownerB: string): void;
-  put(
+  /**
+   * The only public write. There is no exported `put`.
+   * An agent token is refused with `agent_cannot_change_sharing`, even when that
+   * agent belongs to `fromOwnerId`. An owner token is allowed only when its id
+   * is `fromOwnerId`; otherwise the reason is `not_owner`.
+   * The sharing module does not write the audit row. The room route does.
+   */
+  update(
+    principal: AuthPrincipal,
     roomId: string,
     fromOwnerId: string,
     toOwnerId: string,
     level: SharingLevel,
-  ): SharingRow;
+  ): SharingUpdateResult;
 }
