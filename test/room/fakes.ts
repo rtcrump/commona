@@ -1,8 +1,10 @@
 import type Database from "better-sqlite3";
 import {
+  assertDistinctSharingOwners,
   AuditAction,
   AuditResult,
   canonicalJson,
+  ContractError,
   DEFAULT_SHARING_LEVEL,
   detailToCanonical,
   formatTimestamp,
@@ -22,7 +24,7 @@ import {
   type Clock,
   type SharingDirectory,
   type SharingLevel as SharingLevelName,
-  type SharingRow,
+  type SharingUpdateResult,
 } from "../../contract/index.js";
 
 type Sqlite = Database.Database;
@@ -138,10 +140,17 @@ export function createTestAudit(db: Sqlite, clock: Clock): TestAuditLog {
 }
 
 /**
- * Stores the sharing rows the room asks for. Level changes are the sharing workstream's route;
- * room tests use `openRoomSharing` so R1 can see both owners' messages and files.
+ * Stores the sharing rows the room asks for.
+ * `update` is the only write, matching the contract. Room tests use `openRoomSharing`
+ * so R1 can see both owners' messages and files.
  */
 export function createTestSharing(db: Sqlite): SharingDirectory {
+  const writeLevel = (roomId: string, fromOwnerId: string, toOwnerId: string, level: SharingLevelName): void => {
+    db.prepare(
+      `INSERT INTO sharing (room_id, from_owner_id, to_owner_id, level) VALUES (?, ?, ?, ?)
+       ON CONFLICT(room_id, from_owner_id, to_owner_id) DO UPDATE SET level = excluded.level`,
+    ).run(roomId, fromOwnerId, toOwnerId, level);
+  };
   return {
     level(roomId: string, fromOwnerId: string, toOwnerId: string): SharingLevelName {
       const row = db
@@ -151,26 +160,43 @@ export function createTestSharing(db: Sqlite): SharingDirectory {
       return row.level;
     },
     ensurePair(roomId: string, ownerA: string, ownerB: string): void {
-      if (ownerA === ownerB) return;
+      assertDistinctSharingOwners(ownerA, ownerB);
       const insert = db.prepare(
         "INSERT OR IGNORE INTO sharing (room_id, from_owner_id, to_owner_id, level) VALUES (?, ?, ?, ?)",
       );
       insert.run(roomId, ownerA, ownerB, SharingLevel.None);
       insert.run(roomId, ownerB, ownerA, SharingLevel.None);
     },
-    put(roomId: string, fromOwnerId: string, toOwnerId: string, level: SharingLevelName): SharingRow {
-      if (!isSharingLevel(level)) throw new Error("invalid sharing level");
-      db.prepare(
-        `INSERT INTO sharing (room_id, from_owner_id, to_owner_id, level) VALUES (?, ?, ?, ?)
-         ON CONFLICT(room_id, from_owner_id, to_owner_id) DO UPDATE SET level = excluded.level`,
-      ).run(roomId, fromOwnerId, toOwnerId, level);
-      return { roomId, fromOwnerId, toOwnerId, level };
+    update(principal, roomId, fromOwnerId, toOwnerId, level): SharingUpdateResult {
+      assertDistinctSharingOwners(fromOwnerId, toOwnerId);
+      if (!isSharingLevel(level)) throw new ContractError("sharing level is invalid");
+      if (principal.kind === "agent") {
+        return { allowed: false, reasonCode: ReasonCode.AgentCannotChangeSharing };
+      }
+      if (principal.ownerId !== fromOwnerId) {
+        return { allowed: false, reasonCode: ReasonCode.NotOwner };
+      }
+      writeLevel(roomId, fromOwnerId, toOwnerId, level);
+      return { allowed: true, sharing: { roomId, fromOwnerId, toOwnerId, level } };
     },
   };
 }
 
 /** Test-only helper. Opens both directions to Messages + files so R1 can read across owners. */
 export function openRoomSharing(sharing: SharingDirectory, roomId: string, ownerA: string, ownerB: string): void {
-  sharing.put(roomId, ownerA, ownerB, SharingLevel.MessagesFiles);
-  sharing.put(roomId, ownerB, ownerA, SharingLevel.MessagesFiles);
+  const forward = sharing.update(
+    { kind: "owner", ownerId: ownerA },
+    roomId,
+    ownerA,
+    ownerB,
+    SharingLevel.MessagesFiles,
+  );
+  const back = sharing.update(
+    { kind: "owner", ownerId: ownerB },
+    roomId,
+    ownerB,
+    ownerA,
+    SharingLevel.MessagesFiles,
+  );
+  if (!forward.allowed || !back.allowed) throw new Error("could not open sharing for the test");
 }

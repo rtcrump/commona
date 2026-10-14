@@ -4,6 +4,7 @@ import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
 import { addMember, createRoom } from "./membership.js";
 import { createPost, readFeed, readFile, readHeld, uploadFile } from "./posts.js";
+import { updateSharing } from "./sharing.js";
 
 export function registerRoomRoutes(app: FastifyInstance, deps: RoomDeps): void {
   app.post("/rooms", async (request, reply) => {
@@ -50,6 +51,12 @@ export function registerRoomRoutes(app: FastifyInstance, deps: RoomDeps): void {
       return reply.code(HTTP_STATUS.ok).send(file);
     },
   );
+
+  app.put<{ Params: { roomId: string } }>("/rooms/:roomId/sharing", async (request, reply) => {
+    const principal = requirePrincipal(deps, request.headers.authorization);
+    const sharing = updateSharing(deps, principal, request.params.roomId, request.body);
+    return reply.code(HTTP_STATUS.ok).send(sharing);
+  });
 
   app.get<{ Params: { roomId: string } }>("/rooms/:roomId/held", async (request, reply) => {
     const principal = requirePrincipal(deps, request.headers.authorization);
