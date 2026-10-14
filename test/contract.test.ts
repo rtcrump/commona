@@ -5,6 +5,7 @@ import {
   AuditResult,
   DEFAULT_SHARING_LEVEL,
   GENESIS_PREV_HASH,
+  DOB_DATE_SHAPES,
   NAME_BLOCK_KNOWN_LIMIT,
   SharingLevel,
   activityOnlyText,
@@ -160,5 +161,6 @@ describe("acceptance catalogue", () => {
     expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/decode encodings/);
     expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/fold homoglyphs/);
     expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/known limit, not a new finding/);
+    expect(DOB_DATE_SHAPES).toContain("D/M/YYYY");
   });
 });

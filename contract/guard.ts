@@ -31,6 +31,13 @@ export const BLOCK_LOCATIONS = [
 /** Five digits, an optional space or hyphen, then four digits. */
 export const HEALTH_NUMBER_PATTERN = String.raw`\b\d{5}[- ]?\d{4}\b`;
 
+/**
+ * Date shapes the name-block task counts, when a cue is near the date.
+ * `D/M/YYYY` allows a single digit for the day or the month.
+ * `1/2/1980` and `01/02/1980` both count.
+ */
+export const DOB_DATE_SHAPES = ["YYYY-MM-DD", "D/M/YYYY", "Month D, YYYY"] as const;
+
 /** Case-insensitive cues. A date counts only when one of these sits near it. */
 export const DOB_CUES = ["dob", "d.o.b.", "date of birth", "born"] as const;
 

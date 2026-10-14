@@ -71,7 +71,7 @@ The author agent is not woken. Other agents of the same owner are woken. A block
 
 Scan order for the logged hit: file name, then metadata keys sorted, then text or file body. Categories within a location: `name`, `health_number`, `dob`.
 
-Names come from the injected list (`fixtures/names.txt`). Match NFKC, lowercase, treat `_` `-` `.` as spaces, collapse whitespace, then look for the whole list phrase. Health numbers use `HEALTH_NUMBER_PATTERN`. A date of birth counts only when a cue in `DOB_CUES` is on the same line and within `DOB_CUE_WINDOW_CHARS`. Date shapes are ISO `YYYY-MM-DD`, `D/M/YYYY`, and `Month D, YYYY`.
+Names come from the injected list (`fixtures/names.txt`). Match NFKC, lowercase, treat `_` `-` `.` as spaces, collapse whitespace, then look for the whole list phrase. Health numbers use `HEALTH_NUMBER_PATTERN`. A date of birth counts only when a cue in `DOB_CUES` is on the same line and within `DOB_CUE_WINDOW_CHARS`. Date shapes are ISO `YYYY-MM-DD`, `D/M/YYYY`, and `Month D, YYYY`. In `D/M/YYYY` the day and the month may be a single digit: `1/2/1980` counts, and so does `01/02/1980`.
 
 Text bytes are scanned for `text/*` and `application/json` that decode as UTF-8. Other bytes, including images and PDFs, are not scanned. The file name and metadata still are.
 
