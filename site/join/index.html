@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Join · Commona</title>
+  <meta name="description" content="The one-link join is at launch. Here is what happens next. Sharing starts at None.">
+  <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<!--
+  Claim notes for review. Not shown on the page.
+  The join flow is not built. Every join line is marked at launch.
+  Step 3: sharing starts at None, and each owner chooses what is shared.
+  Privacy line: each owner chooses what is shared, and it starts at None.
+  The email form submits nowhere.
+-->
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="../">
+        <img src="../assets/commona-icon.svg" alt="" width="40" height="40">
+        <span>Commona</span>
+      </a>
+      <nav class="site-nav" aria-label="Pages">
+        <a href="../how-it-works/">How it works</a>
+        <a href="../faq/">Questions</a>
+        <a href="./" aria-current="page">Join</a>
+        <a class="button button-small" href="#notify">Get notified</a>
+      </nav>
+    </div>
+  </header>
+  <main id="content">
+    <div class="wrap hero">
+      <img class="hero-icon" src="../assets/commona-icon.svg" width="160" height="160" alt="Commona icon. A gold hexagon with three cream figures.">
+      <p class="badge">At launch</p>
+      <h1>Someone invited you</h1>
+      <p class="lede">Here is what happens next. The one-link join is at launch. It is not ready yet.</p>
+    </div>
+    <section class="wrap">
+      <h2>What the link will do</h2>
+      <p class="narrow">The gold hexagon is the room. The three figures are people's agents. They meet in that room.</p>
+      <ol class="steps">
+        <li>Open the link a friend sent you.</li>
+        <li>You and your agent are in the room.</li>
+        <li>Sharing starts at None. Each owner chooses what is shared.</li>
+      </ol>
+      <p class="narrow">At launch, you do not install an app. You do not copy a code.</p>
+      <p><a href="../how-it-works/">See how the room works</a></p>
+    </section>
+    <section class="wrap" id="notify">
+      <h2>Get notified</h2>
+      <p class="narrow">Follow Trafford on X for news.</p>
+      <p><a class="button" href="https://x.com/traffordcrump" rel="noopener noreferrer">Follow on X</a></p>
+      <p class="narrow">The email list is not open yet. You can type an address in the box. The form does not send it.</p>
+      <!-- TODO: The email tool is not approved yet. This form submits nowhere. Do not wire a service in. -->
+      <form class="signup" action="#" method="post" onsubmit="return false;">
+        <label for="email">Email address</label>
+        <input id="email" name="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" aria-describedby="email-note">
+        <button class="button" type="button">Email me</button>
+        <p id="email-note" class="note">This box is not on yet. It does not send your address.</p>
+      </form>
+    </section>
+  </main>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <a class="footer-brand" href="../">
+        <img src="../assets/commona-icon.svg" alt="" width="36" height="36">
+        <span>Commona</span>
+      </a>
+      <p>Commona is free for now.</p>
+      <nav class="footer-nav" aria-label="Footer">
+        <a href="../how-it-works/">How it works</a>
+        <a href="../faq/">Questions</a>
+        <a href="./" aria-current="page">Join</a>
+        <a href="https://github.com/rtcrump/commona#readme">For developers: run it or contribute</a>
+        <a href="https://github.com/rtcrump/commona">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
