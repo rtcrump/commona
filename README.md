@@ -24,17 +24,17 @@ If you are new here, you can read this page from top to bottom. If you want to h
 
 ## 60-second quickstart
 
-**At launch, you join with one link.** That is the path we want an ordinary person to use. It is not built yet, and it is not in this server.
+**At launch, you join with one link.** That is the path we want an ordinary person to use. It is not built yet. It is not in this server.
 
 1. Open the link someone sent you.
 2. You are in the room, and your agent is in the room with you.
 3. Sharing starts at None. Raise it to Messages, or to Messages + files, when you want the other owner to read more.
 
-The launch path has no terminal, no token to copy, and no CLI to install. Those three steps are the promise. The link itself still has to be written.
+The launch path has no terminal. It has no token to copy. It has no CLI to install. Those three steps are the promise. The link itself still has to be written.
 
-A room you can join today usually asks for more than a link. Someone is copying a token, editing a config file, or starting a program on their own computer. That is more chore than we want to leave with you. The one-link join is how we intend to leave that behind.
+A room you can join today usually asks for more than a link. Someone is copying a token, editing a config file, or starting a program on their own computer. That is more chore than we want for you. The one-link join is how we intend to end that chore.
 
-[A2A](https://a2a-protocol.org/latest/) is how agents discover each other and exchange tasks. [MCP](https://modelcontextprotocol.io/docs/getting-started/intro) is how an agent uses tools and data. A room that a person joins is a different job. The section [How this fits with A2A and MCP](#how-this-fits-with-a2a-and-mcp) says how those pieces fit together.
+[A2A](https://a2a-protocol.org/latest/) is how agents discover each other and exchange tasks. [MCP](https://modelcontextprotocol.io/docs/getting-started/intro) is how an agent uses tools and data. A room that a person joins is a different job. The section [How this fits with A2A and MCP](#how-this-fits-with-a2a-and-mcp) says how those pieces fit.
 
 **On a checkout today** you can run the tests. You cannot join as an owner in a browser.
 
@@ -45,23 +45,23 @@ npm test
 
 You need Node.js 22. `npm test` runs the unit tests. It does not run the 19 acceptance tests. `npm run m1` runs those, in this order: R1–R3, W1–W3, S1–S5, P1–P5, and L1–L3.
 
-`GET /health` answers `{ "ok": true, "service": "commona" }`. A unit test checks that answer. Owner tokens are minted in process for the tests. The members route returns an agent token the first time that agent is created. A repeat join in the same room does not return a new token. A membership test covers both.
+`GET /health` answers `{ "ok": true, "service": "commona" }`. A unit test checks that answer. Tests mint owner tokens in process. The members route returns an agent token the first time that agent is created. A repeat join in the same room does not return a new token. A membership test covers both.
 
 The package is private, the version is `0.0.0`, and `package.json` has no `bin`. Nothing is published, so `npx commona init` is the install command at launch. It is not a command you can run yet.
 
 ## How it works
 
-Commona is a small HTTP server for a room with more than one owner. Each person brings an agent they already have. The room stores posts and files, applies a sharing level in each direction, writes an append-only log, and wakes the other agents. What follows is what the tests already do.
+Commona is a small HTTP server for a room with more than one owner. Each person brings an agent they already have. The room stores posts and files. It applies a sharing level in each direction. It writes an append-only log. It wakes the other agents. What follows is what the tests already do.
 
 ### Rooms
 
-An owner token creates an empty room. That owner adds their own agent. A second owner adds theirs. A caller who is not a member, and who tries to post or to read, is refused, and the attempt is logged (R2). When A1 and A2 take turns through ten posts, the log holds ten `post` rows, each with the right owner (R3).
+An owner token creates an empty room. That owner adds their own agent. A second owner adds theirs. A caller who is not a member and who tries to post or to read is refused. This attempt is logged (R2). A1 and A2 alternate ten posts, and the log holds ten `post` rows, each with the right owner (R3).
 
 A file upload is JSON, with the bytes in base64. A room test sends one. A file larger than 1 MiB is refused, and a room test covers that refusal.
 
 ### Owners
 
-Each agent belongs to one owner. You are the person who changes the sharing row that starts at you. An agent cannot change a sharing level, including the level of its own owner. Another owner cannot change yours. The attempt is refused and logged (S4).
+Each agent belongs to one owner. You are the person who changes the sharing row that starts at you. An agent cannot change a sharing level, including the level of its own owner. Another owner cannot change yours. The server refuses the attempt and logs it (S4).
 
 ### Graded sharing
 
@@ -77,21 +77,21 @@ Your own agents can still read your items. A held item is hidden from every agen
 
 At None the other agent still gets a wake. The wake has no message, no file, and no hint of which one it was (S1).
 
-If the other owner is not allowed to see a file, the download looks the same as a missing file. The server answers 404, and it does not write a log row for that miss. A room test covers that.
+If the other owner is not allowed to see a file, the download matches a missing file. The server answers 404, and it does not write a log row for that miss. A room test covers that.
 
 ### Audit log
 
-The log is append-only. An update or a delete of an old row is refused, or it is caught when the chain is checked (L2). The rows form a hash chain. Cutting off the tail fails the check. Each row has a time, an agent, an owner, an action, and a result (L1). You can read the rows filed under your agent. You cannot read another owner's rows, and that refusal is logged under you (L3).
+The log is append-only. An update or a delete of an old row is refused. Or the chain check catches it (L2). The rows form a hash chain. Cutting the tail fails the check. Each row has a time, an agent, an owner, an action, and a result (L1). You can read the rows filed under your agent. You cannot read another owner's rows, and that refusal is logged under you (L3).
 
-The tests write posts, uploads, feed reads, joins, refusals, wakes, retries, email fallback, wake failures, blocks, sharing changes, and loop stops. A successful read of the log itself adds no row. A missing or unknown token is not logged. A malformed request is not logged either. A unit test covers those three quiet cases.
+The tests write posts and uploads. They write feed reads, joins, refusals, wakes, retries, email fallback, wake failures, blocks, sharing changes, and loop stops. A successful read of the log itself adds no row. A missing or unknown token is not logged. A malformed request is not logged either. A unit test covers those three quiet cases.
 
 ### Wake-up
 
-Other agents in the room are woken. The author is not woken for their own post (W3). A wake test also checks that another agent of the same owner is woken. A webhook is sent when the agent has a webhook URL (W1).
+Other agents in the room are woken. The server does not wake the author for their own post (W3). A wake test also checks that another agent of the same owner is woken. A webhook is sent when the agent has a webhook URL (W1).
 
-The W1 sentence says A2 is woken within 60 seconds, 10 of 10 times, and it marks that bound as an assumed target. The clip slot above is where the measured times from the demo run live. This page does not treat that 60 second bound as a promise.
+The W1 sentence says A2 is woken within 60 seconds, 10 of 10 times. It marks that bound as an assumed target. The clip slot above is where the measured times from the demo run live. This page does not treat that 60 second bound as a promise.
 
-A failed webhook is retried, and then the server sends email (W2). The first attempt goes out at once. The waits before attempts 2, 3, and 4 are 2 seconds, 8 seconds, and 20 seconds. Each webhook gives up after 5 seconds. A unit test stops on the first `2xx`. If there is no webhook URL, the server skips those attempts and sends email. Mail needs both `COMMONA_SMTP_HOST` and `COMMONA_SMTP_PORT`. If mail cannot be sent, the failure is logged and the recipient's owner gets a notice (W2). The sender address on those messages is `commona@localhost`.
+A failed webhook is retried, and then the server sends email (W2). The first attempt runs at once. The waits before attempts 2, 3, and 4 are 2 seconds, 8 seconds, and 20 seconds. Each webhook ends after 5 seconds. A unit test stops on the first `2xx`. If there is no webhook URL, the server skips those attempts and sends email. Mail needs both `COMMONA_SMTP_HOST` and `COMMONA_SMTP_PORT`. If the server cannot send mail, the server logs the failure and the recipient's owner gets a notice (W2). The sender address on those messages is `commona@localhost`.
 
 An event address can be stored on the agent. Milestone 1 does not deliver it. The contract calls that field the place for a later MCP or vendor event.
 
