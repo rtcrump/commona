@@ -384,7 +384,7 @@ async function replyFromWake() {
   return res;
 }
 
-async function openRoom(caption = "Different owners, same room") {
+async function openRoom(caption = "Different owners share the same room.") {
   publish({ phase: "room", ...blankSides(), caption });
   await createRoom();
   await addMember("O1", "A1");
@@ -441,7 +441,7 @@ async function captureWake(postName, hit, options = {}) {
 async function runRoomTake(t0) {
   publish({ phase: "title", caption: "", endVisible: 0, roomId: null });
   await until(t0, 2000);
-  publish({ phase: "room", caption: "Different owners, same room", ...blankSides() });
+  publish({ phase: "room", caption: "Different owners share the same room.", ...blankSides() });
   await openRoom();
   await putSharing(SharingLevel.MessagesFiles);
   await putSharingReverse();
@@ -506,7 +506,7 @@ async function runWakeTake(t0) {
 async function runFullTake(t0) {
   publish({ phase: "title", caption: "", endVisible: 0, ...blankSides(), roomId: null });
   await until(t0, 5000);
-  publish({ phase: "room", caption: "Different owners, same room" });
+  publish({ phase: "room", caption: "Different owners share the same room." });
   const initial = await openRoom();
   if (initial.some((row) => row.level !== SharingLevel.None)) throw new Error("a new pair was not None");
   await until(t0, 8000);
@@ -553,7 +553,7 @@ async function runFullTake(t0) {
     source: "second A2 webhook after the post at None",
   });
   await until(t0, 34000);
-  publish({ phase: "block", caption: "Fake patient name caught before anyone saw it" });
+  publish({ phase: "block", caption: "The fake patient name was caught before anyone saw it." });
   await putSharing(SharingLevel.Messages);
   const blocked = await postAs("A1", blockedText, "blocked_post");
   if (blocked.json.outcome !== "held" || blocked.json.block?.category !== "name" || blocked.json.block?.location !== "text") {
@@ -602,7 +602,7 @@ async function runFullTake(t0) {
       noticeAt: notice.createdAt,
     },
     a2: { ...state.a2, note: "The held post is not in this feed." },
-    a1: { ...state.a1, note: "Held. Not in A1's feed." },
+    a1: { ...state.a1, note: "Held. It is not in A1's feed." },
   });
   await until(t0, 48000);
   const logs = { O1: await readLog("O1"), O2: await readLog("O2") };
@@ -615,7 +615,7 @@ async function runFullTake(t0) {
     o2: logs.O2.map(stripDetail),
     source: "GET /log?owner=O1 and GET /log?owner=O2",
   });
-  publish({ phase: "audit", caption: "Every action, logged. Append-only.", logs });
+  publish({ phase: "audit", caption: "Every action is logged. The log is append-only.", logs });
   await until(t0, 55000);
   publish({ phase: "end", caption: "", endVisible: 1 });
   await until(t0, 55800);
@@ -812,7 +812,7 @@ async function runLunchTake(t0) {
     endLines: [
       `${plan.slot.date} ${plan.slot.start}-${plan.slot.end}`,
       `${plan.place.name}, ${plan.place.location}`,
-      "Both demo calendars updated",
+      "Both demo calendars are updated.",
       "Every action is in the audit log",
     ],
     calendars: {
@@ -858,7 +858,7 @@ async function runLunchTake(t0) {
       ...state.a2,
       status: "webhook received",
       statusKind: "webhook",
-      note: `O1's post is not in this feed. Wake ${hiddenWake.occurredAt}, activity_only.`,
+      note: `O1's post is not in this feed. The wake at ${hiddenWake.occurredAt} is activity_only.`,
     },
   });
 
@@ -953,7 +953,7 @@ async function runLunchTake(t0) {
     throw new Error("a feed is missing the agreement");
   }
   publish({
-    caption: "Agreed. Both demo calendars updated.",
+    caption: "Agreed. Both demo calendars are updated.",
     calendars: {
       O1: calendarView(readWorking("O1"), plan.o1pref, { agreementAt, writtenAt: writes.O1.writtenAt }),
       O2: calendarView(readWorking("O2"), plan.o2pref, { agreementAt, writtenAt: writes.O2.writtenAt }),
@@ -972,7 +972,7 @@ async function runLunchTake(t0) {
     o2: logs.O2.map(stripDetail),
     source: "GET /log?owner=O1 and GET /log?owner=O2",
   });
-  publish({ phase: "audit", caption: "Every action, logged. Append-only.", logs });
+  publish({ phase: "audit", caption: "Every action is logged. The log is append-only.", logs });
   await until(t0, 54500);
   publish({ phase: "end", caption: "", endVisible: 1 });
   await until(t0, 55800);
@@ -1083,7 +1083,7 @@ async function recordTake(name, file, run) {
       await openRoom();
       publish({
         phase: "room",
-        caption: "Different owners, same room",
+        caption: "Different owners share the same room.",
         roomId: session.roomId,
         a1: { status: "member", statusKind: "member", items: [], note: "" },
         a2: { status: "asleep", statusKind: "asleep", items: [], note: "" },

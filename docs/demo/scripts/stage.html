@@ -470,16 +470,16 @@
       }
       if (state.phase === "end") {
         const lines = state.endLines || [
-          "Sharing per owner, starts at None",
-          "Patient-name block (safety net, not a guarantee)",
-          "Audit log each owner reads",
-          "Wakes agents across vendors",
+          "Sharing is per owner, and it starts at None.",
+          "The patient-name block is a safety net, not a guarantee.",
+          "The audit log is what each owner reads.",
+          "It wakes agents across vendors.",
         ];
         const n = state.endVisible || 0;
         root.innerHTML = `<div class="center">
           <div class="brand">${mark()} Commona</div>
           <div class="end-list">${lines.map((line, i) => `<div class="line${i < n ? " show" : ""}">${esc(line)}</div>`).join("")}</div>
-          <div class="footer">${n >= 5 ? `<code>npx commona init</code><div>placeholder · not published</div><div>https://github.com/rtcrump/commona</div><div>MIT</div>` : ""}</div>
+          <div class="footer">${n >= 5 ? `<code>npx commona init</code><div>A placeholder. It is not published.</div><div>https://github.com/rtcrump/commona</div><div>MIT</div>` : ""}</div>
           ${fake(false)}
         </div>`;
         return;
@@ -488,12 +488,12 @@
         const logs = state.logs || { O1: [], O2: [] };
         const inner = `<div class="log-wrap"><div class="log-scroll" id="log-scroll">
           <div class="log-block">
-            <h3>Rows O1's token returned</h3>
+            <h3>These are the rows O1's token returned.</h3>
             <div class="log-head"><span>time</span><span>agent</span><span>owner</span><span>action</span><span>result</span><span></span></div>
             ${logLines(logs.O1)}
           </div>
           <div class="log-block">
-            <h3>Rows O2's token returned</h3>
+            <h3>These are the rows O2's token returned.</h3>
             <div class="log-head"><span>time</span><span>agent</span><span>owner</span><span>action</span><span>result</span><span></span></div>
             ${logLines(logs.O2)}
           </div>

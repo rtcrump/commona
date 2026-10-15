@@ -26,19 +26,21 @@ The title card on the room and security clips draws a Commona mark for this reco
 
 ## Run
 
-From the repository root, with Node 22, Chrome, ffmpeg, and Xvfb:
+From the repository root, with Node 22, Chrome, ffmpeg, and Xvfb, run this command. Then pass `--take room`, `--take wake`, or `--take full` to record one earlier clip.
 
 ```bash
 npx tsx docs/demo/scripts/record.mjs --out /tmp/commona-demo --take lunch
 ```
+The default, with no `--take`, records those three clips.
+It does not record the lunch clip.
 
-`--take room`, `--take wake`, or `--take full` records one of the earlier clips. The default, with no `--take`, records those three. It does not record the lunch clip.
+The output directory must be outside the repository.
+`--take lunch` writes `lunch_meeting_demo_60s.mp4` and `lunch_demo_timings.json`.
 
-The output directory must sit outside the repository. `--take lunch` writes:
+The other takes write `room_two_owners_one_room.mp4`, `wake_up_agent_a2.mp4`, `full_demo_60s.mp4`, and `demo_timings.json`.
+The timings files include the M1 harness figure when `m1-report.json` is present, plus the logged timestamps from each take.
+Do not commit the output.
+The script refuses to overwrite a file that is already in the output directory.
 
-- `lunch_meeting_demo_60s.mp4`
-- `lunch_demo_timings.json`
-
-The other takes write `room_two_owners_one_room.mp4`, `wake_up_agent_a2.mp4`, `full_demo_60s.mp4`, and `demo_timings.json`. The timings files include the M1 harness figure when `m1-report.json` is present, plus the logged timestamps from each take. Do not commit the output. The script refuses to overwrite a file that is already in the output directory.
-
-`npx commona init` on the end card is the placeholder from the readme. The package is not published.
+`npx commona init` on the end card is the placeholder from the readme.
+The package is not published.
