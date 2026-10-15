@@ -128,6 +128,11 @@ for line in Path(".github/workflows/claude-safety-review.yml").read_text().split
         continue
     if "--json-schema" in line:
         raise SystemExit("claude workflow still passes a json schema")
+text = Path(".github/workflows/claude-safety-review.yml").read_text()
+if "--max-turns 30" not in text:
+    raise SystemExit("claude review turn cap drifted")
+if "Bash(gh pr diff:*)" not in text or "Bash(gh pr view:*)" not in text:
+    raise SystemExit("claude review cannot read the pull request diff")
 PY
 unset EXECUTION_FILE
 unset RUNNER_TEMP
