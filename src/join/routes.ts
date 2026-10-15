@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { hashToken, HTTP_STATUS, readBearerToken, type AuthPrincipal } from "../../contract/index.js";
+import { answerCheck, claimConnectLink, noteArrival, takePendingCheck } from "../onboarding/connect.js";
 import { openWelcome } from "../onboarding/join-flow.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
@@ -16,6 +17,32 @@ function requirePrincipal(deps: RoomDeps, authorization: string | string[] | und
   const principal = deps.tokens.authenticate(token);
   if (!principal) throw RoomHttpError.unauthorized();
   return principal;
+}
+
+function requireAgent(deps: RoomDeps, authorization: string | string[] | undefined): { agentId: string; ownerId: string } {
+  const principal = requirePrincipal(deps, authorization);
+  if (principal.kind !== "agent") throw RoomHttpError.unauthorized();
+  return { agentId: principal.agentId, ownerId: principal.ownerId };
+}
+
+function handoffDeps(deps: RoomDeps) {
+  return { db: deps.db, clock: deps.clock, tokens: deps.tokens };
+}
+
+function readClaim(body: unknown): { handoff: string; roomId: string } | null {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  const handoff = (body as { handoff?: unknown }).handoff;
+  const roomId = (body as { roomId?: unknown }).roomId;
+  if (typeof handoff !== "string" || typeof roomId !== "string") return null;
+  if (handoff.length === 0 || roomId.length === 0) return null;
+  return { handoff, roomId };
+}
+
+function readCheckId(body: unknown): string | null {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  const checkId = (body as { checkId?: unknown }).checkId;
+  if (typeof checkId !== "string" || checkId.length === 0) return null;
+  return checkId;
 }
 
 function originOf(request: FastifyRequest): string {
@@ -87,6 +114,50 @@ export function registerInviteRoutes(app: FastifyInstance, deps: RoomDeps): void
       reply.header("Set-Cookie", serializeCookie(INVITE_COOKIE, secret, "/j", maxAge));
     }
     return reply.code(HTTP_STATUS.ok).send(body);
+  });
+
+  app.post("/connect/claim", async (request, reply) => {
+    const parsed = readClaim(request.body);
+    if (!parsed) throw RoomHttpError.forbidden();
+    try {
+      const claimed = claimConnectLink(handoffDeps(deps), parsed.handoff, parsed.roomId);
+      reply.header("Cache-Control", "no-store");
+      reply.header("Referrer-Policy", "no-referrer");
+      return reply.code(HTTP_STATUS.ok).send({
+        agentId: claimed.agentId,
+        ownerId: claimed.ownerId,
+        roomId: claimed.roomId,
+        credential: claimed.credential,
+      });
+    } catch {
+      throw RoomHttpError.forbidden();
+    }
+  });
+
+  app.post("/connect/arrive", async (request, reply) => {
+    const agent = requireAgent(deps, request.headers.authorization);
+    try {
+      noteArrival(handoffDeps(deps), agent.agentId, agent.ownerId);
+    } catch {
+      throw RoomHttpError.forbidden();
+    }
+    reply.header("Cache-Control", "no-store");
+    return reply.code(HTTP_STATUS.ok).send({ ok: true });
+  });
+
+  app.get("/connect/pending", async (request, reply) => {
+    const agent = requireAgent(deps, request.headers.authorization);
+    const checkId = takePendingCheck(handoffDeps(deps), agent.agentId);
+    reply.header("Cache-Control", "no-store");
+    return reply.code(HTTP_STATUS.ok).send({ checkId });
+  });
+
+  app.post("/connect/check-in", async (request, reply) => {
+    const agent = requireAgent(deps, request.headers.authorization);
+    const checkId = readCheckId(request.body);
+    if (!checkId || !answerCheck(handoffDeps(deps), agent.agentId, checkId)) throw RoomHttpError.forbidden();
+    reply.header("Cache-Control", "no-store");
+    return reply.code(HTTP_STATUS.ok).send({ ok: true });
   });
 
   app.post<{ Params: { id: string } }>("/j/:id/accept", async (request, reply) => {

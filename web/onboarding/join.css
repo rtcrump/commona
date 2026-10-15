@@ -148,6 +148,26 @@ label.choice input {
   width: 1px;
 }
 
+ol {
+  margin: 0 0 1rem;
+  padding-left: 1.25rem;
+}
+
+.screen {
+  background: var(--quiet-paper);
+  color: var(--ink);
+  font-family: "Segoe UI", sans-serif;
+  font-size: 1rem;
+  line-height: 1.4;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  white-space: pre-wrap;
+}
+
+#copy-link {
+  margin: 0 0 1rem;
+}
+
 :focus-visible {
   outline: 3px solid var(--ink);
   outline-offset: 2px;

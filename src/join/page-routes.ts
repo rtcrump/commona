@@ -1,10 +1,14 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { hashToken } from "../../contract/index.js";
-import { prefersHtml, joinStylesheet } from "../onboarding/html.js";
+import { connectorUrl } from "../onboarding/connect.js";
+import { connectScript, prefersHtml, joinStylesheet } from "../onboarding/html.js";
 import {
   openConnect,
+  openConnectPage,
   openDone,
   openSharing,
+  prepareCopy,
+  submitCheck,
   submitName,
   submitSharing,
   type JoinResult,
@@ -65,8 +69,43 @@ export function registerJoinPages(app: FastifyInstance, deps: RoomDeps): void {
     return reply.type("text/css; charset=utf-8").header("Cache-Control", "no-store").send(joinStylesheet());
   });
 
+  app.get("/onboarding/connect.js", async (_request, reply) => {
+    return reply
+      .type("text/javascript; charset=utf-8")
+      .header("Cache-Control", "no-store")
+      .send(connectScript());
+  });
+
   app.get("/join/connect", async (_request, reply) => {
     return sendJoinResult(reply, openConnect());
+  });
+
+  app.get<{ Params: { id: string } }>("/j/:id/connect", async (request, reply) => {
+    return sendJoinResult(reply, openConnectPage(deps, request.params.id, request.headers.cookie));
+  });
+
+  app.post<{ Params: { id: string } }>("/j/:id/connect/link", async (request, reply) => {
+    const prepared = prepareCopy(deps, request.params.id, request.body, request.headers.cookie);
+    if (!prepared.ok) return sendJoinResult(reply, prepared.result);
+    const url = connectorUrl(process.env.COMMONA_CONNECT_URL?.trim() ?? "", prepared.secret, prepared.roomId);
+    reply.header("Cache-Control", "no-store");
+    reply.header("Referrer-Policy", "no-referrer");
+    if (!url) return reply.code(503).send({ error: "unavailable" });
+    const payload = { url };
+    const text = JSON.stringify(payload);
+    for (const secret of prepared.hidden) {
+      if (secret.length > 0 && (text.includes(secret) || text.includes(hashToken(secret)))) {
+        throw new Error("refusing to send a secret");
+      }
+    }
+    return reply.code(200).send(payload);
+  });
+
+  app.post<{ Params: { id: string } }>("/j/:id/connect/check", async (request, reply) => {
+    return sendJoinResult(
+      reply,
+      await submitCheck(deps, request.params.id, request.body, request.headers.cookie),
+    );
   });
 
   app.post<{ Params: { id: string } }>("/j/:id/continue", async (request, reply) => {

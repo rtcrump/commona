@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { loadConfig, type ConnectorConfig } from "./config.js";
+import { adoptHandoff } from "./handoff.js";
 import { createMcpServer, type JsonRpcNotification, type McpServer } from "./server.js";
 import { isDirectRun } from "../../src/listener/run.js";
 
@@ -15,6 +16,8 @@ export interface McpHttpServer {
 interface Session {
   server: McpServer;
   sse: ServerResponse | null;
+  stop?: () => void;
+  viaHandoff: boolean;
 }
 
 /**
@@ -57,6 +60,7 @@ export function startMcpHttp(options: {
         close: () =>
           new Promise((done, fail) => {
             for (const session of sessions.values()) {
+              session.stop?.();
               session.server.close();
               session.sse?.end();
             }
@@ -88,7 +92,11 @@ async function handle(
     json(response, 403, { error: "origin" });
     return;
   }
-  if (ctx.bearer && !bearerMatches(request, ctx.bearer)) {
+  const handoff = url.searchParams.get("handoff");
+  const handoffPresent = typeof handoff === "string" && handoff.length > 0;
+  const earlyId = sessionId(request);
+  const earlySession = earlyId ? ctx.sessions.get(earlyId) : undefined;
+  if (ctx.bearer && !handoffPresent && !earlySession?.viaHandoff && !bearerMatches(request, ctx.bearer)) {
     json(response, 401, { error: "unauthorized" });
     return;
   }
@@ -99,6 +107,7 @@ async function handle(
       json(response, 404, { error: "session" });
       return;
     }
+    session.stop?.();
     session.server.close();
     session.sse?.end();
     ctx.sessions.delete(id as string);
@@ -129,14 +138,41 @@ async function handle(
   const existingId = sessionId(request);
   let session = existingId ? ctx.sessions.get(existingId) : undefined;
   if (method === "initialize") {
+    let sessionConfig = ctx.config;
+    let stop: (() => void) | undefined;
+    const viaHandoff = handoffPresent;
+    if (handoffPresent && handoff) {
+      sessionConfig = {
+        baseUrl: ctx.config.baseUrl,
+        wakePollMs: ctx.config.wakePollMs,
+        wakeSpool: ctx.config.wakeSpool,
+      };
+      try {
+        stop = await adoptHandoff(sessionConfig, handoff, url.searchParams.get("room") ?? "", ctx.fetchImpl ?? fetch);
+      } catch {
+        json(response, 200, {
+          jsonrpc: "2.0",
+          id: requestId(message),
+          error: { code: -32001, message: "The connector link is dead." },
+        });
+        return;
+      }
+    }
     if (session) {
+      session.stop?.();
       session.server.close();
       session.sse?.end();
       ctx.sessions.delete(existingId as string);
     }
     const id = randomUUID();
-    const created = createMcpServer(ctx.config, ctx.fetchImpl);
-    session = { server: created, sse: null };
+    let created: McpServer;
+    try {
+      created = createMcpServer(sessionConfig, ctx.fetchImpl);
+    } catch (error) {
+      stop?.();
+      throw error;
+    }
+    session = { server: created, sse: null, stop, viaHandoff };
     created.onNotification((note) => writeSse(session as Session, note));
     ctx.sessions.set(id, session);
     const result = await created.handle(message);
@@ -230,6 +266,13 @@ function methodOf(message: unknown): string | undefined {
   if (typeof message !== "object" || message === null) return undefined;
   const method = (message as { method?: unknown }).method;
   return typeof method === "string" ? method : undefined;
+}
+
+function requestId(message: unknown): string | number | null {
+  if (typeof message !== "object" || message === null) return null;
+  const id = (message as { id?: unknown }).id;
+  if (typeof id === "string" || typeof id === "number") return id;
+  return null;
 }
 
 function readBody(request: IncomingMessage): Promise<string> {
