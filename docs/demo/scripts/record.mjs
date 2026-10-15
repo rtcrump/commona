@@ -6,12 +6,14 @@
  *
  * Uses fixture owners O1/O2 and agents A1/A2. The invented patient sentence
  * is built at runtime from fixtures/ and is not written into this file.
- * Timestamps on screen are taken from API bodies and audit rows.
- * This script does not publish the package.
+ * The lunch take reads docs/demo/fixtures/*.json and writes the agreed event
+ * only into temp copies of those calendar files.
+ * Timestamps on screen are taken from API bodies, audit rows, and the
+ * demo-calendar file write. This script does not publish the package.
  */
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -382,8 +384,8 @@ async function replyFromWake() {
   return res;
 }
 
-async function openRoom() {
-  publish({ phase: "room", ...blankSides(), caption: "Different owners, same room" });
+async function openRoom(caption = "Different owners, same room") {
+  publish({ phase: "room", ...blankSides(), caption });
   await createRoom();
   await addMember("O1", "A1");
   await addMember("O2", "A2");
@@ -627,6 +629,363 @@ async function runFullTake(t0) {
   await until(t0, 60000);
 }
 
+const LUNCH_DIR = path.join(root, "docs/demo/fixtures");
+const INVITE = "Let's do lunch. Have your agent talk to my agent.";
+
+function readJson(file) {
+  return JSON.parse(readFileSync(file, "utf8"));
+}
+
+function toMinutes(hhmm) {
+  const match = /^(\d{2}):(\d{2})$/.exec(hhmm);
+  if (!match) throw new Error(`bad clock time ${hhmm}`);
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function fromMinutes(mins) {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function planSlot(o1cal, o2cal, lengthMin) {
+  const a = o1cal.open?.[0];
+  const b = o2cal.open?.[0];
+  if (!a || !b || a.date !== b.date) throw new Error("open windows do not share a date");
+  let spans = [{ start: Math.max(toMinutes(a.start), toMinutes(b.start)), end: Math.min(toMinutes(a.end), toMinutes(b.end)) }];
+  if (spans[0].end <= spans[0].start) throw new Error("open windows do not overlap");
+  const busy = [...(o1cal.events || []), ...(o2cal.events || [])].filter((event) => event.date === a.date);
+  for (const event of busy) {
+    const bs = toMinutes(event.start);
+    const be = toMinutes(event.end);
+    spans = spans.flatMap((span) => {
+      if (be <= span.start || bs >= span.end) return [span];
+      const parts = [];
+      if (bs > span.start) parts.push({ start: span.start, end: Math.min(bs, span.end) });
+      if (be < span.end) parts.push({ start: Math.max(be, span.start), end: span.end });
+      return parts.filter((part) => part.end > part.start);
+    });
+  }
+  const fit = spans.find((span) => span.end - span.start >= lengthMin);
+  if (!fit) throw new Error("no free span fits the lunch length");
+  const slot = { date: a.date, start: fromMinutes(fit.start), end: fromMinutes(fit.start + lengthMin) };
+  const ss = toMinutes(slot.start);
+  const se = toMinutes(slot.end);
+  for (const event of busy) {
+    const bs = toMinutes(event.start);
+    const be = toMinutes(event.end);
+    if (ss < be && se > bs) throw new Error("planned slot overlaps a busy event");
+  }
+  return slot;
+}
+
+function loadLunchPlan() {
+  const o1cal = readJson(path.join(LUNCH_DIR, "o1-calendar.json"));
+  const o2cal = readJson(path.join(LUNCH_DIR, "o2-calendar.json"));
+  const o1pref = readJson(path.join(LUNCH_DIR, "o1-preferences.json"));
+  const o2pref = readJson(path.join(LUNCH_DIR, "o2-preferences.json"));
+  const places = readJson(path.join(LUNCH_DIR, "places.json"));
+  for (const cal of [o1cal, o2cal]) {
+    if (cal.label !== "demo calendar (fake data)") throw new Error("calendar label must be demo calendar (fake data)");
+  }
+  if (o1pref.cuisine !== o2pref.cuisine || o1pref.location !== o2pref.location) {
+    throw new Error("preferences do not share a cuisine and location");
+  }
+  if (o1pref.lunchLengthMinutes !== o2pref.lunchLengthMinutes) throw new Error("lunch length differs");
+  const place = (places.places || []).find((item) =>
+    item.cuisine === o1pref.cuisine &&
+    item.location === o1pref.location &&
+    Array.isArray(item.okFor) &&
+    item.okFor.includes(o1pref.dietary) &&
+    item.okFor.includes(o2pref.dietary)
+  );
+  if (!place) throw new Error("no place matches both preferences");
+  const slot = planSlot(o1cal, o2cal, o1pref.lunchLengthMinutes);
+  return { o1cal, o2cal, o1pref, o2pref, place, slot };
+}
+
+function windowLine(ownerId, cal, pref) {
+  const open = cal.open[0];
+  return `${ownerId} can do lunch ${open.date} ${open.start}-${open.end}. Prefers ${pref.cuisine}, ${pref.location}, ${pref.dietary}.`;
+}
+
+function proposalLine(cal, pref, place, slot) {
+  const open = cal.open[0];
+  return `O2 can do lunch ${open.date} ${open.start}-${open.end}. Prefers ${pref.cuisine}, ${pref.location}, ${pref.dietary}. ${place.name} fits. Propose ${slot.date} ${slot.start}-${slot.end}.`;
+}
+
+function agreeLine(slot, place) {
+  return `Agreed. ${slot.date} ${slot.start}-${slot.end} at ${place.name}, ${place.location}.`;
+}
+
+function calendarView(cal, pref, extra = {}) {
+  return {
+    label: cal.label,
+    timezone: cal.timezone,
+    open: cal.open,
+    events: (cal.events || []).map((event) => ({ ...event })),
+    preferences: { cuisine: pref.cuisine, location: pref.location, dietary: pref.dietary },
+    ...extra,
+  };
+}
+
+async function putSharingAs(fromOwnerId, toOwnerId, level, eventName) {
+  const res = await api("PUT", `/rooms/${session.roomId}/sharing`, ownerToken(fromOwnerId), {
+    fromOwnerId,
+    toOwnerId,
+    level,
+  });
+  if (res.status !== 200 || res.json?.sharing?.level !== level) {
+    throw new Error(`${eventName} failed: ${res.status} ${res.text}`);
+  }
+  const stored = publishSharing();
+  const audit = [...await readLog(fromOwnerId)].reverse().find((row) => row.action === "setting_change");
+  note(eventName, {
+    level,
+    label: labelOf(level),
+    fromOwnerId,
+    toOwnerId,
+    httpStatus: res.status,
+    auditTs: audit?.ts ?? null,
+    stored,
+    source: "PUT /rooms/:roomId/sharing and GET /log for that owner",
+  });
+  return res;
+}
+
+async function wakeAuditAfter(ownerId, agentId, afterTs) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const rows = await readLog(ownerId);
+    const wake = [...rows].reverse().find((row) =>
+      row.action === "wake" && row.agentId === agentId && row.result === "ok" && row.ts >= afterTs
+    );
+    if (wake) return wake.ts;
+    await sleep(30);
+  }
+  throw new Error(`${ownerId}'s log has no wake row for ${agentId} at or after ${afterTs}`);
+}
+
+async function captureLunchWake(agentId, ownerId, postName, hit, options) {
+  const event = hit.json;
+  const post = session.events.find((entry) => entry.name === postName);
+  const auditTs = await wakeAuditAfter(ownerId, agentId, post?.createdAt ?? "");
+  const text = options.text;
+  const activityOnly = event?.disclosure === "activity_only" && event.content === undefined && !hit.raw.includes(text);
+  const contentMatches = event?.disclosure === "content" && event.content?.text === text;
+  note(`${agentId.toLowerCase()}_wake_${postName}`, {
+    occurredAt: event?.occurredAt ?? null,
+    auditTs,
+    disclosure: event?.disclosure ?? null,
+    round: event?.round ?? null,
+    sinkReceivedAt: new Date(hit.receivedAt).toISOString(),
+    sinkReceivedAtMs: hit.receivedAt,
+    webhookArrivalMs: post ? hit.receivedAt - post.requestStartedMs : null,
+    webhookArrivalNote: "webhook sink receivedAt minus Date.now() before the POST. Not drawn on screen.",
+    postCreatedAt: post?.createdAt ?? null,
+    postToWakeAuditMs: delta(post?.createdAt, auditTs),
+    postToOccurredAtMs: delta(post?.createdAt, event?.occurredAt),
+    activityOnly,
+    contentMatches,
+    source: "webhook JSON occurredAt and the recipient audit wake ts",
+  });
+  if (options.activityOnly && !activityOnly) throw new Error(`${postName} wake was not activity-only`);
+  if (options.content && !contentMatches) throw new Error(`${postName} wake did not include the post text`);
+  return { occurredAt: event?.occurredAt ?? "", auditTs, disclosure: event?.disclosure ?? "" };
+}
+
+async function runLunchTake(t0) {
+  const plan = loadLunchPlan();
+  const committed = {
+    O1: readFileSync(path.join(LUNCH_DIR, "o1-calendar.json"), "utf8"),
+    O2: readFileSync(path.join(LUNCH_DIR, "o2-calendar.json"), "utf8"),
+  };
+  const workDir = mkdtempSync(path.join(tmpdir(), "commona-lunch-cal-"));
+  const working = {
+    O1: path.join(workDir, "o1-calendar.json"),
+    O2: path.join(workDir, "o2-calendar.json"),
+  };
+  copyFileSync(path.join(LUNCH_DIR, "o1-calendar.json"), working.O1);
+  copyFileSync(path.join(LUNCH_DIR, "o2-calendar.json"), working.O2);
+  const readWorking = (ownerId) => readJson(working[ownerId]);
+  publish({
+    endLines: [
+      `${plan.slot.date} ${plan.slot.start}-${plan.slot.end}`,
+      `${plan.place.name}, ${plan.place.location}`,
+      "Both demo calendars updated",
+      "Every action is in the audit log",
+    ],
+    calendars: {
+      O1: calendarView(readWorking("O1"), plan.o1pref),
+      O2: calendarView(readWorking("O2"), plan.o2pref),
+    },
+  });
+  note("plan", {
+    slot: plan.slot,
+    place: { name: plan.place.name, location: plan.place.location, cuisine: plan.place.cuisine },
+    o1Preferences: plan.o1pref,
+    o2Preferences: plan.o2pref,
+    workDir,
+    shotGatesMs: [4500, 9000, 15000, 21000, 30000, 39000, 48000, 54500, 60000],
+    shotGateNote: "until() waits are the clip's shot clock. They are not server latency and are not drawn on screen.",
+    source: "docs/demo/fixtures JSON. Calendars are local files, not a calendar service.",
+  });
+  await until(t0, 4500);
+  const initial = await openRoom("Each agent reads its own demo calendar.");
+  if (initial.some((row) => row.level !== SharingLevel.None)) throw new Error("a new pair was not None");
+  publish({
+    calendars: {
+      O1: calendarView(readWorking("O1"), plan.o1pref),
+      O2: calendarView(readWorking("O2"), plan.o2pref),
+    },
+  });
+
+  await until(t0, 9000);
+  const hiddenIndex = sinks.A2.hits.length;
+  const invite = await postAs("A1", INVITE, "invite_post");
+  if (invite.json.outcome !== "accepted") throw new Error("invite was not accepted");
+  const hiddenFeeds = await refreshFeeds();
+  const a2Hidden = !hiddenFeeds.a2.some((item) => item.text === INVITE);
+  const a1SeesOwn = hiddenFeeds.a1.some((item) => item.text === INVITE);
+  note("invite_hidden", { a2Hidden, a1SeesOwn, source: "GET feed while sharing is None" });
+  if (!a2Hidden) throw new Error("A2 saw the invite while sharing was None");
+  if (!a1SeesOwn) throw new Error("A1 did not see its own invite");
+  const hiddenHit = await waitForHit(sinks.A2, hiddenIndex, "A2 invite");
+  const hiddenWake = await captureLunchWake("A2", "O2", "invite_post", hiddenHit, { activityOnly: true, text: INVITE });
+  publish({
+    caption: "Sharing is None. A2's feed does not include the invite.",
+    a2: {
+      ...state.a2,
+      status: "webhook received",
+      statusKind: "webhook",
+      note: `O1's post is not in this feed. Wake ${hiddenWake.occurredAt}, activity_only.`,
+    },
+  });
+
+  await until(t0, 15000);
+  await putSharingAs("O1", "O2", SharingLevel.Messages, "sharing_put_messages");
+  await putSharingAs("O2", "O1", SharingLevel.Messages, "sharing_put_messages_reverse");
+  const sharedFeeds = await refreshFeeds();
+  const a2SeesInvite = sharedFeeds.a2.some((item) => item.text === INVITE);
+  note("invite_visible", { a2SeesInvite, source: "GET feed after both owners set Messages" });
+  if (!a2SeesInvite) throw new Error("A2 still cannot see the invite after Messages");
+  publish({
+    caption: "Both owners raised sharing to Messages.",
+    a2: { ...state.a2, status: "member", statusKind: "member", note: "A2's feed now includes the invite." },
+  });
+
+  await until(t0, 21000);
+  const availabilityText = windowLine("O1", plan.o1cal, plan.o1pref);
+  const availabilityIndex = sinks.A2.hits.length;
+  const availability = await postAs("A1", availabilityText, "availability_post");
+  if (availability.json.outcome !== "accepted") throw new Error("availability post was not accepted");
+  const availabilityHit = await waitForHit(sinks.A2, availabilityIndex, "A2 availability");
+  await captureLunchWake("A2", "O2", "availability_post", availabilityHit, { content: true, text: availabilityText });
+  const availabilityFeeds = await refreshFeeds();
+  if (!availabilityFeeds.a2.some((item) => item.text === availabilityText)) {
+    throw new Error("A2's feed did not include O1's window");
+  }
+  publish({ caption: "A1 posted O1's window and preferences.", a2: { ...state.a2, note: "" } });
+
+  await until(t0, 30000);
+  const proposalText = proposalLine(plan.o2cal, plan.o2pref, plan.place, plan.slot);
+  const proposalIndex = sinks.A1.hits.length;
+  const proposal = await postAs("A2", proposalText, "proposal_post");
+  if (proposal.json.outcome !== "accepted") throw new Error("proposal was not accepted");
+  const proposalHit = await waitForHit(sinks.A1, proposalIndex, "A1 proposal");
+  await captureLunchWake("A1", "O1", "proposal_post", proposalHit, { content: true, text: proposalText });
+  const proposalFeeds = await refreshFeeds();
+  if (!proposalFeeds.a1.some((item) => item.text === proposalText)) {
+    throw new Error("A1's feed did not include the proposal");
+  }
+  publish({
+    caption: "A2 proposed Demo Noodle Bar.",
+    a2: { ...state.a2, status: "replied", statusKind: "replied", note: "" },
+  });
+
+  await until(t0, 39000);
+  const agreedText = agreeLine(plan.slot, plan.place);
+  const agreeIndex = sinks.A2.hits.length;
+  const agreed = await postAs("A1", agreedText, "agree_post");
+  if (agreed.json.outcome !== "accepted") throw new Error("agreement was not accepted");
+  const agreementAt = agreed.json.post.createdAt;
+  const agreeHit = await waitForHit(sinks.A2, agreeIndex, "A2 agree");
+  await captureLunchWake("A2", "O2", "agree_post", agreeHit, { content: true, text: agreedText });
+  const writes = {};
+  for (const ownerId of ["O1", "O2"]) {
+    const cal = readWorking(ownerId);
+    const writtenAt = new Date().toISOString();
+    cal.events.push({
+      date: plan.slot.date,
+      start: plan.slot.start,
+      end: plan.slot.end,
+      title: `Lunch at ${plan.place.name}`,
+      place: plan.place.name,
+      location: plan.place.location,
+      agreementCreatedAt: agreementAt,
+      writtenAt,
+      added: true,
+    });
+    writeFileSync(working[ownerId], `${JSON.stringify(cal, null, 2)}\n`);
+    const stored = readWorking(ownerId);
+    const added = stored.events.find((event) => event.added);
+    if (!added || added.writtenAt !== writtenAt || added.agreementCreatedAt !== agreementAt) {
+      throw new Error(`${ownerId} calendar file did not store the lunch`);
+    }
+    writes[ownerId] = { writtenAt, file: working[ownerId], event: added };
+    note(`calendar_write_${ownerId}`, {
+      writtenAt,
+      agreementCreatedAt: agreementAt,
+      fileWriteAfterAgreementMs: delta(agreementAt, writtenAt),
+      fileWriteNote: "new Date().toISOString() immediately before writeFileSync on the temp copy. Not a calendar-service latency. The gap is not drawn on screen.",
+      event: added,
+      source: "temp copy of docs/demo/fixtures calendar JSON",
+    });
+  }
+  if (readFileSync(path.join(LUNCH_DIR, "o1-calendar.json"), "utf8") !== committed.O1) {
+    throw new Error("committed O1 calendar changed");
+  }
+  if (readFileSync(path.join(LUNCH_DIR, "o2-calendar.json"), "utf8") !== committed.O2) {
+    throw new Error("committed O2 calendar changed");
+  }
+  const agreedFeeds = await refreshFeeds();
+  if (!agreedFeeds.a1.some((item) => item.text === agreedText) || !agreedFeeds.a2.some((item) => item.text === agreedText)) {
+    throw new Error("a feed is missing the agreement");
+  }
+  publish({
+    caption: "Agreed. Both demo calendars updated.",
+    calendars: {
+      O1: calendarView(readWorking("O1"), plan.o1pref, { agreementAt, writtenAt: writes.O1.writtenAt }),
+      O2: calendarView(readWorking("O2"), plan.o2pref, { agreementAt, writtenAt: writes.O2.writtenAt }),
+    },
+  });
+
+  await until(t0, 48000);
+  const logs = { O1: await readLog("O1"), O2: await readLog("O2") };
+  const actions = new Set([...logs.O1, ...logs.O2].map((row) => row.action));
+  for (const required of ["post", "wake", "setting_change"]) {
+    if (!actions.has(required)) throw new Error(`audit log is missing ${required}`);
+  }
+  if (actions.has("block")) throw new Error("lunch take recorded a block");
+  note("audit", {
+    o1: logs.O1.map(stripDetail),
+    o2: logs.O2.map(stripDetail),
+    source: "GET /log?owner=O1 and GET /log?owner=O2",
+  });
+  publish({ phase: "audit", caption: "Every action, logged. Append-only.", logs });
+  await until(t0, 54500);
+  publish({ phase: "end", caption: "", endVisible: 1 });
+  await until(t0, 55800);
+  publish({ endVisible: 2 });
+  await until(t0, 57000);
+  publish({ endVisible: 3 });
+  await until(t0, 58200);
+  publish({ endVisible: 4 });
+  await until(t0, 59000);
+  publish({ endVisible: 5 });
+  await until(t0, 60000);
+}
+
 function stripDetail(row) {
   return {
     seq: row.seq,
@@ -714,6 +1073,12 @@ async function recordTake(name, file, run) {
   await startSession();
   try {
     publish({ phase: "title", caption: "", endVisible: 0, roomId: null, ...blankSides() });
+    if (name === "lunch") {
+      publish({
+        story: "lunch",
+        titleLines: ["Let's do lunch.", "Have your agent talk to my agent."],
+      });
+    }
     if (name === "wake") {
       await openRoom();
       publish({
@@ -732,7 +1097,9 @@ async function recordTake(name, file, run) {
     const t0 = Date.now();
     if (name === "room") await runRoomTake(t0);
     else if (name === "wake") await runWakeTake(t0);
-    else await runFullTake(t0);
+    else if (name === "full") await runFullTake(t0);
+    else if (name === "lunch") await runLunchTake(t0);
+    else throw new Error(`unknown take ${name}`);
     await sleep(200);
     await stop();
     const finishedAt = new Date().toISOString();
@@ -748,11 +1115,17 @@ const files = {
   room: path.join(outDir, "room_two_owners_one_room.mp4"),
   wake: path.join(outDir, "wake_up_agent_a2.mp4"),
   full: path.join(outDir, "full_demo_60s.mp4"),
+  lunch: path.join(outDir, "lunch_meeting_demo_60s.mp4"),
 };
+const lunchOnly = wanted.length === 1 && wanted[0] === "lunch";
+const timingsFile = lunchOnly ? "lunch_demo_timings.json" : "demo_timings.json";
+const timingsPath = path.join(outDir, timingsFile);
 
 try {
+  if (existsSync(timingsPath)) throw new Error(`refusing to overwrite ${timingsPath}`);
   for (const name of wanted) {
     if (!files[name]) throw new Error(`unknown take ${name}`);
+    if (existsSync(files[name])) throw new Error(`refusing to overwrite ${files[name]}`);
     console.log(`recording ${name}`);
     const result = await recordTake(name, files[name], null);
     takes.push({ take: name, ...result });
@@ -784,10 +1157,14 @@ try {
 
 const timings = {
   recordedAt: new Date().toISOString(),
-  fakeData: "O1 O2 A1 A2 and the fixture patient sentence. No real names or accounts.",
-  onScreenTimes: "ISO timestamps shown in the clips are post.createdAt, wake occurredAt, audit ts, or notice createdAt from that take.",
+  fakeData: lunchOnly
+    ? "O1, O2, A1, A2. Calendars and preferences are local JSON fixtures in docs/demo/fixtures. No calendar service."
+    : "O1 O2 A1 A2 and the fixture patient sentence. No real names or accounts.",
+  onScreenTimes: lunchOnly
+    ? "ISO timestamps shown are post.createdAt, webhook occurredAt, audit ts, or the demo-calendar file write time from new Date().toISOString() at writeFileSync."
+    : "ISO timestamps shown in the clips are post.createdAt, wake occurredAt, audit ts, or notice createdAt from that take.",
   m1,
   takes,
 };
-writeFileSync(path.join(outDir, "demo_timings.json"), `${JSON.stringify(timings, null, 2)}\n`);
-console.log(`wrote ${path.join(outDir, "demo_timings.json")}`);
+writeFileSync(timingsPath, `${JSON.stringify(timings, null, 2)}\n`);
+console.log(`wrote ${timingsPath}`);

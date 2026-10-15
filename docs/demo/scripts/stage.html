@@ -237,6 +237,55 @@
       border-top: 1px solid transparent;
     }
     .log-line.mark { border-top-color: var(--line); font-weight: 700; }
+    .log-line span:first-child { white-space: nowrap; }
+    .cal { margin-top: 10px; }
+    .cal-label { font-size: 13px; font-weight: 700; letter-spacing: 0.01em; }
+    .cal-sub { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .cal-row {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      font-size: 13px;
+      padding: 3px 0;
+    }
+    .cal-row .when {
+      font-family: "Liberation Mono", "DejaVu Sans Mono", monospace;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .cal-row.open .title { color: var(--muted); }
+    .cal-row.added {
+      background: white;
+      border: 1px solid var(--ok);
+      border-radius: 8px;
+      padding: 4px 8px;
+      margin-top: 4px;
+      font-weight: 700;
+    }
+    .cal-row.added .when { color: var(--ok); }
+    .cal-row .tag {
+      color: var(--ok);
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .cal-pref { margin-top: 6px; font-size: 13px; }
+    .cal-stamp {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 3px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .cal-stamp .mono { color: var(--ink); }
+    .frame.lunch .share { margin-top: 8px; padding: 8px 14px; }
+    .frame.lunch .share .level { font-size: 26px; }
+    .frame.lunch .panels { padding-top: 8px; }
+    .frame.lunch .panel h2 { font-size: 18px; }
+    .frame.lunch .item .text { font-size: 14px; }
+    .frame.lunch .caption { height: 56px; font-size: 22px; }
     .log-head {
       display: grid;
       grid-template-columns: 248px 72px 64px 150px 88px 1fr;
@@ -288,13 +337,47 @@
         </div>`).join("")}</div>`;
     }
 
-    function panel(title, side, lead) {
+    function calendarHtml(cal) {
+      if (!cal) return "";
+      const rows = [];
+      const booked = (cal.events || []).some((event) => event.added);
+      if (!booked) {
+        for (const window of cal.open || []) {
+          rows.push({ kind: "open", date: window.date, start: window.start, end: window.end, title: "open", added: false });
+        }
+      }
+      for (const event of cal.events || []) {
+        rows.push({ kind: "event", date: event.date, start: event.start, end: event.end, title: event.title, added: Boolean(event.added) });
+      }
+      rows.sort((a, b) => `${a.date} ${a.start}`.localeCompare(`${b.date} ${b.start}`));
+      const prefs = cal.preferences;
+      const prefLine = prefs ? `${prefs.cuisine} · ${prefs.location} · ${prefs.dietary}` : "";
+      const stamps = [];
+      if (cal.agreementAt) stamps.push(["agreement post", cal.agreementAt]);
+      if (cal.writtenAt) stamps.push(["file write", cal.writtenAt]);
+      return `<div class="cal">
+        <div class="cal-label">${esc(cal.label || "demo calendar (fake data)")}</div>
+        <div class="cal-sub">local JSON fixture${cal.timezone ? ` · ${esc(cal.timezone)}` : ""}</div>
+        ${rows.map((row) => `
+          <div class="cal-row${row.added ? " added" : ""}${row.kind === "open" ? " open" : ""}">
+            <span class="when">${esc(row.date)} ${esc(row.start)}-${esc(row.end)}</span>
+            <span class="title">${esc(row.title)}</span>
+            ${row.added ? '<span class="tag">added</span>' : ""}
+          </div>`).join("")}
+        ${prefLine ? `<div class="cal-pref">${esc(prefLine)}</div>` : ""}
+        ${stamps.map(([k, v]) => `<div class="cal-stamp"><span>${esc(k)}</span><span class="mono">${esc(v)}</span></div>`).join("")}
+      </div>`;
+    }
+
+    function panel(title, side, lead, itemLimit) {
       const kind = side.statusKind || "member";
+      const items = side.items || [];
+      const shown = itemLimit && items.length > itemLimit ? items.slice(items.length - itemLimit) : items;
       return `<section class="panel">
         <h2>${esc(title)}</h2>
         <div class="status ${esc(kind)}">${esc(side.status || "")}</div>
         ${lead || ""}
-        ${itemsHtml(side.items)}
+        ${itemsHtml(shown)}
         ${side.note ? `<div class="note">${esc(side.note)}</div>` : ""}
       </section>`;
     }
@@ -352,7 +435,7 @@
     }
 
     function shell(state, inner, caption) {
-      return `<div class="frame">
+      return `<div class="frame${state.story === "lunch" ? " lunch" : ""}">
         <header class="top">
           <div class="brand">${mark()} Commona</div>
           <div class="room-id">${state.roomId ? esc(state.roomId) : ""}</div>
@@ -365,6 +448,17 @@
 
     function render(state) {
       if (state.phase === "title") {
+        if (state.story === "lunch") {
+          const lines = state.titleLines || ["Let's do lunch.", "Have your agent talk to my agent."];
+          root.innerHTML = `<div class="center">
+            ${bigMark()}
+            <div class="concept">Commona</div>
+            <h1>${esc(lines[0] || "")}</h1>
+            <div class="line">${esc(lines[1] || "")}</div>
+            ${fake(false)}
+          </div>`;
+          return;
+        }
         root.innerHTML = `<div class="center">
           ${bigMark()}
           <div class="concept">Concept 1</div>
@@ -375,7 +469,7 @@
         return;
       }
       if (state.phase === "end") {
-        const lines = [
+        const lines = state.endLines || [
           "Sharing per owner, starts at None",
           "Patient-name block (safety net, not a guarantee)",
           "Audit log each owner reads",
@@ -420,8 +514,11 @@
         return;
       }
       scrollStarted = false;
-      const a1 = panel("O1 · agent A1", state.a1 || {});
-      let a2 = panel("O2 · agent A2", state.a2 || {});
+      const a1Lead = calendarHtml(state.calendars && state.calendars.O1);
+      const a2Lead = calendarHtml(state.calendars && state.calendars.O2);
+      const itemLimit = state.story === "lunch" ? 3 : 0;
+      const a1 = panel("O1 · agent A1", state.a1 || {}, a1Lead, itemLimit);
+      let a2 = panel("O2 · agent A2", state.a2 || {}, a2Lead, itemLimit);
       if (state.phase === "block" && state.block) {
         const inner = `${shareHtml(state)}<div class="panels">${panel("O1 · agent A1", state.a1 || {}, heldHtml(state.block))}${panel("O2 · agent A2", state.a2 || {})}</div>`;
         root.innerHTML = shell(state, inner, state.caption);
