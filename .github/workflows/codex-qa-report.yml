@@ -4,10 +4,10 @@ on:
   pull_request_review:
     types: [submitted]
 
-# Least privilege: GITHUB_TOKEN only reads the review. The report is pushed
-# to rtcrump/commona-dev with COMMONA_DEV_TOKEN, not with this token.
+# Least privilege. The report is pushed to rtcrump/commona-dev with
+# COMMONA_DEV_TOKEN. This token only reads the review and the archive script.
 permissions:
-  contents: none
+  contents: read
   pull-requests: read
 
 # One archive at a time per pull request, so two reviews cannot pick the same round.
@@ -17,13 +17,28 @@ concurrency:
 
 jobs:
   archive:
-    if: github.event.review.user.login == 'chatgpt-codex-connector[bot]'
+    # Exact login match. Copilot's default is a candidate: confirm it from the
+    # first real review. Override with the repository variable
+    # COPILOT_REVIEWER_LOGINS, a JSON array of logins.
+    if: >-
+      github.event.review.user.login == 'chatgpt-codex-connector[bot]' ||
+      contains(fromJSON(vars.COPILOT_REVIEWER_LOGINS || '["copilot-pull-request-reviewer[bot]"]'), github.event.review.user.login)
     runs-on: ubuntu-latest
+    env:
+      COPILOT_LOGINS: ${{ vars.COPILOT_REVIEWER_LOGINS || '["copilot-pull-request-reviewer[bot]"]' }}
     steps:
-      # Injection protection: the review body, html_url, commit_id, and every
-      # other event field are untrusted. They are passed only as environment
-      # variables. The run script does not interpolate event text, writes the
-      # body with printf '%s', and quotes every variable.
+      - name: Check out the archive scripts
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      # Injection protection: the review body, html_url, commit_id, title,
+      # branch names, login, and every other event field are untrusted. They
+      # are passed only as environment variables. The run script does not
+      # interpolate event text, writes the body with printf '%s', and quotes
+      # every variable.
       - name: Collect review and inline comments
         env:
           GH_TOKEN: ${{ github.token }}
@@ -33,18 +48,23 @@ jobs:
           COMMIT_ID: ${{ github.event.review.commit_id }}
           HTML_URL: ${{ github.event.review.html_url }}
           REVIEWER: ${{ github.event.review.user.login }}
+          TITLE: ${{ github.event.pull_request.title }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           BODY: ${{ github.event.review.body }}
         run: |
           set -euo pipefail
+          kind="$(python3 .github/scripts/reviewer_kind.py)"
+          case "${kind}" in
+            codex) status="blocking" ;;
+            copilot) status="advisory" ;;
+            *) printf '%s\n' "refusing review kind" >&2; exit 1 ;;
+          esac
           case "${PR}" in
             ''|*[!0-9]*) printf '%s\n' "PR number is not an integer" >&2; exit 1 ;;
           esac
           case "${RID}" in
             ''|*[!0-9]*) printf '%s\n' "review id is not an integer" >&2; exit 1 ;;
-          esac
-          case "${REVIEWER}" in
-            'chatgpt-codex-connector[bot]') ;;
-            *) printf '%s\n' "reviewer is not the Codex connector" >&2; exit 1 ;;
           esac
           case "${REPO}" in
             */*/*|'') printf '%s\n' "refusing repository" >&2; exit 1 ;;
@@ -58,16 +78,14 @@ jobs:
             ''|*[!A-Za-z0-9_.-]*) printf '%s\n' "refusing repository name" >&2; exit 1 ;;
           esac
           printf '%s' "${BODY}" > review-body.txt
-          {
-            printf '# Codex QA – PR #%s – review %s\n' "${PR}" "${RID}"
-            printf 'Commit: %s\n' "${COMMIT_ID}"
-            printf 'Link: %s\n' "${HTML_URL}"
-            printf '\n'
-            sed 's/^/> /' review-body.txt
-            printf '\n## Findings\n'
-            gh api "repos/${REPO}/pulls/${PR}/reviews/${RID}/comments" --paginate \
-              --jq '.[] | "### \(.path):\(.line // .original_line)\n\(.body)\n"'
-          } > report.md
+          gh api "repos/${REPO}/pulls/${PR}/reviews/${RID}/comments" --paginate \
+            --jq '.[] | "### \(.path):\(.line // .original_line)\n\(.body)\n"' > findings.txt
+          export KIND="${kind}"
+          export STATUS="${status}"
+          export BODY_FILE="review-body.txt"
+          export FINDINGS_FILE="findings.txt"
+          bash .github/scripts/write-review-report.sh
+          printf '%s\n' "${kind}" > review-kind.txt
 
       - name: Check out commona-dev
         uses: actions/checkout@v4
@@ -80,70 +98,13 @@ jobs:
       - name: Commit report
         env:
           PR: ${{ github.event.pull_request.number }}
+          BODY_FILE: report.md
         run: |
           set -euo pipefail
-          case "${PR}" in
-            ''|*[!0-9]*) printf '%s\n' "PR number is not an integer" >&2; exit 1 ;;
+          kind="$(tr -d '\n' < review-kind.txt)"
+          case "${kind}" in
+            codex|copilot) ;;
+            *) printf '%s\n' "refusing review kind" >&2; exit 1 ;;
           esac
-          cd dev
-          mkdir -p development/qa-reports
-          N=0
-          for f in development/qa-reports/pr-"${PR}"-round-*.md; do
-            [ -e "${f}" ] || continue
-            base=$(basename -- "${f}")
-            prefix="pr-${PR}-round-"
-            round="${base#"${prefix}"}"
-            round="${round%.md}"
-            case "${round}" in
-              ''|*[!0-9]*) continue ;;
-            esac
-            N=$((N + 1))
-          done
-          R=$((N + 1))
-          if [ "${R}" -gt 100 ]; then
-            printf '%s\n' "round number is out of range" >&2
-            exit 1
-          fi
-          while [ -e "development/qa-reports/pr-${PR}-round-${R}.md" ]; do
-            R=$((R + 1))
-            if [ "${R}" -gt 100 ]; then
-              printf '%s\n' "round number is out of range" >&2
-              exit 1
-            fi
-          done
-          case "${R}" in
-            ''|*[!0-9]*) printf '%s\n' "round is not an integer" >&2; exit 1 ;;
-          esac
-          dest="development/qa-reports/pr-${PR}-round-${R}.md"
-          case "${dest}" in
-            development/qa-reports/pr-[0-9]*-round-[0-9]*.md) ;;
-            *) printf '%s\n' "refusing report path" >&2; exit 1 ;;
-          esac
-          cp -- ../report.md "${dest}"
-          git config user.name "codex-qa-bot"
-          git config user.email "codex-qa-bot@users.noreply.github.com"
-          git add -- "${dest}"
-          git commit -m "qa(pr-${PR}): codex round ${R} report"
-          branch=$(git branch --show-current)
-          case "${branch}" in
-            ''|*[!A-Za-z0-9._/-]*) printf '%s\n' "refusing branch name" >&2; exit 1 ;;
-          esac
-          set +e
-          push_out=$(git push origin "HEAD:${branch}" 2>&1)
-          push_status=$?
-          set -e
-          printf '%s\n' "${push_out}"
-          if [ "${push_status}" -ne 0 ]; then
-            case "${push_out}" in
-              *non-fast-forward*|*fetch\ first*|*remote\ contains\ work\ that\ you\ do*)
-                printf '%s\n' "push conflict; retrying once" >&2
-                git fetch origin "${branch}"
-                git rebase "origin/${branch}"
-                git push origin "HEAD:${branch}"
-                ;;
-              *)
-                printf '%s\n' "push failed" >&2
-                exit "${push_status}"
-                ;;
-            esac
-          fi
+          export KIND="${kind}"
+          bash .github/scripts/file-qa-report.sh
