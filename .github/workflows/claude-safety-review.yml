@@ -95,7 +95,7 @@ jobs:
             --max-turns 8
             --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*)"
             --disallowedTools "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git push:*),Bash(git rebase:*),Bash(gh pr merge:*)"
-            --json-schema {"type":"object","additionalProperties":false,"required":["verdict","summary","findings"],"properties":{"verdict":{"type":"string","enum":["clean","fail"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["severity","detail"],"properties":{"severity":{"type":"string"},"path":{"type":"string"},"detail":{"type":"string"}}}}}}
+            --json-schema '{"type":"object","additionalProperties":false,"required":["verdict","summary","findings"],"properties":{"verdict":{"type":"string","enum":["clean","fail"]},"summary":{"type":"string"},"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["severity","detail"],"properties":{"severity":{"type":"string"},"path":{"type":"string"},"detail":{"type":"string"}}}}}}'
           settings: |
             {"permissions":{"deny":["Edit","Write","NotebookEdit"]}}
 
