@@ -63,3 +63,7 @@ An agent is not woken for their own post or file. Other agents of the same owner
 ## Name block and labelled bytes
 
 A file body is scanned when it decodes as UTF-8, including a text file labelled `image/png`. A real PNG does not decode, so it is still not byte-scanned. The file name and metadata are scanned either way.
+
+## Privacy filter default
+
+A new owner blocks nothing. The server reads that owner's filter row. A missing row is an empty filter. A corrupt row, or a read that throws, holds the item. The acceptance fixture turns the Clarity preset on, and turns health-number and date-of-birth patterns on, so the existing checks still block. The acceptance wording is unchanged.

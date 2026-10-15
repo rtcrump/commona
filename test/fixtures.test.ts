@@ -25,6 +25,17 @@ describe("fixtures", () => {
     }[];
     expect(agents.map((agent) => agent.id)).toEqual(["A1", "A2", "AX"]);
     expect(agents.every((agent) => agent.webhook_url.includes("127.0.0.1"))).toBe(true);
+    const filters = db
+      .prepare(
+        "SELECT owner_id, terms_json, patterns_json, presets_json FROM privacy_filters ORDER BY owner_id",
+      )
+      .all() as { owner_id: string; terms_json: string; patterns_json: string; presets_json: string }[];
+    expect(filters.map((row) => row.owner_id)).toEqual(["O1", "O2", "O3"]);
+    for (const row of filters) {
+      expect(JSON.parse(row.terms_json)).toEqual([]);
+      expect(JSON.parse(row.patterns_json)).toEqual(["health_number", "dob"]);
+      expect(JSON.parse(row.presets_json)).toEqual(["clarity-demo"]);
+    }
     db.close();
   });
 

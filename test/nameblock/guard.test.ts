@@ -11,11 +11,13 @@ import {
   blockNoticeMessage,
   feedIncludes,
 } from "../../contract/index.js";
-import { createContentGuard, fileBodyIsScanned, normalizeForNameMatch } from "../../src/guard/index.js";
+import { createContentGuard, fileBodyIsScanned, normalizeForNameMatch, PATTERNS_ON } from "../../src/guard/index.js";
 import { loadFixtures } from "../helpers/fixtures.js";
 
 const pack = loadFixtures();
-const guard = createContentGuard(pack.names);
+// Names are injected and both patterns are on. This is the matcher, not a new owner.
+// A brand-new owner has neither. That default is covered in the privacy-filter tests.
+const guard = createContentGuard(pack.names, PATTERNS_ON);
 const listedName = pack.names[0] ?? "";
 const healthNumber = pack.notesWithPatient.match(new RegExp(HEALTH_NUMBER_PATTERN))?.[0] ?? "";
 
@@ -232,7 +234,9 @@ describe("matching rules", () => {
 
     const withoutNames = createContentGuard([]);
     expect(withoutNames.check({ kind: "message", text: listedName }).outcome).toBe("allow");
-    expect(withoutNames.check({ kind: "message", text: healthNumber }).outcome).toBe("block");
+    // An empty guard blocks nothing. The health number blocks only with the pattern on.
+    expect(withoutNames.check({ kind: "message", text: healthNumber }).outcome).toBe("allow");
+    expect(createContentGuard([], PATTERNS_ON).check({ kind: "message", text: healthNumber }).outcome).toBe("block");
     expect(guard.check({ kind: "file", fileName: `${listedName}.pdf` }).outcome).toBe("block");
     expect(guard.check({ kind: "file", fileName: "tree.pdf" }).outcome).toBe("allow");
   });

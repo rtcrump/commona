@@ -13,8 +13,10 @@ import {
 import { CLARITY_PRESET } from "./preset.js";
 
 /**
- * One row per owner. A missing row is not the default: the caller holds the item.
- * A new row is written with both built-in patterns on and an empty term list.
+ * One row per owner. Creating the table inserts no row.
+ * A new row blocks nothing: no terms, no built-in patterns, no presets.
+ * A missing row is that same empty filter. The caller allows the item.
+ * A corrupt row is not empty. The caller holds the item.
  * Terms are not copied into the audit log.
  */
 export const PRIVACY_FILTER_SQL = `
@@ -26,12 +28,18 @@ CREATE TABLE IF NOT EXISTS privacy_filters (
 );
 `;
 
-const DEFAULT_PATTERNS_JSON = JSON.stringify(["health_number", "dob"]);
-
 export interface PatternFlags {
   healthNumber: boolean;
   dob: boolean;
 }
+
+/** Off until the owner turns them on. An empty pattern list is a valid filter. */
+export const PATTERNS_OFF: PatternFlags = { healthNumber: false, dob: false };
+
+/** Both built-in patterns. Callers pass this when an owner has switched them on. */
+export const PATTERNS_ON: PatternFlags = { healthNumber: true, dob: true };
+
+const ON_PATTERNS_JSON = JSON.stringify(["health_number", "dob"]);
 
 export interface ReadyFilter {
   status: "ready";
@@ -50,6 +58,7 @@ export interface FilterEditorDeps {
 
 export type FilterChange =
   | { terms: readonly string[] }
+  | { patterns: PatternFlags }
   | { preset: typeof CLARITY_PRESET; enabled: boolean };
 
 export type FilterUpdateResult =
@@ -80,26 +89,43 @@ export function readFilter(db: SqliteDatabase, ownerId: string): LoadedFilter {
 }
 
 /**
- * Showroom owners only. Inserts a readable row with the Clarity preset on
- * so the milestone 1 name checks still block. Does not write an audit row.
+ * Showroom owners only. Turns the Clarity preset on and leaves patterns alone.
+ * Patient names live in that preset. This does not switch health-number or
+ * date-of-birth patterns on. Does not write an audit row.
  */
 export function installClarityDemo(db: SqliteDatabase, ownerId: string): void {
   db.prepare(
     `INSERT INTO privacy_filters (owner_id, terms_json, patterns_json, presets_json)
-     VALUES (?, '[]', ?, ?)
+     VALUES (?, '[]', '[]', ?)
      ON CONFLICT(owner_id) DO UPDATE SET
-       patterns_json = excluded.patterns_json,
        presets_json = excluded.presets_json`,
-  ).run(ownerId, DEFAULT_PATTERNS_JSON, JSON.stringify([CLARITY_PRESET]));
+  ).run(ownerId, JSON.stringify([CLARITY_PRESET]));
 }
 
-/** Inserts the default row when the owner does not have one yet. */
-export function ensureDefaultFilter(db: SqliteDatabase, ownerId: string): void {
+/**
+ * Showroom owners only. Turns health-number and date-of-birth patterns on.
+ * Milestone 1 P3 still expects those blocks. A new owner does not get this.
+ * Does not add patient names and does not write an audit row.
+ */
+export function enableBuiltinPatterns(db: SqliteDatabase, ownerId: string): void {
   db.prepare(
     `INSERT INTO privacy_filters (owner_id, terms_json, patterns_json, presets_json)
      VALUES (?, '[]', ?, '[]')
+     ON CONFLICT(owner_id) DO UPDATE SET
+       patterns_json = excluded.patterns_json`,
+  ).run(ownerId, ON_PATTERNS_JSON);
+}
+
+/**
+ * Inserts the default row when the owner does not have one yet.
+ * The row blocks nothing. It does not replace a row the owner already has.
+ */
+export function ensureDefaultFilter(db: SqliteDatabase, ownerId: string): void {
+  db.prepare(
+    `INSERT INTO privacy_filters (owner_id, terms_json, patterns_json, presets_json)
+     VALUES (?, '[]', '[]', '[]')
      ON CONFLICT(owner_id) DO NOTHING`,
-  ).run(ownerId, DEFAULT_PATTERNS_JSON);
+  ).run(ownerId);
 }
 
 /**
@@ -175,17 +201,24 @@ function applyChange(base: ReadyFilter, change: FilterChange): ReadyFilter {
   if ("terms" in change) {
     return { ...base, terms: [...change.terms] };
   }
+  if ("patterns" in change) {
+    return {
+      ...base,
+      patterns: { healthNumber: change.patterns.healthNumber, dob: change.patterns.dob },
+    };
+  }
   const presets = new Set(base.presets);
   if (change.enabled) presets.add(CLARITY_PRESET);
   else presets.delete(CLARITY_PRESET);
   return { ...base, presets: [...presets] };
 }
 
+/** The row a new owner starts from. Nothing is listed and no pattern is on. */
 function emptyReady(): ReadyFilter {
   return {
     status: "ready",
     terms: [],
-    patterns: { healthNumber: true, dob: true },
+    patterns: { ...PATTERNS_OFF },
     presets: [],
   };
 }

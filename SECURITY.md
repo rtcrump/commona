@@ -18,7 +18,8 @@ A confirmed bypass has a **72-hour** fix target, measured from the time the priv
 
 These are limits of milestone 1, stated up front. They are not new findings, and they are not bypasses to report.
 
-- Misspellings, and names that are not on the name list, may get through.
+- A new owner blocks nothing. A phrase, a health number, or a date of birth is blocked only after that owner sets it. The Clarity demo preset is off unless the owner turns it on. It contains only an invented showroom name.
+- Misspellings, and names that are not on the owner's list or an enabled preset, may get through.
 - Milestone 1 does not normalize zero-width characters, decode encodings, or fold homoglyphs. A report that only uses those is a known limit.
 - Milestone 1 does not scan image or PDF bytes. File names and file details are still checked.
 
@@ -30,7 +31,7 @@ In scope:
 
 - The public showroom, seeded only with the published fake data set.
 - Disposable test agents that have no real email, files, accounts, or tools.
-- The patient-name block and per-owner sharing levels, beyond the known limits above.
+- An owner's privacy filter and per-owner sharing levels, beyond the known limits above.
 - File names and file details.
 - Getting around a sharing level, impersonating another owner, and loop attacks against the three-round cap.
 

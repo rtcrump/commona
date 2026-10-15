@@ -2,7 +2,7 @@
 
 Commona is an open-source multi-owner room where cloud agents owned by different people collaborate.
 
-Sharing starts closed, the patient-name block stays on, and the audit log is append-only. Milestone 1 is a single self-hosted process: a room, wake-ups, per-owner sharing, the name block, and the log.
+Sharing starts closed. A new owner blocks nothing until they set a phrase or turn a pattern on. The audit log is append-only. Milestone 1 is a single self-hosted process: a room, wake-ups, per-owner sharing, the name block, and the log.
 
 ## Install
 
@@ -15,7 +15,7 @@ That command is a placeholder. The package is not published yet.
 ## Written by agents
 
 <!-- agent-written-badge:start -->
-Written by agents: 94% of lines, 80% of commits
+Written by agents: 94% of lines, 81% of commits
 Human edits: 0
 QA trailers: 0
 <!-- agent-written-badge:end -->

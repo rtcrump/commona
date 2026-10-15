@@ -13,16 +13,23 @@ import {
   type GuardTarget,
 } from "../../contract/index.js";
 import type { Database as SqliteDatabase } from "better-sqlite3";
-import { readFilter, type PatternFlags, type ReadyFilter } from "./filter-store.js";
+import { PATTERNS_OFF, readFilter, type PatternFlags, type ReadyFilter } from "./filter-store.js";
 import { expansionTexts, prepareForScan } from "./normalize.js";
 import { CLARITY_PRESET, loadClarityNames } from "./preset.js";
+
+export { PATTERNS_OFF, PATTERNS_ON } from "./filter-store.js";
 
 /**
  * Privacy filter.
  *
- * Patient-name terms are off unless that owner enables the Clarity demo preset.
- * Health-number and date-of-birth patterns start on when the owner's row exists
- * and can be read. A missing or unreadable row holds the item.
+ * Commona blocks nothing until the owner sets it. A phrase is blocked only
+ * when that owner stores it. Health-number and date-of-birth patterns are
+ * switches. They start off. Patient names are not built in. They are added
+ * only when that owner turns on the Clarity demo preset.
+ *
+ * A missing row is an empty filter, so the item is allowed. A corrupt row,
+ * or a read that throws, holds the item. Those are not an empty filter.
+ * `check` has no owner, so it holds the item. The server calls `checkForOwner`.
  *
  * `hits[0]` is the audit hit. It carries a category and a location, never the
  * matched text. Scan order is file name, then metadata keys sorted, then the
@@ -35,7 +42,6 @@ import { CLARITY_PRESET, loadClarityNames } from "./preset.js";
  */
 
 const NAME_SEPARATORS = /[_\-.]/g;
-const ALL_PATTERNS: PatternFlags = { healthNumber: true, dob: true };
 
 const MONTH_NAMES_LONGEST_FIRST = [...DOB_MONTH_NAMES].sort((a, b) => b.length - a.length);
 const MONTH_DATE = `\\b(?:${MONTH_NAMES_LONGEST_FIRST.join("|")})\\s+\\d{1,2},\\s*\\d{4}\\b`;
@@ -66,19 +72,26 @@ export function screenContent(guard: ContentGuard, ownerId: string, target: Guar
   return guard.check(target);
 }
 
-/** Injected terms, plus health-number and date-of-birth patterns. */
-export function createContentGuard(names: readonly string[]): ContentGuard {
+/**
+ * Injected terms only. Built-in patterns stay off unless the caller passes them.
+ * This is not the new-owner default and not the server guard.
+ * The server uses `createPrivacyGuard`.
+ */
+export function createContentGuard(
+  names: readonly string[],
+  patterns: PatternFlags = PATTERNS_OFF,
+): ContentGuard {
   const phrases = phraseList(names);
   return {
     check(target: GuardTarget): GuardDecision {
-      return decide(target, phrases, ALL_PATTERNS);
+      return decide(target, phrases, patterns);
     },
   };
 }
 
 /**
  * The server's guard. `check` has no owner, so it holds the item.
- * `checkForOwner` reads that owner's row.
+ * `checkForOwner` reads that owner's row. A missing row blocks nothing.
  */
 export function createPrivacyGuard(db: SqliteDatabase): OwnerScopedGuard {
   return {
@@ -88,9 +101,13 @@ export function createPrivacyGuard(db: SqliteDatabase): OwnerScopedGuard {
     checkForOwner(ownerId: string, target: GuardTarget): GuardDecision {
       try {
         const loaded = readFilter(db, ownerId);
+        // Missing is empty. This owner has set nothing, so nothing is blocked.
+        if (loaded.status === "missing") return decide(target, [], PATTERNS_OFF);
+        // Corrupt is not empty. The row cannot be trusted, so the item is held.
         if (loaded.status !== "ready") return hold(target);
         return decide(target, phrasesFor(loaded), loaded.patterns);
       } catch {
+        // A throw means the row could not be read. That is not an empty filter.
         return hold(target);
       }
     },
@@ -98,9 +115,8 @@ export function createPrivacyGuard(db: SqliteDatabase): OwnerScopedGuard {
 }
 
 /**
- * Patterns only. Patient names are not included.
+ * No terms and no patterns. Not used by the server.
  * Unit tests that need a name list call `createContentGuard`.
- * The server uses `createPrivacyGuard`.
  */
 export const guard: ContentGuard = createContentGuard([]);
 
@@ -123,6 +139,11 @@ export function decodeUtf8Text(bytes: Uint8Array): string | undefined {
   }
 }
 
+/**
+ * Phrases that owner stored, and nothing else.
+ * Clarity names are added only when that owner's row has the preset on.
+ * An empty term list and no preset blocks no phrase.
+ */
 function phrasesFor(filter: ReadyFilter): string[] {
   const terms = [...filter.terms];
   if (filter.presets.includes(CLARITY_PRESET)) terms.push(...loadClarityNames());
@@ -141,7 +162,9 @@ function decide(target: GuardTarget, phrases: readonly string[], patterns: Patte
 }
 
 /**
- * The audit schema has no separate category for a missing filter.
+ * Used when the filter cannot be trusted: corrupt JSON, a read that throws,
+ * or `check` with no owner. A missing row does not come here.
+ * The audit schema has no separate category for a bad filter.
  * The hold is stored as a name hit so the owner is told. The text is not stored.
  */
 function hold(target: GuardTarget): GuardDecision {

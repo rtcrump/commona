@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { HEALTH_NUMBER_PATTERN, type AgentFixture, type FixturePack, type OwnerFixture } from "../../contract/index.js";
 import { openDatabase } from "../../src/db.js";
-import { installClarityDemo } from "../../src/guard/filter-store.js";
+import { enableBuiltinPatterns, installClarityDemo } from "../../src/guard/filter-store.js";
 
 type Sqlite = ReturnType<typeof openDatabase>;
 
@@ -118,8 +118,10 @@ function assertPack(pack: FixturePack): void {
 
 /**
  * Insert owners and agents. Rooms, posts, and tokens are left for later specs.
- * The Clarity demo preset is turned on for these owners so the milestone 1
- * name checks still block. A new owner outside this setup does not get it.
+ * These showroom owners are not the new-owner default. The Clarity preset is
+ * turned on so the milestone 1 name checks still block. Health-number and
+ * date-of-birth patterns are turned on so P3 still blocks. A new owner
+ * outside this setup gets neither.
  */
 export function seedFixtures(db: Sqlite, pack: FixturePack): void {
   const owner = db.prepare(
@@ -141,7 +143,10 @@ export function seedFixtures(db: Sqlite, pack: FixturePack): void {
         eventTarget: row.wake.event?.target ?? null,
       });
     }
-    for (const row of pack.owners) installClarityDemo(db, row.id);
+    for (const row of pack.owners) {
+      installClarityDemo(db, row.id);
+      enableBuiltinPatterns(db, row.id);
+    }
   });
   insert();
 }

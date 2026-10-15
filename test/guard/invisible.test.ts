@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { BlockCategory, BlockLocation } from "../../contract/index.js";
-import { createContentGuard } from "../../src/guard/index.js";
+import { createContentGuard, PATTERNS_ON } from "../../src/guard/index.js";
 
-const guard = createContentGuard([]);
+// Patterns are on so a split health number and date of birth are still caught
+// after an owner turns those switches on. A new owner has them off.
+const guard = createContentGuard([], PATTERNS_ON);
 
 describe("invisible characters", () => {
   it("blocks a health number split by a zero-width space", () => {

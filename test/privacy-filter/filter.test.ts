@@ -4,6 +4,7 @@ import {
   AuditResult,
   BlockCategory,
   BlockLocation,
+  HEALTH_NUMBER_PATTERN,
   ReasonCode,
   systemClock,
   type AuthPrincipal,
@@ -15,7 +16,7 @@ import {
   updatePrivacyFilter,
   type FilterEditorDeps,
 } from "../../src/guard/filter-store.js";
-import { createPrivacyGuard } from "../../src/guard/index.js";
+import { createPrivacyGuard, PATTERNS_ON } from "../../src/guard/index.js";
 import { CLARITY_PRESET } from "../../src/guard/preset.js";
 import { loadFixtures } from "../helpers/fixtures.js";
 
@@ -39,7 +40,26 @@ function setup() {
   return { db, audit, guard, deps };
 }
 
+function sensitivePost(): string {
+  const health = pack.notesWithPatient.match(new RegExp(HEALTH_NUMBER_PATTERN))?.[0];
+  if (!health) throw new Error("fixture notes have no health number");
+  return `Please see ${listedName}. Health number: ${health}. DOB: 1980-02-29`;
+}
+
 describe("privacy filter", () => {
+  it("blocks nothing for a brand-new owner", () => {
+    const { db, guard } = setup();
+    const text = sensitivePost();
+    expect(guard.checkForOwner("O1", { kind: "message", text })).toEqual({ outcome: "allow", hits: [] });
+    ensureDefaultFilter(db, "O2");
+    const row = db
+      .prepare("SELECT terms_json, patterns_json, presets_json FROM privacy_filters WHERE owner_id = 'O2'")
+      .get();
+    expect(row).toEqual({ terms_json: "[]", patterns_json: "[]", presets_json: "[]" });
+    expect(guard.checkForOwner("O2", { kind: "message", text })).toEqual({ outcome: "allow", hits: [] });
+    db.close();
+  });
+
   it("blocks an owner's term and ignores another owner's term", () => {
     const { db, guard, deps } = setup();
     expect(updatePrivacyFilter(deps, owner("O1"), "O1", { terms: [term] }).allowed).toBe(true);
@@ -52,10 +72,8 @@ describe("privacy filter", () => {
     db.close();
   });
 
-  it("holds the item when the config is missing or corrupt", () => {
+  it("holds the item when the config is corrupt or the read throws", () => {
     const { db, guard } = setup();
-    const missing = guard.checkForOwner("O1", { kind: "message", text: "ordinary hello" });
-    expect(missing.outcome).toBe("block");
     db.prepare(
       `INSERT INTO privacy_filters (owner_id, terms_json, patterns_json, presets_json)
        VALUES ('O2', '{', '[]', '[]')`,
@@ -63,6 +81,23 @@ describe("privacy filter", () => {
     const corrupt = guard.checkForOwner("O2", { kind: "message", text: "ordinary hello" });
     expect(corrupt.outcome).toBe("block");
     expect(JSON.stringify(corrupt)).not.toContain("ordinary hello");
+    db.close();
+    const unreadable = guard.checkForOwner("O2", { kind: "message", text: "ordinary hello" });
+    expect(unreadable.outcome).toBe("block");
+  });
+
+  it("blocks a health number and a date of birth only after the owner turns those patterns on", () => {
+    const { db, guard, deps } = setup();
+    ensureDefaultFilter(db, "O1");
+    const text = sensitivePost();
+    expect(guard.checkForOwner("O1", { kind: "message", text }).outcome).toBe("allow");
+    expect(updatePrivacyFilter(deps, owner("O1"), "O1", { patterns: PATTERNS_ON }).allowed).toBe(true);
+    const health = pack.notesWithPatient.match(new RegExp(HEALTH_NUMBER_PATTERN))?.[0] ?? "";
+    const blockedHealth = guard.checkForOwner("O1", { kind: "message", text: `Health number: ${health}` });
+    const blockedDob = guard.checkForOwner("O1", { kind: "message", text: "DOB: 1980-02-29" });
+    expect(blockedHealth.hits[0]?.category).toBe(BlockCategory.HealthNumber);
+    expect(blockedDob.hits[0]?.category).toBe(BlockCategory.Dob);
+    expect(guard.checkForOwner("O1", { kind: "message", text: listedName }).outcome).toBe("allow");
     db.close();
   });
 
@@ -111,6 +146,7 @@ describe("privacy filter", () => {
     expect(updatePrivacyFilter(deps, owner("O1"), "O1", { preset: CLARITY_PRESET, enabled: true }).allowed).toBe(true);
     const blocked = guard.checkForOwner("O1", { kind: "message", text: `Please see ${listedName} today.` });
     expect(blocked.hits[0]).toEqual({ category: BlockCategory.Name, location: BlockLocation.Text });
+    expect(guard.checkForOwner("O1", { kind: "message", text: "DOB: 1980-02-29" }).outcome).toBe("allow");
     expect(guard.checkForOwner("O2", { kind: "message", text: listedName }).outcome).toBe("allow");
     db.close();
   });
