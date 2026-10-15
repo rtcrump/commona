@@ -51,8 +51,14 @@ jobs:
           case "${name}" in
             ''|*[!A-Za-z0-9_.-]*) printf '%s\n' "refusing repository name" >&2; exit 1 ;;
           esac
-          gh api --paginate "repos/${REPO}/pulls/${PR}/files" --jq '.[].filename' > changed-files.txt
-          result="$(LABELS_JSON="${LABELS_JSON}" python3 .github/scripts/safety_core_gate.py --files changed-files.txt --paths .github/safety-core-paths.txt)"
+          # Keep the file list out of the checkout. The commit check below
+          # treats any worktree change as Claude writing code.
+          case "${RUNNER_TEMP}" in
+            ''|*[!A-Za-z0-9._/-]*) printf '%s\n' "refusing runner temp" >&2; exit 1 ;;
+          esac
+          file_list="${RUNNER_TEMP}/changed-files.txt"
+          gh api --paginate "repos/${REPO}/pulls/${PR}/files" --jq '.[].filename' > "${file_list}"
+          result="$(LABELS_JSON="${LABELS_JSON}" python3 .github/scripts/safety_core_gate.py --files "${file_list}" --paths .github/safety-core-paths.txt)"
           case "${result}" in
             true) ;;
             false)
