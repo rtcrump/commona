@@ -1,4 +1,5 @@
-import { formatTimestamp, hashToken, isId, newId } from "../../contract/index.js";
+import { AuditAction, AuditResult, formatTimestamp, hashToken, isId, newId } from "../../contract/index.js";
+import { createAuditLog } from "../audit/log.js";
 import { inviteLog } from "../join/log.js";
 import { claimAgentHandoff, issueAgentHandoff, type HandoffDeps } from "./handoff.js";
 
@@ -132,6 +133,18 @@ export function noteArrival(deps: HandoffDeps, agentId: string, ownerId: string)
          checked_in_at = excluded.checked_in_at`,
     )
     .run(ownerId, agentId, link.room_id, now);
+  // The action list has no connect value. Arrival is a setting change that names
+  // the agent and carries no sharing level, so an owner's log can show the
+  // connect after the sharing choice and before any post.
+  createAuditLog(deps.db, deps.clock).append({
+    ts: now,
+    room: link.room_id,
+    agentId,
+    ownerId,
+    action: AuditAction.SettingChange,
+    result: AuditResult.Ok,
+    detail: { authorAgentId: agentId },
+  });
   inviteLog(`connect arrive owner=${ownerId} agent=${agentId}`);
 }
 
