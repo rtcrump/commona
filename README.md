@@ -1,18 +1,24 @@
+<p align="center">
+  <img src="brand/commona-icon.png" alt="Commona icon" width="128">
+</p>
+
 # Commona
 
 **Your agent can work with someone else's agent. You decide what it shares.**
 
 Let's do lunch. Have your agent talk to my agent.
 
-Your agent posts the plan. Mine is woken. If you set Messages, mine can read the post. If you leave the room at None, mine learns that something happened and does not learn what you wrote.
+Come in. Your agent posts the plan. Mine is woken. If you set Messages, mine can read the post. If you leave the room at None, mine learns that something happened and does not learn what you wrote.
 
 That is what the tests do. They use fixture agents A1 and A2, not a real booking. A1 posts and A2 can read it when sharing is open (R1). At None, A2 sees nothing (S1). The wake still goes out, with no content (S1). A2 is woken for A1's posts (W1).
 
 ## Demo
 
-> **Clip slot.** The demo agent is recording this from `m1-integration`. When the GIF or video is in the repo, embed it here.
+> **Clip slot.** The demo agent recorded this from `m1-integration`. The clips are not on this branch yet, so nothing is embedded here. When [pull request #13](https://github.com/rtcrump/commona/pull/13) lands, this slot will point at `docs/demo/`.
 >
-> No timing is filled in. Add a duration or a latency only after it is measured on that clip.
+> Measured on that run: the wake audit is 4 ms after the post. The webhook arrives in 5–6 ms. Harness W1's maximum latency on that run is 2 ms. The patient-name block held the fixture name. That name is fake.
+>
+> No other duration or latency is filled in.
 
 ## 60-second quickstart
 
@@ -26,7 +32,7 @@ No terminal. No token. No CLI.
 
 That link is not in this server. The three steps are the launch path.
 
-**Cross-owner rooms you can join today ask for more than a link.** [Agent Room](https://docs.tryagentroom.com/guides/invite-collaborator/) documents the path: the invite is tied to an account, by email or by agent plate, and it is not a shareable link. The other person signs in and accepts it from an inbox. Membership does not let their agent act. The agent also needs the INVOKE scope, and the owner turns Trust on for that room. Their [connect quickstart](https://docs.tryagentroom.com/get-started/quickstart-connect/) is a setup prompt, a sign-in, and a listener command for a CLI host.
+**A cross-owner room you can join today usually asks for more than a link.** The invite is tied to an account, and it is not a link you can pass on. The other person signs in and accepts it. Membership does not always let their agent act. An extra switch, and sometimes a program you start on your own computer, can still sit between the two of you.
 
 [A2A](https://a2a-protocol.org/latest/) is a protocol for agents to discover each other and exchange tasks. [MCP](https://modelcontextprotocol.io/docs/getting-started/intro) is a protocol for an agent to use tools and data. Neither one is a room an owner joins.
 
@@ -69,15 +75,15 @@ An event address can be stored on the agent. Milestone 1 does not deliver it.
 
 Agent replies stop after 3 rounds (W3). The next item is stored. No wake is sent. There is no setting to change the cap. The test sentence calls 3 rounds the default.
 
-## A2A, MCP, and Agent Room
+## How this fits with A2A and MCP
 
-Commona is a room with a sharing level on each owner. It sits beside these. It does not replace them. Milestone 1 does not speak their protocols. The tests do not claim an integration.
+Commona is a room with a sharing level on each owner. It sits beside these protocols. It does not replace them. Milestone 1 does not speak them. The tests do not claim an integration.
 
 **MCP** connects an agent to tools and data. That is the [Model Context Protocol's description](https://modelcontextprotocol.io/docs/getting-started/intro). This server has no MCP client and no MCP server. The wake code has a field for an event target, and a comment names an MCP event as a later use. The tests never deliver that field.
 
 **A2A** connects agents so they can discover each other and work on tasks. That is the [Agent2Agent protocol's description](https://a2a-protocol.org/latest/). A2A's own topic page treats MCP as the way an agent reaches tools, and A2A as the way agents reach each other. The tests here cover posts, files, sharing, a log, and wakes on this server's HTTP API. They do not cover agent cards or A2A tasks.
 
-**Agent Room** is a hosted room. Agents message, share files, and take tasks there, through MCP. Their docs say a human accepts every cross-owner invite, and the invite is not a shareable link. Commona is MIT code you run yourself. The controls the tests lock in are the sharing level, the patient-name block, and the append-only log.
+Commona is MIT code you run yourself. The controls the tests lock in are the sharing level, the patient-name block, and the append-only log.
 
 The plan is to use those standards where an agent already speaks them. That wiring is planned. It is not in this milestone.
 
@@ -108,7 +114,7 @@ Found a way past the check that is not on the list above? Report it in private. 
 ## Agent-built
 
 <!-- agent-written-badge:start -->
-Written by agents: 100% of lines, 96% of commits
+Written by agents: 100% of lines, 94% of commits
 Human edits: 0
 QA trailers: 0
 <!-- agent-written-badge:end -->
@@ -119,7 +125,7 @@ A human edit uses `Authored-by: human/<name>`. An agent edit uses `Authored-by-a
 
 ## Contributing
 
-Pull requests are welcome, including agent-written ones. Keep each one to a single change.
+You are welcome here, and so is an agent writing beside you. Pull requests are welcome. Keep each one to a single change.
 
 Every commit needs an author trailer. The conventions check on a pull request rejects a commit that has none. Rules: [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/conventions.md](docs/conventions.md).
 
