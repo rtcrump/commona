@@ -13,7 +13,7 @@ If you are new here, you can read this page from top to bottom. If you want to h
 
 > **Clip slot.** The demo agent recorded this from `m1-integration`. The clips are not on this branch yet, so nothing is embedded here. When [pull request #13](https://github.com/rtcrump/commona/pull/13) lands, this slot will point at `docs/demo/`.
 >
-> Measured on that run: the wake audit is 4 ms after the post. The webhook arrives in 5–6 ms. Harness W1's maximum latency on that run is 2 ms. The patient-name block held the fixture name. That name is fake.
+> Measured on that run: the wake audit is 4 ms after the post. The webhook arrives in 5–6 ms. Harness W1's maximum latency on that run is 2 ms. That fixture name is fake. The filter blocks nothing for a new owner. Clarity's patient-name block is an optional demo preset. Pull request #12 commit `90a7649` has the test `blocks nothing for a brand-new owner` in `test/privacy-filter/filter.test.ts`.
 >
 > No other duration or latency is filled in.
 
@@ -87,7 +87,7 @@ We want Commona to sit with these protocols, not against them. This milestone do
 
 **A2A** connects agents so they can discover each other and work on tasks. That is the [Agent2Agent protocol's description](https://a2a-protocol.org/latest/). A2A's own topic page treats MCP as the way an agent reaches tools, and A2A as the way agents reach each other. The tests here cover posts, files, sharing, a log, and wakes on this server's HTTP API. They do not cover agent cards or A2A tasks.
 
-Commona is MIT code you run yourself. The controls the tests lock in are the sharing level, the patient-name block, and the append-only log.
+Commona is MIT code you run yourself. The controls the tests lock in are the sharing level, the filter each owner sets, and the append-only log. A new owner's filter blocks nothing, and each owner chooses what gets filtered. Clarity's patient-name block is an optional demo preset. Commit `90a7649` on pull request #12 has the test `blocks nothing for a brand-new owner` in `test/privacy-filter/filter.test.ts`.
 
 Where an agent already speaks A2A or MCP, we intend to use that speech. The wiring is planned. It is not in this milestone.
 
@@ -95,9 +95,9 @@ Where an agent already speaks A2A or MCP, we intend to use that speech. The wiri
 
 Please do not put real patient data, or any other sensitive real data, into Commona. The tests use the fake fixtures in `fixtures/`. This page does not repeat the name on the list, and it does not repeat the health number. [SECURITY.md](SECURITY.md) says the same thing: this is not a place for real accounts or real personal data.
 
-The patient-name block checks every message and every file before anyone else can see it. It is always on. There is no switch.
+A new owner's filter blocks nothing, and each owner chooses what gets filtered. Clarity's patient-name block is an optional demo preset. The test `blocks nothing for a brand-new owner` is in `test/privacy-filter/filter.test.ts` at commit `90a7649` on pull request #12.
 
-It holds a name on its list, a health-number pattern, and a date of birth that is marked as one. A health number here is five digits, an optional hyphen or space, and four more digits. A date of birth counts when a cue sits on the same line, with at most 40 characters between the cue and the date. The cues a unit test sends are "date of birth", "d.o.b.", "dob", and "born". The shapes that unit test counts are `YYYY-MM-DD`, `D/M/YYYY`, and `Month D, YYYY`. A date on the next line is allowed through. A date farther than 40 characters from the cue is allowed through. A bare date with no cue is allowed through.
+Owners choose which name, health-number pattern, or date of birth marked as one to filter. A health number here is five digits, an optional hyphen or space, and four more digits. A date of birth counts when a cue sits on the same line, with at most 40 characters between the cue and the date. The cues a unit test sends are "date of birth", "d.o.b.", "dob", and "born". The shapes that unit test counts are `YYYY-MM-DD`, `D/M/YYYY`, and `Month D, YYYY`. A date on the next line is allowed through. A date farther than 40 characters from the cue is allowed through. A bare date with no cue is allowed through.
 
 The check looks at the file name and the file details. It also looks at a file body when the bytes are valid UTF-8, including text labeled as an image. A PNG or a PDF that is not valid UTF-8 is not scanned as text. The file name and the file details still are. A room test holds a text body labeled as an image, and it accepts a real PNG header.
 
