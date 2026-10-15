@@ -1,0 +1,154 @@
+:root {
+  --ink: #1c1915;
+  --paper: #f4f1ea;
+  --card: #ffffff;
+  --action: #1b4332;
+  --action-ink: #ffffff;
+  --link: #0b3a82;
+  --quiet-paper: #e7f0ea;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  max-width: 100%;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+  font-size: 1.125rem;
+  line-height: 1.5;
+}
+
+main {
+  background: var(--card);
+  color: var(--ink);
+  margin: 0 auto;
+  max-width: 28rem;
+  min-height: 100vh;
+  overflow-wrap: anywhere;
+  padding: 1rem;
+}
+
+.mark {
+  color: var(--ink);
+  font-family: "Segoe UI", sans-serif;
+  font-size: 0.875rem;
+  letter-spacing: 0.08em;
+  margin: 0 0 1rem;
+  text-transform: uppercase;
+}
+
+h1 {
+  font-size: 1.75rem;
+  line-height: 1.25;
+  margin: 0 0 0.75rem;
+}
+
+p { margin: 0 0 1rem; }
+
+a { color: var(--link); }
+a:visited { color: var(--link); }
+
+label {
+  display: block;
+  font-family: "Segoe UI", sans-serif;
+  margin: 0 0 0.5rem;
+}
+
+input[type="text"] {
+  background: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  color: var(--ink);
+  display: block;
+  font: inherit;
+  margin: 0 0 1rem;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.5rem 0.75rem;
+  width: 100%;
+}
+
+button,
+a.button {
+  background: var(--action);
+  border: 0;
+  color: var(--action-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Segoe UI", sans-serif;
+  font-size: 1.125rem;
+  line-height: 1.2;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.75rem 1.25rem;
+  text-decoration: none;
+}
+
+a.button:visited { color: var(--action-ink); }
+
+fieldset {
+  border: 0;
+  margin: 0 0 1rem;
+  min-inline-size: 0;
+  padding: 0;
+}
+
+legend {
+  font-family: "Segoe UI", sans-serif;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+  padding: 0;
+}
+
+label.choice {
+  align-items: center;
+  background: var(--card);
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  display: flex;
+  gap: 0.75rem;
+  margin: 0 0 0.75rem;
+  min-height: 44px;
+  padding: 0.75rem;
+}
+
+label.choice input {
+  flex: 0 0 auto;
+  height: 44px;
+  min-height: 44px;
+  min-width: 44px;
+  width: 44px;
+}
+
+.safest {
+  background: var(--quiet-paper);
+  color: var(--ink);
+  font-family: "Segoe UI", sans-serif;
+  font-size: 0.875rem;
+  padding: 0.1rem 0.4rem;
+}
+
+.note { margin-top: 0; }
+
+.quiet {
+  border: 0;
+  clip: rect(0, 0, 0, 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: 2px;
+}

@@ -28,3 +28,9 @@ CREATE TABLE IF NOT EXISTS agent_handoffs (
   used_at TEXT,
   created_at TEXT NOT NULL
 );
+
+-- Short display name for the join page. Never a room id, and never post or file text.
+CREATE TABLE IF NOT EXISTS room_titles (
+  room_id TEXT PRIMARY KEY REFERENCES rooms(id),
+  title TEXT NOT NULL
+);
