@@ -334,11 +334,6 @@ section {
   width: 42%;
 }
 
-.coming-soon {
-  font-weight: 700;
-  margin-top: 0;
-}
-
 .signup {
   display: grid;
   gap: 0.55rem;
