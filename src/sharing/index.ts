@@ -90,12 +90,17 @@ const FILE_ONE_SQL = `${FILE_SQL} AND id = ?`;
 
 export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
   function level(roomId: string, fromOwnerId: string, toOwnerId: string): SharingLevel {
-    const row = db
-      .prepare<[string, string, string], { level: string }>(
-        `SELECT level FROM sharing
-         WHERE room_id = ? AND from_owner_id = ? AND to_owner_id = ?`,
+    // Match inside this room only, after NFKC. A Greek or Cyrillic look-alike
+    // does not fold, so it does not pick up another owner's grant.
+    const rows = db
+      .prepare<[string], { from_owner_id: string; to_owner_id: string; level: string }>(
+        `SELECT from_owner_id, to_owner_id, level FROM sharing WHERE room_id = ?`,
       )
-      .get(roomId, fromOwnerId, toOwnerId);
+      .all(roomId);
+    const row = rows.find(
+      (candidate) =>
+        sameOwnerId(candidate.from_owner_id, fromOwnerId) && sameOwnerId(candidate.to_owner_id, toOwnerId),
+    );
     if (!row || !isSharingLevel(row.level)) return DEFAULT_SHARING_LEVEL;
     return row.level;
   }
@@ -138,9 +143,12 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
     itemKind: ItemKind,
     held: boolean,
   ): boolean {
+    // An empty id is not an owner. The same-owner shortcut must not show it anything.
+    if (ownerKey(viewerOwnerId) === "" || ownerKey(authorOwnerId) === "") return false;
+    if (held) return false;
     const granted = level(roomId, authorOwnerId, viewerOwnerId);
     return feedIncludes({
-      held,
+      held: false,
       level: granted,
       itemKind,
       viewerOwnerId,
@@ -149,6 +157,7 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
   }
 
   function visibleFeed(roomId: string, viewerOwnerId: string): FeedItem[] {
+    if (ownerKey(viewerOwnerId) === "") return [];
     const messages = db.prepare<[string], MessageRow>(MESSAGE_SQL).all(roomId);
     const files = db.prepare<[string], FileRow>(FILE_SQL).all(roomId);
     const visible: Array<{ createdAt: string; id: string; item: FeedItem }> = [];
@@ -178,6 +187,9 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
       if (!viewerMaySee(row.authorOwnerId, viewerOwnerId, roomId, "file", isHeld(row.held))) {
         continue;
       }
+      const metadata = readMetadata(row.metadataJson);
+      // Unreadable metadata hides this file. The rest of the feed still returns.
+      if (!metadata) continue;
       visible.push({
         createdAt: row.createdAt,
         id: row.id,
@@ -189,7 +201,7 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
           name: row.name,
           mediaType: row.mediaType,
           byteLength: row.byteLength,
-          metadata: readMetadata(row.metadataJson),
+          metadata,
           createdAt: row.createdAt,
         },
       });
@@ -200,11 +212,14 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
   }
 
   function visibleFile(roomId: string, fileId: string, viewerOwnerId: string): FileDownload | null {
+    if (ownerKey(viewerOwnerId) === "") return null;
     const row = db.prepare<[string, string], FileRow>(FILE_ONE_SQL).get(roomId, fileId);
     if (!row) return null;
     if (!viewerMaySee(row.authorOwnerId, viewerOwnerId, roomId, "file", isHeld(row.held))) {
       return null;
     }
+    const metadata = readMetadata(row.metadataJson);
+    if (!metadata) return null;
 
     const blob = db
       .prepare<[string, string], { content: unknown }>(
@@ -221,7 +236,7 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
       name: row.name,
       mediaType: row.mediaType,
       byteLength: row.byteLength,
-      metadata: readMetadata(row.metadataJson),
+      metadata,
       held: isHeld(row.held),
       createdAt: row.createdAt,
       contentBase64: encodeContent(blob.content),
@@ -238,11 +253,12 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
     // A bad pair or level is malformed. The route answers 400 and does not audit.
     assertDistinctSharingOwners(fromOwnerId, toOwnerId);
     assertLevel(sharingLevel);
-    // Agent tokens are refused even when the agent belongs to fromOwnerId.
-    if (principal.kind === "agent") {
-      return { allowed: false, reasonCode: ReasonCode.AgentCannotChangeSharing };
+    // Anything that is not an owner token is refused, even when the owner id matches.
+    if (principal.kind !== "owner") {
+      const reasonCode = principal.kind === "agent" ? ReasonCode.AgentCannotChangeSharing : ReasonCode.NotOwner;
+      return { allowed: false, reasonCode };
     }
-    if (principal.ownerId !== fromOwnerId) {
+    if (!sameOwnerId(principal.ownerId, fromOwnerId)) {
       return { allowed: false, reasonCode: ReasonCode.NotOwner };
     }
     return { allowed: true, sharing: writeLevel(roomId, fromOwnerId, toOwnerId, sharingLevel) };
@@ -255,8 +271,18 @@ function assertLevel(level: SharingLevel): void {
   if (!isSharingLevel(level)) throw new ContractError("unknown sharing level");
 }
 
-function isHeld(value: number): boolean {
+/** Only a stored 0 is visible. Any other value, including values outside 0 and 1, is held. */
+function isHeld(value: unknown): boolean {
   return value !== 0;
+}
+
+/** NFKC, then exact code points. Look-alike letters are not folded. */
+function ownerKey(value: string): string {
+  return value.normalize("NFKC");
+}
+
+function sameOwnerId(left: string, right: string): boolean {
+  return ownerKey(left) === ownerKey(right);
 }
 
 function byAge(
@@ -270,22 +296,20 @@ function byAge(
   return 0;
 }
 
-function readMetadata(json: string): Record<string, string> {
-  let value: unknown;
+/** Undefined hides the file. A bad file does not drop the rest of the feed. */
+function readMetadata(json: string): Record<string, string> | undefined {
   try {
-    value = JSON.parse(json);
+    const value: unknown = JSON.parse(json);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+    const metadata: Record<string, string> = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (typeof item !== "string") return undefined;
+      metadata[key] = item;
+    }
+    return metadata;
   } catch {
-    throw new ContractError("file metadata is not json");
+    return undefined;
   }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new ContractError("file metadata must be an object");
-  }
-  const metadata: Record<string, string> = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (typeof item !== "string") throw new ContractError("file metadata values must be strings");
-    metadata[key] = item;
-  }
-  return metadata;
 }
 
 function encodeContent(content: unknown): string {
