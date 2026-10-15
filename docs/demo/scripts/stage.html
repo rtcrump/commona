@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Commona demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1a1a1a;
+      --muted: #5c5a55;
+      --line: #d9d6cf;
+      --paper: #ffffff;
+      --panel: #f7f6f3;
+      --held: #7a2e2a;
+      --ok: #0f5c45;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: "Liberation Sans", "DejaVu Sans", sans-serif;
+    }
+    body { overflow: hidden; }
+    #root { height: 100%; }
+    button, input, textarea { font: inherit; }
+    .frame {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: var(--paper);
+    }
+    .top {
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 22px;
+      border-bottom: 1px solid var(--line);
+      flex: none;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+    .brand svg { display: block; }
+    .room-id {
+      font-family: "Liberation Mono", "DejaVu Sans Mono", monospace;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .fake {
+      border: 1px solid var(--ink);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+    .fake.loud {
+      background: var(--ink);
+      color: white;
+      font-size: 14px;
+    }
+    .body {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .share {
+      margin: 14px 20px 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      background: var(--panel);
+      flex: none;
+    }
+    .share .who { font-size: 14px; color: var(--muted); }
+    .share .level {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+    .share .pair { text-align: right; }
+    .share .pair + .pair { border-left: 1px solid var(--line); padding-left: 18px; }
+    .pairs { display: flex; gap: 18px; }
+    .panels {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      padding: 14px 20px;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      padding: 14px 16px;
+      overflow: auto;
+      min-height: 0;
+    }
+    .panel h2 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .status {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .status.webhook { color: var(--ink); border-color: var(--ink); }
+    .status.replied { color: var(--ok); border-color: var(--ok); }
+    .status.asleep { color: var(--muted); }
+    .items { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .item {
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+    }
+    .item .who { font-size: 12px; font-weight: 700; }
+    .item .text { font-size: 16px; margin-top: 2px; line-height: 1.35; }
+    .item .at, .mono {
+      font-family: "Liberation Mono", "DejaVu Sans Mono", monospace;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .empty { margin-top: 14px; color: var(--muted); font-size: 15px; }
+    .note { margin-top: 10px; font-size: 14px; line-height: 1.4; }
+    .held {
+      margin-top: 12px;
+      border: 1px solid var(--held);
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: white;
+    }
+    .held .tag {
+      color: var(--held);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      font-size: 12px;
+    }
+    .held .text { font-size: 16px; margin: 6px 0; line-height: 1.35; }
+    .held .notice { font-size: 14px; margin-top: 6px; }
+    .wakebox {
+      margin: 0 20px 4px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 14px;
+      flex: none;
+      background: white;
+    }
+    .wakebox h3 { margin: 0 0 6px; font-size: 14px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .wakebox table { width: 100%; border-collapse: collapse; }
+    .wakebox td { font-size: 14px; padding: 2px 0; vertical-align: baseline; }
+    .wakebox td:first-child { width: 220px; color: var(--muted); }
+    .caption {
+      height: 72px;
+      flex: none;
+      display: flex;
+      align-items: center;
+      padding: 0 24px;
+      border-top: 1px solid var(--line);
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .center {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 40px;
+      gap: 14px;
+    }
+    .center h1 {
+      margin: 8px 0 0;
+      font-size: 54px;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+    }
+    .center .line {
+      font-size: 28px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+    .concept { color: var(--muted); font-size: 14px; letter-spacing: 0.12em; text-transform: uppercase; }
+    .end-list { display: flex; flex-direction: column; gap: 12px; min-height: 180px; }
+    .end-list .line { opacity: 0; }
+    .end-list .line.show { opacity: 1; }
+    .footer {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-height: 78px;
+    }
+    .footer code {
+      font-family: "Liberation Mono", "DejaVu Sans Mono", monospace;
+      color: var(--ink);
+      font-size: 18px;
+    }
+    .log-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 12px 20px 8px; }
+    .log-scroll { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+    .log-block { padding: 12px 14px 4px; }
+    .log-block h3 { margin: 0 0 6px; font-size: 14px; }
+    .log-line {
+      display: grid;
+      grid-template-columns: 248px 72px 64px 150px 88px 1fr;
+      gap: 8px;
+      font-family: "Liberation Mono", "DejaVu Sans Mono", monospace;
+      font-size: 13px;
+      padding: 4px 0;
+      border-top: 1px solid transparent;
+    }
+    .log-line.mark { border-top-color: var(--line); font-weight: 700; }
+    .log-head {
+      display: grid;
+      grid-template-columns: 248px 72px 64px 150px 88px 1fr;
+      gap: 8px;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    const root = document.getElementById("root");
+    let last = "";
+    let scrollStarted = false;
+
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[ch]);
+    }
+
+    function mark() {
+      return '<svg width="28" height="28" viewBox="0 0 64 64" aria-hidden="true"><rect x="6" y="10" width="52" height="44" rx="6" fill="none" stroke="#1a1a1a" stroke-width="3"/><circle cx="26" cy="32" r="6" fill="#1a1a1a"/><circle cx="40" cy="32" r="6" fill="none" stroke="#1a1a1a" stroke-width="3"/></svg>';
+    }
+
+    function bigMark() {
+      return '<svg width="96" height="96" viewBox="0 0 64 64" aria-hidden="true"><rect x="6" y="10" width="52" height="44" rx="6" fill="none" stroke="#1a1a1a" stroke-width="2.5"/><circle cx="26" cy="32" r="6" fill="#1a1a1a"/><circle cx="40" cy="32" r="6" fill="none" stroke="#1a1a1a" stroke-width="2.5"/></svg>';
+    }
+
+    function fake(loud) {
+      return `<span class="fake${loud ? " loud" : ""}">FAKE DATA</span>`;
+    }
+
+    function itemsHtml(items) {
+      if (!items || items.length === 0) return '<div class="empty">No messages in this feed.</div>';
+      return `<div class="items">${items.map((item) => `
+        <div class="item">
+          <div class="who">${esc(item.author)}</div>
+          <div class="text">${esc(item.text)}</div>
+          <div class="at">${esc(item.at)}</div>
+        </div>`).join("")}</div>`;
+    }
+
+    function panel(title, side, lead) {
+      const kind = side.statusKind || "member";
+      return `<section class="panel">
+        <h2>${esc(title)}</h2>
+        <div class="status ${esc(kind)}">${esc(side.status || "")}</div>
+        ${lead || ""}
+        ${itemsHtml(side.items)}
+        ${side.note ? `<div class="note">${esc(side.note)}</div>` : ""}
+      </section>`;
+    }
+
+    function shareHtml(state) {
+      if (!state.sharing) return "";
+      const pairs = [state.sharing, state.reverseSharing].filter(Boolean);
+      return `<div class="share">
+        <div class="who">Sharing</div>
+        <div class="pairs">${pairs.map((pair) => `
+          <div class="pair">
+            <div class="who">${esc(pair.from)} → ${esc(pair.to)}</div>
+            <div class="level">${esc(pair.label)}</div>
+          </div>`).join("")}</div>
+      </div>`;
+    }
+
+    function wakeHtml(wake) {
+      if (!wake) return "";
+      const rows = [
+        ["webhook occurredAt", wake.occurredAt],
+        ["audit wake time", wake.auditTs],
+        ["disclosure", wake.disclosure],
+      ];
+      if (wake.replyAt) rows.push(["A2 reply createdAt", wake.replyAt]);
+      return `<div class="wakebox">
+        <h3>Wake-up log</h3>
+        <table>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="mono">${esc(v || "")}</td></tr>`).join("")}</table>
+        ${wake.noContent ? '<div class="note">The webhook body did not include the message.</div>' : ""}
+      </div>`;
+    }
+
+    function heldHtml(block) {
+      if (!block) return "";
+      return `<div class="held">
+        <div class="tag">HELD · ${esc(block.outcome)} · ${esc(block.category)} · ${esc(block.location)}</div>
+        <div class="text">${esc(block.text)}</div>
+        <div class="mono">${esc(block.postAt)}</div>
+        ${block.notice ? `<div class="notice">${esc(block.notice)}</div>` : ""}
+        ${block.noticeAt ? `<div class="mono">${esc(block.noticeAt)}</div>` : ""}
+      </div>`;
+    }
+
+    function logLines(rows) {
+      const marks = new Set(["post", "wake", "setting_change", "block"]);
+      return (rows || []).map((row) => `
+        <div class="log-line${marks.has(row.action) ? " mark" : ""}">
+          <span>${esc(row.ts)}</span>
+          <span>${esc(row.agentId)}</span>
+          <span>${esc(row.ownerId)}</span>
+          <span>${esc(row.action)}</span>
+          <span>${esc(row.result)}</span>
+          <span>${esc(row.hint || "")}</span>
+        </div>`).join("");
+    }
+
+    function shell(state, inner, caption) {
+      return `<div class="frame">
+        <header class="top">
+          <div class="brand">${mark()} Commona</div>
+          <div class="room-id">${state.roomId ? esc(state.roomId) : ""}</div>
+          ${fake(state.phase === "block")}
+        </header>
+        <div class="body">${inner}</div>
+        ${caption ? `<div class="caption">${esc(caption)}</div>` : ""}
+      </div>`;
+    }
+
+    function render(state) {
+      if (state.phase === "title") {
+        root.innerHTML = `<div class="center">
+          ${bigMark()}
+          <div class="concept">Concept 1</div>
+          <h1>Commona</h1>
+          <div class="line">Two owners. Two agents. One room.</div>
+          ${fake(false)}
+        </div>`;
+        return;
+      }
+      if (state.phase === "end") {
+        const lines = [
+          "Sharing per owner, starts at None",
+          "Patient-name block (safety net, not a guarantee)",
+          "Audit log each owner reads",
+          "Wakes agents across vendors",
+        ];
+        const n = state.endVisible || 0;
+        root.innerHTML = `<div class="center">
+          <div class="brand">${mark()} Commona</div>
+          <div class="end-list">${lines.map((line, i) => `<div class="line${i < n ? " show" : ""}">${esc(line)}</div>`).join("")}</div>
+          <div class="footer">${n >= 5 ? `<code>npx commona init</code><div>placeholder · not published</div><div>https://github.com/rtcrump/commona</div><div>MIT</div>` : ""}</div>
+          ${fake(false)}
+        </div>`;
+        return;
+      }
+      if (state.phase === "audit") {
+        const logs = state.logs || { O1: [], O2: [] };
+        const inner = `<div class="log-wrap"><div class="log-scroll" id="log-scroll">
+          <div class="log-block">
+            <h3>Rows O1's token returned</h3>
+            <div class="log-head"><span>time</span><span>agent</span><span>owner</span><span>action</span><span>result</span><span></span></div>
+            ${logLines(logs.O1)}
+          </div>
+          <div class="log-block">
+            <h3>Rows O2's token returned</h3>
+            <div class="log-head"><span>time</span><span>agent</span><span>owner</span><span>action</span><span>result</span><span></span></div>
+            ${logLines(logs.O2)}
+          </div>
+        </div></div>`;
+        root.innerHTML = shell(state, inner, state.caption);
+        if (!scrollStarted) {
+          scrollStarted = true;
+          const el = document.getElementById("log-scroll");
+          const started = performance.now();
+          const dur = 6400;
+          const step = (now) => {
+            const t = Math.min(1, (now - started) / dur);
+            el.scrollTop = t * Math.max(0, el.scrollHeight - el.clientHeight);
+            if (t < 1) requestAnimationFrame(step);
+          };
+          requestAnimationFrame(step);
+        }
+        return;
+      }
+      scrollStarted = false;
+      const a1 = panel("O1 · agent A1", state.a1 || {});
+      let a2 = panel("O2 · agent A2", state.a2 || {});
+      if (state.phase === "block" && state.block) {
+        const inner = `${shareHtml(state)}<div class="panels">${panel("O1 · agent A1", state.a1 || {}, heldHtml(state.block))}${panel("O2 · agent A2", state.a2 || {})}</div>`;
+        root.innerHTML = shell(state, inner, state.caption);
+        return;
+      }
+      const inner = `${shareHtml(state)}<div class="panels">${a1}${a2}</div>${state.phase === "wake" ? wakeHtml(state.wake) : ""}`;
+      root.innerHTML = shell(state, inner, state.caption);
+    }
+
+    async function tick() {
+      try {
+        const next = await (await fetch("/state", { cache: "no-store" })).json();
+        const sig = JSON.stringify(next);
+        if (sig !== last) {
+          last = sig;
+          render(next);
+        }
+      } catch {
+        // Keep the last painted frame if a poll misses.
+      }
+    }
+    tick();
+    setInterval(tick, 100);
+  </script>
+</body>
+</html>
