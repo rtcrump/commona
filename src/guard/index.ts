@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import {
   BlockCategory,
   BlockLocation,
@@ -8,14 +6,23 @@ import {
   HEALTH_NUMBER_PATTERN,
   TEXT_MEDIA_TYPE_PREFIX,
   TEXT_MEDIA_TYPES,
+  type BlockLocation as BlockLocationName,
   type ContentGuard,
   type GuardDecision,
   type GuardHit,
   type GuardTarget,
 } from "../../contract/index.js";
+import type { Database as SqliteDatabase } from "better-sqlite3";
+import { readFilter, type PatternFlags, type ReadyFilter } from "./filter-store.js";
+import { expansionTexts, prepareForScan } from "./normalize.js";
+import { CLARITY_PRESET, loadClarityNames } from "./preset.js";
 
 /**
- * Patient-name block. Always on: there is no switch.
+ * Privacy filter.
+ *
+ * Patient-name terms are off unless that owner enables the Clarity demo preset.
+ * Health-number and date-of-birth patterns start on when the owner's row exists
+ * and can be read. A missing or unreadable row holds the item.
  *
  * `hits[0]` is the audit hit. It carries a category and a location, never the
  * matched text. Scan order is file name, then metadata keys sorted, then the
@@ -23,11 +30,12 @@ import {
  * health_number, dob.
  *
  * A `block` outcome is held, kept out of every feed, and sends no wake.
- * This function does not write the log or the notice. The caller does, from
+ * This module does not write the log or the notice. The caller does, from
  * `hits[0]` only.
  */
 
 const NAME_SEPARATORS = /[_\-.]/g;
+const ALL_PATTERNS: PatternFlags = { healthNumber: true, dob: true };
 
 const MONTH_NAMES_LONGEST_FIRST = [...DOB_MONTH_NAMES].sort((a, b) => b.length - a.length);
 const MONTH_DATE = `\\b(?:${MONTH_NAMES_LONGEST_FIRST.join("|")})\\s+\\d{1,2},\\s*\\d{4}\\b`;
@@ -39,14 +47,125 @@ interface Span {
   end: number;
 }
 
+export interface OwnerScopedGuard extends ContentGuard {
+  checkForOwner(ownerId: string, target: GuardTarget): GuardDecision;
+}
+
 /** NFKC, lowercase, `_` `-` `.` to spaces, then collapse whitespace. */
 export function normalizeForNameMatch(value: string): string {
   return value.normalize("NFKC").toLowerCase().replace(NAME_SEPARATORS, " ").replace(/\s+/g, " ").trim();
 }
 
-function containsPhrase(value: string, phrases: readonly string[]): boolean {
-  const normalized = normalizeForNameMatch(value);
-  return phrases.some((phrase) => phrase.length > 0 && normalized.includes(phrase));
+export function isOwnerScopedGuard(value: ContentGuard): value is OwnerScopedGuard {
+  return typeof (value as OwnerScopedGuard).checkForOwner === "function";
+}
+
+/** Uses the owner filter when the guard has one. An injected guard keeps `check`. */
+export function screenContent(guard: ContentGuard, ownerId: string, target: GuardTarget): GuardDecision {
+  if (isOwnerScopedGuard(guard)) return guard.checkForOwner(ownerId, target);
+  return guard.check(target);
+}
+
+/** Injected terms, plus health-number and date-of-birth patterns. */
+export function createContentGuard(names: readonly string[]): ContentGuard {
+  const phrases = phraseList(names);
+  return {
+    check(target: GuardTarget): GuardDecision {
+      return decide(target, phrases, ALL_PATTERNS);
+    },
+  };
+}
+
+/**
+ * The server's guard. `check` has no owner, so it holds the item.
+ * `checkForOwner` reads that owner's row.
+ */
+export function createPrivacyGuard(db: SqliteDatabase): OwnerScopedGuard {
+  return {
+    check(target: GuardTarget): GuardDecision {
+      return hold(target);
+    },
+    checkForOwner(ownerId: string, target: GuardTarget): GuardDecision {
+      try {
+        const loaded = readFilter(db, ownerId);
+        if (loaded.status !== "ready") return hold(target);
+        return decide(target, phrasesFor(loaded), loaded.patterns);
+      } catch {
+        return hold(target);
+      }
+    },
+  };
+}
+
+/**
+ * Patterns only. Patient names are not included.
+ * Unit tests that need a name list call `createContentGuard`.
+ * The server uses `createPrivacyGuard`.
+ */
+export const guard: ContentGuard = createContentGuard([]);
+
+/**
+ * True when the declared media type is text or JSON.
+ * A body that decodes as UTF-8 is scanned even when this is false.
+ */
+export function fileBodyIsScanned(mediaType: string): boolean {
+  const type = mediaType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (type.startsWith(TEXT_MEDIA_TYPE_PREFIX)) return true;
+  return (TEXT_MEDIA_TYPES as readonly string[]).includes(type);
+}
+
+/** The file body when it is valid UTF-8. The declared media type is not consulted. */
+export function decodeUtf8Text(bytes: Uint8Array): string | undefined {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return undefined;
+  }
+}
+
+function phrasesFor(filter: ReadyFilter): string[] {
+  const terms = [...filter.terms];
+  if (filter.presets.includes(CLARITY_PRESET)) terms.push(...loadClarityNames());
+  return phraseList(terms);
+}
+
+function phraseList(terms: readonly string[]): string[] {
+  return terms
+    .map((term) => normalizeForNameMatch(prepareForScan(term)))
+    .filter((term) => term.length > 0);
+}
+
+function decide(target: GuardTarget, phrases: readonly string[], patterns: PatternFlags): GuardDecision {
+  const hits = scan(target, phrases, patterns);
+  return { outcome: hits.length === 0 ? "allow" : "block", hits };
+}
+
+/**
+ * The audit schema has no separate category for a missing filter.
+ * The hold is stored as a name hit so the owner is told. The text is not stored.
+ */
+function hold(target: GuardTarget): GuardDecision {
+  return {
+    outcome: "block",
+    hits: [{ category: BlockCategory.Name, location: holdLocation(target) }],
+  };
+}
+
+function holdLocation(target: GuardTarget): BlockLocationName {
+  if (target.fileName !== undefined) return BlockLocation.FileName;
+  if (target.metadata && Object.keys(target.metadata).length > 0) return BlockLocation.FileMeta;
+  return target.kind === "file" ? BlockLocation.FileBody : BlockLocation.Text;
+}
+
+function formsOf(value: string): string[] {
+  return expansionTexts(value).map((text) => prepareForScan(text));
+}
+
+function containsPhrase(forms: readonly string[], phrases: readonly string[]): boolean {
+  return forms.some((form) => {
+    const normalized = normalizeForNameMatch(form);
+    return phrases.some((phrase) => phrase.length > 0 && normalized.includes(phrase));
+  });
 }
 
 function containsHealthNumber(value: string): boolean {
@@ -92,65 +211,36 @@ function pushHit(hits: GuardHit[], hit: GuardHit): void {
   if (!seen) hits.push(hit);
 }
 
-function scanField(hits: GuardHit[], value: string, location: GuardHit["location"], phrases: readonly string[]): void {
-  if (containsPhrase(value, phrases)) pushHit(hits, { category: BlockCategory.Name, location });
-  if (containsHealthNumber(value)) pushHit(hits, { category: BlockCategory.HealthNumber, location });
-  if (containsDob(value)) pushHit(hits, { category: BlockCategory.Dob, location });
+function scanField(
+  hits: GuardHit[],
+  value: string,
+  location: GuardHit["location"],
+  phrases: readonly string[],
+  patterns: PatternFlags,
+): void {
+  const forms = formsOf(value);
+  if (containsPhrase(forms, phrases)) pushHit(hits, { category: BlockCategory.Name, location });
+  if (patterns.healthNumber && forms.some((form) => containsHealthNumber(form))) {
+    pushHit(hits, { category: BlockCategory.HealthNumber, location });
+  }
+  if (patterns.dob && forms.some((form) => containsDob(form))) {
+    pushHit(hits, { category: BlockCategory.Dob, location });
+  }
 }
 
-function scan(target: GuardTarget, phrases: readonly string[]): GuardHit[] {
+function scan(target: GuardTarget, phrases: readonly string[], patterns: PatternFlags): GuardHit[] {
   const hits: GuardHit[] = [];
-  if (target.fileName !== undefined) scanField(hits, target.fileName, BlockLocation.FileName, phrases);
+  if (target.fileName !== undefined) scanField(hits, target.fileName, BlockLocation.FileName, phrases, patterns);
   if (target.metadata) {
     for (const key of Object.keys(target.metadata).sort()) {
-      scanField(hits, key, BlockLocation.FileMeta, phrases);
+      scanField(hits, key, BlockLocation.FileMeta, phrases, patterns);
       const value = target.metadata[key];
-      if (value !== undefined) scanField(hits, value, BlockLocation.FileMeta, phrases);
+      if (value !== undefined) scanField(hits, value, BlockLocation.FileMeta, phrases, patterns);
     }
   }
   if (target.text !== undefined) {
     const location = target.kind === "file" ? BlockLocation.FileBody : BlockLocation.Text;
-    scanField(hits, target.text, location, phrases);
+    scanField(hits, target.text, location, phrases, patterns);
   }
   return hits;
-}
-
-/** Names are injected. The default list is `fixtures/names.txt`. */
-export function createContentGuard(names: readonly string[]): ContentGuard {
-  const phrases = names.map((name) => normalizeForNameMatch(name)).filter((name) => name.length > 0);
-  return {
-    check(target: GuardTarget): GuardDecision {
-      const hits = scan(target, phrases);
-      return { outcome: hits.length === 0 ? "allow" : "block", hits };
-    },
-  };
-}
-
-function readDefaultNames(): readonly string[] {
-  const file = fileURLToPath(new URL("../../fixtures/names.txt", import.meta.url));
-  return readFileSync(file, "utf8")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("#"));
-}
-
-export const guard: ContentGuard = createContentGuard(readDefaultNames());
-
-/**
- * True when the declared media type is text or JSON.
- * A body that decodes as UTF-8 is scanned even when this is false.
- */
-export function fileBodyIsScanned(mediaType: string): boolean {
-  const type = mediaType.split(";")[0]?.trim().toLowerCase() ?? "";
-  if (type.startsWith(TEXT_MEDIA_TYPE_PREFIX)) return true;
-  return (TEXT_MEDIA_TYPES as readonly string[]).includes(type);
-}
-
-/** The file body when it is valid UTF-8. The declared media type is not consulted. */
-export function decodeUtf8Text(bytes: Uint8Array): string | undefined {
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    return undefined;
-  }
 }

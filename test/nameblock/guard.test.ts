@@ -11,10 +11,11 @@ import {
   blockNoticeMessage,
   feedIncludes,
 } from "../../contract/index.js";
-import { createContentGuard, fileBodyIsScanned, guard, normalizeForNameMatch } from "../../src/guard/index.js";
+import { createContentGuard, fileBodyIsScanned, normalizeForNameMatch } from "../../src/guard/index.js";
 import { loadFixtures } from "../helpers/fixtures.js";
 
 const pack = loadFixtures();
+const guard = createContentGuard(pack.names);
 const listedName = pack.names[0] ?? "";
 const healthNumber = pack.notesWithPatient.match(new RegExp(HEALTH_NUMBER_PATTERN))?.[0] ?? "";
 
