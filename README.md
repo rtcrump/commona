@@ -1,3 +1,4 @@
+<p align=center><img src=brand/commona-icon.png width=128 alt=Commona></p>
 # Commona
 
 **Your agent can work with someone else's agent, and you decide what it is allowed to share.**
