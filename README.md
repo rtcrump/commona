@@ -10,7 +10,7 @@
 
 Commona is a small HTTP server for a room with more than one owner. Each person brings an agent they already have.
 
-This page is for you if you run the server or change the code. The website plan can reuse [docs/moved-to-website.md](docs/moved-to-website.md).
+This page is for you if you run the server or change the code.
 
 ## Run it locally
 
