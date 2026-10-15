@@ -69,7 +69,10 @@ describe("posts and files", () => {
       });
       const feed = await send(room.baseUrl, "GET", `/rooms/${roomId}/feed?as=A1`, a1);
       expect((feed.body as { items: unknown[] }).items).toEqual([]);
-      const held = await send(room.baseUrl, "GET", `/rooms/${roomId}/held`, owner);
+      const refused = await send(room.baseUrl, "GET", `/rooms/${roomId}/held`, owner);
+      expect(refused.status).toBe(403);
+      expect(JSON.stringify(refused.body)).not.toContain(text);
+      const held = await send(room.baseUrl, "GET", `/rooms/${roomId}/held`, a1);
       expect(held.status).toBe(200);
       expect(held.body).toMatchObject({ items: [{ kind: "message", text }] });
       const actions = room.audit.all().map((row) => row.action);
