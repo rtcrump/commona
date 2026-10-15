@@ -90,6 +90,9 @@ const FILE_ONE_SQL = `${FILE_SQL} AND id = ?`;
 
 export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
   function level(roomId: string, fromOwnerId: string, toOwnerId: string): SharingLevel {
+    // Exact room id and exact owner ids. A look-alike id does not match, and
+    // another room's row does not apply. An empty id and an unknown level are None.
+    if (fromOwnerId.length === 0 || toOwnerId.length === 0) return DEFAULT_SHARING_LEVEL;
     const row = db
       .prepare<[string, string, string], { level: string }>(
         `SELECT level FROM sharing
@@ -138,6 +141,7 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
     itemKind: ItemKind,
     held: boolean,
   ): boolean {
+    if (authorOwnerId.length === 0 || viewerOwnerId.length === 0) return false;
     const granted = level(roomId, authorOwnerId, viewerOwnerId);
     return feedIncludes({
       held,
@@ -178,6 +182,8 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
       if (!viewerMaySee(row.authorOwnerId, viewerOwnerId, roomId, "file", isHeld(row.held))) {
         continue;
       }
+      const metadata = readMetadata(row.metadataJson);
+      if (!metadata) continue;
       visible.push({
         createdAt: row.createdAt,
         id: row.id,
@@ -189,7 +195,7 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
           name: row.name,
           mediaType: row.mediaType,
           byteLength: row.byteLength,
-          metadata: readMetadata(row.metadataJson),
+          metadata,
           createdAt: row.createdAt,
         },
       });
@@ -202,6 +208,8 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
   function visibleFile(roomId: string, fileId: string, viewerOwnerId: string): FileDownload | null {
     const row = db.prepare<[string, string], FileRow>(FILE_ONE_SQL).get(roomId, fileId);
     if (!row) return null;
+    const metadata = readMetadata(row.metadataJson);
+    if (!metadata) return null;
     if (!viewerMaySee(row.authorOwnerId, viewerOwnerId, roomId, "file", isHeld(row.held))) {
       return null;
     }
@@ -221,7 +229,7 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
       name: row.name,
       mediaType: row.mediaType,
       byteLength: row.byteLength,
-      metadata: readMetadata(row.metadataJson),
+      metadata,
       held: isHeld(row.held),
       createdAt: row.createdAt,
       contentBase64: encodeContent(blob.content),
@@ -238,11 +246,13 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
     // A bad pair or level is malformed. The route answers 400 and does not audit.
     assertDistinctSharingOwners(fromOwnerId, toOwnerId);
     assertLevel(sharingLevel);
-    // Agent tokens are refused even when the agent belongs to fromOwnerId.
-    if (principal.kind === "agent") {
+    // Only an owner token for fromOwnerId may write. An agent is refused even
+    // when its owner id matches, and so is any other kind of principal.
+    const kind: string = principal.kind;
+    if (kind === "agent") {
       return { allowed: false, reasonCode: ReasonCode.AgentCannotChangeSharing };
     }
-    if (principal.ownerId !== fromOwnerId) {
+    if (kind !== "owner" || principal.ownerId !== fromOwnerId) {
       return { allowed: false, reasonCode: ReasonCode.NotOwner };
     }
     return { allowed: true, sharing: writeLevel(roomId, fromOwnerId, toOwnerId, sharingLevel) };
@@ -270,22 +280,19 @@ function byAge(
   return 0;
 }
 
-function readMetadata(json: string): Record<string, string> {
-  let value: unknown;
+function readMetadata(json: string): Record<string, string> | null {
   try {
-    value = JSON.parse(json);
+    const value: unknown = JSON.parse(json);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const metadata: Record<string, string> = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (typeof item !== "string") return null;
+      metadata[key] = item;
+    }
+    return metadata;
   } catch {
-    throw new ContractError("file metadata is not json");
+    return null;
   }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new ContractError("file metadata must be an object");
-  }
-  const metadata: Record<string, string> = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (typeof item !== "string") throw new ContractError("file metadata values must be strings");
-    metadata[key] = item;
-  }
-  return metadata;
 }
 
 function encodeContent(content: unknown): string {
