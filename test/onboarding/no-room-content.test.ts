@@ -4,7 +4,12 @@ import { call, CANARIES, cookieValue, createInvite, seedCanaries, startJoinHarne
 function assertClean(text: string, roomId: string): void {
   for (const canary of CANARIES) expect(text).not.toContain(canary);
   expect(text).not.toContain(roomId);
-  expect(text.toLowerCase()).not.toContain("<script");
+  const scripts = [...text.matchAll(/<script\b([^>]*)>/gi)];
+  expect(scripts.length).toBeLessThanOrEqual(1);
+  for (const script of scripts) {
+    expect((script[1] ?? "").trim()).toBe('src="/onboarding/connect.js"');
+  }
+  expect(text.toLowerCase()).not.toContain("<script>");
 }
 
 describe("join pages show no room content", () => {
@@ -47,6 +52,7 @@ describe("join pages show no room content", () => {
     });
     pages.push(finished.body, finished.location ?? "");
     const joined = cookieValue(finished.setCookies, "commona_joined");
+    const session = cookieValue(finished.setCookies, "commona_session");
 
     const done = await call(room.baseUrl, "GET", `/j/${welcomeId}/done`, {
       accept: "text/html",
@@ -57,6 +63,28 @@ describe("join pages show no room content", () => {
 
     const connect = await call(room.baseUrl, "GET", "/join/connect", { accept: "text/html" });
     pages.push(connect.body);
+
+    const guided = await call(room.baseUrl, "GET", `/j/${welcomeId}/connect`, {
+      accept: "text/html",
+      cookie: `commona_session=${session}; commona_joined=${joined}`,
+    });
+    expect(guided.status).toBe(200);
+    expect(guided.body).toContain("Check connection");
+    expect(guided.body).not.toContain("Sunday lunch");
+    pages.push(guided.body);
+    const form = cookieValue(guided.setCookies, "commona_form");
+    const nonce = /name="nonce" value="([^"]*)"/.exec(guided.body)?.[1] ?? "";
+    const checked = await call(room.baseUrl, "POST", `/j/${welcomeId}/connect/check`, {
+      cookie: `commona_session=${session}; commona_joined=${joined}; commona_form=${form}`,
+      form: { nonce },
+    });
+    expect(checked.status).toBe(200);
+    expect(checked.body).toContain("<h1>Not connected</h1>");
+    expect(checked.body).not.toContain("<h1>Connected</h1>");
+    pages.push(checked.body);
+
+    const script = await call(room.baseUrl, "GET", "/onboarding/connect.js");
+    pages.push(script.body);
 
     const staleId = await createInvite(room);
     const stale = await call(room.baseUrl, "POST", `/j/${staleId}/continue`, { form: { firstName: "Alex" } });

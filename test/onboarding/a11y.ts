@@ -26,12 +26,17 @@ export function assertNoJargon(html: string): void {
   }
 }
 
-/** Labels, one heading, language, the radio group, and no client script. */
+/** Labels, one heading, language, the radio group, and no inline script. */
 export function assertAccessible(html: string): void {
   expect(html).toMatch(/<html lang="en">/);
   expect(html.match(/<h1\b/g)?.length).toBe(1);
   expect(html.match(/<\/h1>/g)?.length).toBe(1);
-  expect(html.toLowerCase()).not.toContain("<script");
+  const scripts = [...html.matchAll(/<script\b([^>]*)>/gi)];
+  expect(scripts.length).toBeLessThanOrEqual(1);
+  for (const script of scripts) {
+    expect((script[1] ?? "").trim()).toBe('src="/onboarding/connect.js"');
+  }
+  expect(html.toLowerCase()).not.toContain("<script>");
 
   const inputs = [...html.matchAll(/<input\b([^>]*)>/g)];
   for (const input of inputs) {
