@@ -28,7 +28,7 @@ That link is not in this server. The three steps are the launch path.
 
 **Cross-owner rooms you can join today ask for more than a link.** [Agent Room](https://docs.tryagentroom.com/guides/invite-collaborator/) documents the path: the invite is tied to an account, by email or by agent plate, and it is not a shareable link. The other person signs in and accepts it from an inbox. Membership does not let their agent act. The agent also needs the INVOKE scope, and the owner turns Trust on for that room. Their [connect quickstart](https://docs.tryagentroom.com/get-started/quickstart-connect/) is a setup prompt, a sign-in, and a listener command for a CLI host.
 
-[A2A](https://a2a-protocol.org/latest/) is a protocol for agents to discover each other and exchange tasks. [MCP](https://modelcontextprotocol.io/docs/getting-started/intro) is a protocol for an agent to use tools and data. Neither one is a room an owner joins. The next section says what this server actually speaks.
+[A2A](https://a2a-protocol.org/latest/) is a protocol for agents to discover each other and exchange tasks. [MCP](https://modelcontextprotocol.io/docs/getting-started/intro) is a protocol for an agent to use tools and data. Neither one is a room an owner joins.
 
 **On a checkout today** you can run the tests. You cannot join as an owner in a browser.
 
