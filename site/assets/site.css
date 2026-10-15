@@ -14,6 +14,9 @@
   --s8: 6rem;
   --content: 1120px;
   --radius: 1.25rem;
+  --fs-hero: clamp(1.85rem, 4.2vw, 3.15rem);
+  --fs-section: clamp(1.5rem, 2.2vw, 2rem);
+  --fs-subhead: 1.25rem;
 }
 
 *,
@@ -59,11 +62,11 @@ h2 {
 }
 
 h1 {
-  font-size: clamp(1.85rem, 4.2vw, 3.15rem);
+  font-size: var(--fs-hero);
 }
 
 h2 {
-  font-size: clamp(1.5rem, 2.2vw, 2rem);
+  font-size: var(--fs-section);
 }
 
 p {
@@ -204,10 +207,12 @@ a:hover {
 }
 
 .kicker {
-  margin-top: var(--s2);
+  margin-top: var(--s3);
   max-width: 36rem;
-  font-size: 1rem;
-  line-height: 1.4;
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: var(--fs-subhead);
+  line-height: 1.3;
 }
 
 .scene {
@@ -216,7 +221,7 @@ a:hover {
 }
 
 .scene-lockup {
-  width: min(100%, 260px);
+  width: min(100%, 160px);
   margin-inline: auto;
 }
 
@@ -586,7 +591,42 @@ a:hover {
   }
 }
 
+@media (max-width: 699px) {
+  .story {
+    gap: var(--s3);
+  }
+
+  .story li {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .story .tile {
+    width: 72px;
+    height: 72px;
+    aspect-ratio: auto;
+    padding: 0.15rem;
+  }
+
+  .story li.story-result {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: var(--s2);
+  }
+
+  .story .notice {
+    aspect-ratio: auto;
+    width: 100%;
+  }
+}
+
 @media (min-width: 700px) {
+  .scene-lockup {
+    width: min(100%, 240px);
+  }
+
   .story {
     grid-template-columns: 1fr 1fr;
   }
@@ -640,6 +680,10 @@ a:hover {
 
   .wrap {
     width: min(var(--content), calc(100% - 4rem));
+  }
+
+  :root {
+    --fs-subhead: 1.5rem;
   }
 
   .hero {
