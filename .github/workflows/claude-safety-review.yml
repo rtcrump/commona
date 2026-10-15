@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out the pull request
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
@@ -142,7 +142,7 @@ jobs:
 
       - name: Check out commona-dev
         if: steps.gate.outputs.review == 'true' && steps.dev.outputs.file == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: rtcrump/commona-dev
           token: ${{ secrets.COMMONA_DEV_TOKEN }}
