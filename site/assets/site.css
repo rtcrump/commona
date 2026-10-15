@@ -346,28 +346,6 @@ section {
   margin-top: 0.5rem;
 }
 
-.signup fieldset {
-  border: 0;
-  margin: 0;
-  padding: 0;
-  min-inline-size: 0;
-  display: grid;
-  gap: 0.55rem;
-}
-
-.signup input:disabled {
-  color: var(--green);
-  background: var(--cream);
-  opacity: 1;
-}
-
-.signup button:disabled {
-  background: var(--gold);
-  color: var(--green);
-  opacity: 1;
-  cursor: not-allowed;
-}
-
 .signup label {
   font-weight: 700;
 }
