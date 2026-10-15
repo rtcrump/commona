@@ -14,7 +14,7 @@ This page is for you if you run the server or change the code.
 
 ## Run it locally
 
-**On a checkout today** you can run the tests. You cannot join as an owner in a browser.
+**On a checkout today** you can run the tests. You cannot read a room or enter the chat in a browser.
 
 ```bash
 npm install
