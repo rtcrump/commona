@@ -20,12 +20,11 @@ import { isInviteId, redeemInvite } from "../join/service.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import {
+  connectLinkState,
   hasArrived,
   issueConnectLink,
-  linkLabel,
   requestCheck,
   waitForCheck,
-  type LinkLabel,
 } from "./connect.js";
 import { describeInvite, errorSentence, type InviteView } from "./invite-view.js";
 import { renderConnect, renderDone, renderError, renderGuided, renderSharing, renderStatus, renderWelcome } from "./html.js";
@@ -319,10 +318,13 @@ export function openConnectPage(
   if (!isAuth(auth)) return auth;
   const view = describeInvite(deps, inviteId);
   const arrived = hasArrived(handoffDeps(deps), auth.ownerId);
-  const label: LinkLabel = linkLabel(handoffDeps(deps), auth.ownerId);
+  const link = connectLinkState(handoffDeps(deps), auth.ownerId);
   const { nonce, cookie } = issueNonce(10 * 60);
-  const note =
-    label === "Get a new link" ? "<p>That link was already used, or it ran out of time.</p>" : "";
+  const note = link.bound
+    ? "<p>Claude can keep using that link. A new link replaces it.</p>"
+    : link.label === "Get a new link"
+      ? "<p>That link was already used, or it ran out of time.</p>"
+      : "";
   return page(
     200,
     renderGuided({
@@ -332,7 +334,7 @@ export function openConnectPage(
         : "You'll paste one link into Claude. That is three steps.",
       note,
       inviter: view.inviter,
-      copyLabel: label,
+      copyLabel: link.label,
       copyAction: pathFor(inviteId, "/connect/link"),
       checkAction: pathFor(inviteId, "/connect/check"),
       nonce,

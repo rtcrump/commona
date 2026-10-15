@@ -14,6 +14,12 @@ export class ConnectError extends Error {
 
 export type LinkLabel = "Copy my link" | "Get a new link";
 
+export interface ConnectLinkState {
+  label: LinkLabel;
+  /** True when the latest link already completed its one-time handoff and Claude may use it again. */
+  bound: boolean;
+}
+
 interface HandoffLookup {
   id: string;
   owner_id: string;
@@ -45,26 +51,51 @@ export function issueConnectLink(
     | { id: string }
     | undefined;
   if (!row) throw new ConnectError();
-  deps.db
-    .prepare(
-      `INSERT INTO connect_links (handoff_id, owner_id, room_id, invite_id, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-    )
-    .run(row.id, ownerId, roomId, inviteId, formatTimestamp(deps.clock.now()));
+  const now = formatTimestamp(deps.clock.now());
+  const write = deps.db.transaction(() => {
+    deps.db
+      .prepare(
+        `INSERT INTO connect_links (handoff_id, owner_id, room_id, invite_id, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(row.id, ownerId, roomId, inviteId, now);
+    deps.db.prepare("UPDATE connect_links SET bound_at = NULL WHERE owner_id = ? AND handoff_id != ?").run(ownerId, row.id);
+  });
+  write();
   inviteLog(`connect issue owner=${ownerId}`);
   return { secret: handoff.secret, expiresAt: handoff.expiresAt };
 }
 
-export function linkLabel(deps: HandoffDeps, ownerId: string): LinkLabel {
-  const row = deps.db
+interface LatestLink {
+  expires_at: string;
+  used_at: string | null;
+  bound_at: string | null;
+}
+
+function latestLink(deps: HandoffDeps, ownerId: string): LatestLink | undefined {
+  return deps.db
     .prepare(
-      `SELECT expires_at, used_at FROM agent_handoffs WHERE owner_id = ? ORDER BY rowid DESC LIMIT 1`,
+      `SELECT handoff.expires_at, handoff.used_at, link.bound_at
+       FROM agent_handoffs AS handoff
+       LEFT JOIN connect_links AS link ON link.handoff_id = handoff.id
+       WHERE handoff.owner_id = ?
+       ORDER BY handoff.rowid DESC
+       LIMIT 1`,
     )
-    .get(ownerId) as { expires_at: string; used_at: string | null } | undefined;
-  if (!row) return "Copy my link";
+    .get(ownerId) as LatestLink | undefined;
+}
+
+export function connectLinkState(deps: HandoffDeps, ownerId: string): ConnectLinkState {
+  const row = latestLink(deps, ownerId);
+  if (!row) return { label: "Copy my link", bound: false };
+  if (row.bound_at !== null) return { label: "Get a new link", bound: true };
   const now = formatTimestamp(deps.clock.now());
-  if (row.used_at !== null || row.expires_at <= now) return "Get a new link";
-  return "Copy my link";
+  if (row.used_at !== null || row.expires_at <= now) return { label: "Get a new link", bound: false };
+  return { label: "Copy my link", bound: false };
+}
+
+export function linkLabel(deps: HandoffDeps, ownerId: string): LinkLabel {
+  return connectLinkState(deps, ownerId).label;
 }
 
 export function hasArrived(deps: HandoffDeps, ownerId: string): boolean {
@@ -76,8 +107,9 @@ export function hasArrived(deps: HandoffDeps, ownerId: string): boolean {
 
 /**
  * Swap a handoff for the agent's credential when the room is the one the link was issued for.
- * A wrong room, a wrong owner, a second use, or an expired link fails without revealing which.
- * A room mismatch does not use up the link.
+ * The first swap is single-use. After that, the same link stays bound so Claude can connect again.
+ * A wrong room, a wrong owner, an unbound second use, or an expired unused link fails without revealing which.
+ * A room mismatch does not use up the link and does not replace the bound one.
  */
 export function claimConnectLink(
   deps: HandoffDeps,
@@ -91,15 +123,21 @@ export function claimConnectLink(
       "SELECT id, owner_id, agent_id, expires_at, used_at FROM agent_handoffs WHERE secret_hash = ?",
     )
     .get(hashToken(secret)) as HandoffLookup | undefined;
-  if (!row || row.used_at !== null || row.expires_at <= now) throw new ConnectError();
-  const link = deps.db.prepare("SELECT room_id FROM connect_links WHERE handoff_id = ?").get(row.id) as
-    | { room_id: string }
+  if (!row) throw new ConnectError();
+  const link = deps.db.prepare("SELECT room_id, bound_at FROM connect_links WHERE handoff_id = ?").get(row.id) as
+    | { room_id: string; bound_at: string | null }
     | undefined;
   if (!link || link.room_id !== roomId) throw new ConnectError();
   const member = deps.db
     .prepare("SELECT 1 AS ok FROM memberships WHERE room_id = ? AND agent_id = ? AND owner_id = ?")
     .get(roomId, row.agent_id, row.owner_id) as { ok: number } | undefined;
   if (!member) throw new ConnectError();
+  if (link.bound_at !== null) {
+    const credential = deps.tokens.issueAgentToken(row.agent_id);
+    inviteLog(`connect rebind owner=${row.owner_id} agent=${row.agent_id}`);
+    return { agentId: row.agent_id, ownerId: row.owner_id, roomId, credential };
+  }
+  if (row.used_at !== null || row.expires_at <= now) throw new ConnectError();
   let claimed: { agentId: string; ownerId: string; credential: string };
   try {
     claimed = claimAgentHandoff(deps, secret);
@@ -107,6 +145,10 @@ export function claimConnectLink(
     throw new ConnectError();
   }
   if (claimed.ownerId !== row.owner_id || claimed.agentId !== row.agent_id) throw new ConnectError();
+  const bound = deps.db
+    .prepare("UPDATE connect_links SET bound_at = ? WHERE handoff_id = ? AND bound_at IS NULL")
+    .run(now, row.id);
+  if (bound.changes !== 1) throw new ConnectError();
   inviteLog(`connect claim owner=${claimed.ownerId} agent=${claimed.agentId}`);
   return { agentId: claimed.agentId, ownerId: claimed.ownerId, roomId, credential: claimed.credential };
 }

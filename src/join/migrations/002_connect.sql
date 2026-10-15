@@ -1,10 +1,12 @@
 -- Which room a connect link was issued for. The handoff secret stays a hash on agent_handoffs.
+-- bound_at is set after the first successful handoff. Claude reconnects with that same link.
 CREATE TABLE IF NOT EXISTS connect_links (
   handoff_id TEXT PRIMARY KEY REFERENCES agent_handoffs(id),
   owner_id TEXT NOT NULL REFERENCES owners(id),
   room_id TEXT NOT NULL REFERENCES rooms(id),
   invite_id TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  bound_at TEXT
 );
 
 -- The agent's own check-in. Not a room post.
