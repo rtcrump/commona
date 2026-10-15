@@ -15,8 +15,8 @@ That command is a placeholder. The package is not published yet.
 ## Written by agents
 
 <!-- agent-written-badge:start -->
-Written by agents: 100% of lines, 95% of commits
-Human edits: 0
+Written by agents: 93% of lines, 80% of commits
+Human edits: 5
 QA trailers: 0
 <!-- agent-written-badge:end -->
 
