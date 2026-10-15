@@ -25,7 +25,7 @@ import {
   type RoomFile,
   type UploadFileResponse,
 } from "../../contract/index.js";
-import { decodeUtf8Text } from "../guard/index.js";
+import { decodeUtf8Text, scopeGuardTarget } from "../guard/index.js";
 import { recordBlock, recordLoopStop } from "../notices/events.js";
 import { nowStamp, refuse, requireMember, requireRoom } from "./access.js";
 import type { RoomDeps } from "./deps.js";
@@ -76,7 +76,7 @@ export function createPost(
   const round = roundAfterOtherAgent(deps, roomId, principal.agentId);
   const threadId = parent?.threadId ?? id;
   const createdAt = nowStamp(deps);
-  const decision = deps.guard.check({ kind: "message", text: request.text });
+  const decision = deps.guard.check(scopeGuardTarget(principal.ownerId, { kind: "message", text: request.text }));
   const held = decision.outcome === "block";
   const block = held ? decision.hits[0] : undefined;
   deps.db
@@ -171,12 +171,14 @@ export function uploadFile(
   const bytes = decodeBase64(request.contentBase64);
   const metadata = request.metadata;
   const text = decodeUtf8Text(bytes);
-  const decision = deps.guard.check({
-    kind: "file",
-    fileName: request.filename,
-    metadata,
-    ...(text !== undefined ? { text } : {}),
-  });
+  const decision = deps.guard.check(
+    scopeGuardTarget(principal.ownerId, {
+      kind: "file",
+      fileName: request.filename,
+      metadata,
+      ...(text !== undefined ? { text } : {}),
+    }),
+  );
   const held = decision.outcome === "block";
   const block = held ? decision.hits[0] : undefined;
   const id = newId("file");

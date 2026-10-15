@@ -12,7 +12,7 @@ import {
 import { createAuditLog } from "./audit/log.js";
 import { createTokenStore } from "./auth/store.js";
 import { openDatabase } from "./db.js";
-import { guard } from "./guard/index.js";
+import { createPrivacyGuard } from "./guard/filter.js";
 import { createOwnerNotifier } from "./notices/store.js";
 import { createSharingDirectory } from "./sharing/index.js";
 import { createWakeService, type WakeService } from "./wakeup/index.js";
@@ -61,7 +61,7 @@ export function defaultRuntime(): Runtime {
     tokens,
     audit,
     sharing: createSharingDirectory(db),
-    guard,
+    guard: createPrivacyGuard(db),
     notices,
     ...(smtp ? { smtp } : {}),
     wake,

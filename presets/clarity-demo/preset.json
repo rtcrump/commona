@@ -1,0 +1,6 @@
+{
+  "id": "clarity-demo",
+  "title": "Clarity demo",
+  "description": "Opt-in list of invented names for the showroom. The names are clearly fake. This preset is off unless an owner turns it on.",
+  "termsFile": "../../fixtures/names.txt"
+}

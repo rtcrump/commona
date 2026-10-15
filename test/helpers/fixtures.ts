@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { HEALTH_NUMBER_PATTERN, type AgentFixture, type FixturePack, type OwnerFixture } from "../../contract/index.js";
 import { openDatabase } from "../../src/db.js";
+import { seedFixturePrivacyFilters } from "../../src/guard/filter.js";
 
 type Sqlite = ReturnType<typeof openDatabase>;
 
@@ -136,6 +137,12 @@ export function seedFixtures(db: Sqlite, pack: FixturePack): void {
         eventTarget: row.wake.event?.target ?? null,
       });
     }
+    // The acceptance name cases post the fixture list. Those owners opt in.
+    // A new owner created any other way gets patterns on and no terms.
+    seedFixturePrivacyFilters(
+      db,
+      pack.owners.map((row) => row.id),
+    );
   });
   insert();
 }
