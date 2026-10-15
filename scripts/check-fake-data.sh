@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Fail when the invented health number, or any fixtures/names.txt entry,
-# shows up outside fixtures/, test/, and tests/. The acceptance harness
-# quotes the M1 truth set, so tests/ is allowed to contain those markers.
+# shows up outside fixtures/, test/, tests/, and presets/clarity-demo/.
+# The acceptance harness quotes the M1 truth set, so tests/ is allowed to
+# contain those markers. The Clarity preset holds the same invented name.
 # The health number is assembled at runtime so this script does not
 # contain the literal.
 set -euo pipefail
@@ -26,7 +27,7 @@ scan=()
 fail=0
 for f in "${files[@]}"; do
   case "$f" in
-    fixtures/*|test/*|tests/*) continue ;;
+    fixtures/*|test/*|tests/*|presets/clarity-demo/*) continue ;;
   esac
   scan+=("$f")
   lowpath="$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')"
@@ -51,9 +52,14 @@ if ((${#scan[@]} > 0)); then
     fail=1
   fi
   for name in "${names[@]}"; do
-    if grep -n -F -i -H -e "$name" "${scan[@]}" > /tmp/commona-fake-name.txt; then
+    # GNU grep 3.0 (Git for Windows) aborts on -F -i, which would look like a pass.
+    needle="$(printf '%s' "$name" | sed -e 's/[].[^$*+?{}|()\\]/\\&/g')"
+    if grep -n -i -H -e "$needle" "${scan[@]}" > /tmp/commona-fake-name.txt; then
       cat /tmp/commona-fake-name.txt >&2
-      echo "name list entry leaked outside fixtures/, test/, and tests/" >&2
+      echo "name list entry leaked outside fixtures/, test/, tests/, and presets/clarity-demo/" >&2
+      fail=1
+    elif (( $? > 1 )); then
+      echo "name scan failed" >&2
       fail=1
     fi
   done

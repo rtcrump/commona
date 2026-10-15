@@ -28,10 +28,11 @@ describe("fixtures", () => {
     db.close();
   });
 
+  // The script spawns a process per path. On Windows that exceeds the default 5s.
   it("keeps the invented patient markers inside fixtures and test", async () => {
     const { stdout } = await exec("bash", ["scripts/check-fake-data.sh"]);
     expect(stdout).toContain("fake-data check ok");
-  });
+  }, 30_000);
 
   it("keeps the acceptance harness on npm run m1", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: { m1: string; test: string } };
