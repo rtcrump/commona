@@ -17,9 +17,9 @@ concurrency:
 
 jobs:
   archive:
-    # Exact login match. Copilot's default is a candidate: confirm it from the
-    # first real review. Override with the repository variable
-    # COPILOT_REVIEWER_LOGINS, a JSON array of logins.
+    # Exact login match. Copilot's login was confirmed from the review on
+    # pull request 8: copilot-pull-request-reviewer[bot]. Override with the
+    # repository variable COPILOT_REVIEWER_LOGINS, a JSON array of logins.
     if: >-
       github.event.review.user.login == 'chatgpt-codex-connector[bot]' ||
       contains(fromJSON(vars.COPILOT_REVIEWER_LOGINS || '["copilot-pull-request-reviewer[bot]"]'), github.event.review.user.login)
