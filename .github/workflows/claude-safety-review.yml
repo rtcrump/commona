@@ -77,6 +77,10 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
+          # Agent pushes arrive as cursor[bot]. The action rejects every bot
+          # unless it is named here. The match strips a trailing [bot], and
+          # this does not allow any other bot.
+          allowed_bots: "cursor[bot]"
           use_commit_signing: "false"
           include_fix_links: "false"
           prompt: |

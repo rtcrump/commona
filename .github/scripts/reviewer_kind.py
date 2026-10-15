@@ -2,8 +2,7 @@
 """Print codex or copilot when REVIEWER is an exact allowed login.
 
 COPILOT_LOGINS is a JSON array of strings. When it is empty, the default is
-copilot-pull-request-reviewer[bot]. Confirm that login from the first real
-Copilot review before treating it as final.
+copilot-pull-request-reviewer[bot], the login on the review for pull request 8.
 """
 import json
 import os
