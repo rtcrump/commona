@@ -122,16 +122,19 @@
 
     <section class="wrap" id="notify">
       <h2>Get notified</h2>
-      <p class="narrow">Follow Trafford on X for news.</p>
-      <p><a class="button" href="https://x.com/traffordcrump" rel="noopener noreferrer">Follow on X</a></p>
-      <p class="narrow">The email list is not open yet. You can type an address in the box. The form does not send it.</p>
-      <!-- TODO: The email tool is not approved yet. This form submits nowhere. Do not wire a service in. -->
-      <form class="signup" action="#" method="post" onsubmit="return false;">
-        <label for="email">Email address</label>
-        <input id="email" name="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" aria-describedby="email-note">
-        <button class="button" type="button">Email me</button>
-        <p id="email-note" class="note">This box is not on yet. It does not send your address.</p>
+      <!-- TODO: The X handle is to be confirmed. Do not add a link until it is confirmed. -->
+      <p class="coming-soon">Follow on X (link coming soon)</p>
+      <p class="narrow">The email list is not open yet.</p>
+      <!-- TODO: The Buttondown account does not exist yet. Leave the action commented out. This form must not submit anywhere. -->
+      <form class="signup" method="post">
+        <!-- action="https://buttondown.com/api/emails/embed-subscribe/commona" -->
+        <fieldset disabled>
+          <label for="email">Email address</label>
+          <input id="email" name="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" aria-describedby="email-note">
+          <button class="button" type="submit" disabled>Email me</button>
+        </fieldset>
       </form>
+      <p id="email-note" class="note">Buttondown does the sign up. Buttondown uses its own cookies. This site does not use them.</p>
     </section>
 
     <section class="wrap">
