@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { HEALTH_NUMBER_PATTERN, type AgentFixture, type FixturePack, type OwnerFixture } from "../../contract/index.js";
 import { openDatabase } from "../../src/db.js";
+import { installClarityDemo } from "../../src/guard/filter-store.js";
 
 type Sqlite = ReturnType<typeof openDatabase>;
 
@@ -115,7 +116,11 @@ function assertPack(pack: FixturePack): void {
   }
 }
 
-/** Insert owners and agents. Rooms, posts, and tokens are left for later specs. */
+/**
+ * Insert owners and agents. Rooms, posts, and tokens are left for later specs.
+ * The Clarity demo preset is turned on for these owners so the milestone 1
+ * name checks still block. A new owner outside this setup does not get it.
+ */
 export function seedFixtures(db: Sqlite, pack: FixturePack): void {
   const owner = db.prepare(
     "INSERT INTO owners (id, email, display_name, role) VALUES (@id, @email, @displayName, @role)",
@@ -136,6 +141,7 @@ export function seedFixtures(db: Sqlite, pack: FixturePack): void {
         eventTarget: row.wake.event?.target ?? null,
       });
     }
+    for (const row of pack.owners) installClarityDemo(db, row.id);
   });
   insert();
 }

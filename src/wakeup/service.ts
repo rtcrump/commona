@@ -168,6 +168,7 @@ export function createWakeService(options: WakeServiceOptions): WakeService {
       const events: WakeEvent[] = [];
       for (const member of members) {
         if (existing.get(input.roomId, input.itemKind, input.itemId, member.agentId)) continue;
+        if (member.ownerId.length === 0 || input.authorOwnerId.length === 0) continue;
         const level = sharingLevel(db, input.roomId, input.authorOwnerId, member.ownerId);
         const disclosure = wakeDisclosure({
           level,
@@ -420,6 +421,7 @@ function assertEnqueueInput(input: WakeEnqueueInput): void {
 }
 
 function sharingLevel(db: Sqlite, roomId: string, fromOwnerId: string, toOwnerId: string): SharingLevel {
+  if (fromOwnerId.length === 0 || toOwnerId.length === 0) return DEFAULT_SHARING_LEVEL;
   if (fromOwnerId === toOwnerId) return DEFAULT_SHARING_LEVEL;
   const row = db
     .prepare(
@@ -427,8 +429,7 @@ function sharingLevel(db: Sqlite, roomId: string, fromOwnerId: string, toOwnerId
        WHERE room_id = ? AND from_owner_id = ? AND to_owner_id = ?`,
     )
     .get(roomId, fromOwnerId, toOwnerId) as { level: string } | undefined;
-  if (!row) return DEFAULT_SHARING_LEVEL;
-  if (!isSharingLevel(row.level)) throw new ContractError("sharing level is invalid");
+  if (!row || !isSharingLevel(row.level)) return DEFAULT_SHARING_LEVEL;
   return row.level;
 }
 
@@ -461,7 +462,7 @@ function loadItem(db: Sqlite, input: WakeEnqueueInput): LoadedItem {
     if (!row) throw new ContractError("wake item not found");
     return {
       kind: "message",
-      held: row.held === 1,
+      held: row.held !== 0,
       authorAgentId: row.authorAgentId,
       authorOwnerId: row.authorOwnerId,
       round: row.round,
@@ -490,13 +491,13 @@ function loadItem(db: Sqlite, input: WakeEnqueueInput): LoadedItem {
     name: row.name,
     mediaType: row.mediaType,
     byteLength: row.content.length,
-    metadata,
+    metadata: metadata ?? {},
   };
   const textBody = decodeUtf8Text(row.content);
   if (textBody !== undefined) content.textBody = textBody;
   return {
     kind: "file",
-    held: row.held === 1,
+    held: row.held !== 0 || metadata === null,
     authorAgentId: row.authorAgentId,
     authorOwnerId: row.authorOwnerId,
     content,
@@ -529,22 +530,19 @@ function buildEvent(args: {
   return wireWakeEvent(event);
 }
 
-function parseMetadata(json: string): Record<string, string> {
-  let value: unknown;
+function parseMetadata(json: string): Record<string, string> | null {
   try {
-    value = JSON.parse(json) as unknown;
+    const value = JSON.parse(json) as unknown;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const metadata: Record<string, string> = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (typeof item !== "string") return null;
+      metadata[key] = item;
+    }
+    return metadata;
   } catch {
-    throw new ContractError("file metadata is invalid");
+    return null;
   }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new ContractError("file metadata is invalid");
-  }
-  const metadata: Record<string, string> = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (typeof item !== "string") throw new ContractError("file metadata is invalid");
-    metadata[key] = item;
-  }
-  return metadata;
 }
 
 function loadWake(db: Sqlite, wakeId: string): WakeRow | undefined {

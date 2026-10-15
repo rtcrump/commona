@@ -25,7 +25,7 @@ import {
   type RoomFile,
   type UploadFileResponse,
 } from "../../contract/index.js";
-import { decodeUtf8Text } from "../guard/index.js";
+import { decodeUtf8Text, screenContent } from "../guard/index.js";
 import { recordBlock, recordLoopStop } from "../notices/events.js";
 import { nowStamp, refuse, requireMember, requireRoom } from "./access.js";
 import type { RoomDeps } from "./deps.js";
@@ -76,7 +76,7 @@ export function createPost(
   const round = roundAfterOtherAgent(deps, roomId, principal.agentId);
   const threadId = parent?.threadId ?? id;
   const createdAt = nowStamp(deps);
-  const decision = deps.guard.check({ kind: "message", text: request.text });
+  const decision = screenContent(deps.guard, principal.ownerId, { kind: "message", text: request.text });
   const held = decision.outcome === "block";
   const block = held ? decision.hits[0] : undefined;
   deps.db
@@ -171,7 +171,7 @@ export function uploadFile(
   const bytes = decodeBase64(request.contentBase64);
   const metadata = request.metadata;
   const text = decodeUtf8Text(bytes);
-  const decision = deps.guard.check({
+  const decision = screenContent(deps.guard, principal.ownerId, {
     kind: "file",
     fileName: request.filename,
     metadata,
@@ -314,9 +314,9 @@ export function readFile(deps: RoomDeps, principal: AuthPrincipal, roomId: strin
   const row = deps.db.prepare("SELECT * FROM files WHERE id = ? AND room_id = ?").get(fileId, roomId) as
     | FileRow
     | undefined;
-  if (!row || row.held === 1) throw RoomHttpError.notFound();
+  if (!row || row.held !== 0) throw RoomHttpError.notFound();
   const item = fileItem(row);
-  if (!visible(deps, roomId, item, principal.ownerId)) throw RoomHttpError.notFound();
+  if (!item || !visible(deps, roomId, item, principal.ownerId)) throw RoomHttpError.notFound();
   deps.audit.append({
     ts: nowStamp(deps),
     room: roomId,
@@ -354,13 +354,14 @@ export function readHeld(deps: RoomDeps, principal: AuthPrincipal, roomId: strin
     .all(roomId, principal.ownerId) as FileRow[];
   for (const row of files) {
     const block = hitOf(row);
-    if (!block) continue;
+    const metadata = parseMetadataJson(row.metadata_json);
+    if (!block || !metadata) continue;
     items.push({
       kind: "file",
       id: row.id,
       name: row.name,
       mediaType: row.media_type,
-      metadata: parseMetadataJson(row.metadata_json),
+      metadata,
       contentBase64: asBuffer(row.content).toString("base64"),
       createdAt: row.created_at,
       block,
@@ -408,6 +409,7 @@ function visible(
   item: FeedItem,
   viewerOwnerId: string,
 ): boolean {
+  if (viewerOwnerId.length === 0 || item.authorOwnerId.length === 0) return false;
   const level = deps.sharing.level(roomId, item.authorOwnerId, viewerOwnerId);
   return feedIncludes({
     held: false,
@@ -443,10 +445,17 @@ function loadFiles(deps: RoomDeps, roomId: string): FeedItem[] {
   const rows = deps.db
     .prepare("SELECT * FROM files WHERE room_id = ? AND held = 0 ORDER BY created_at, id")
     .all(roomId) as FileRow[];
-  return rows.map(fileItem);
+  const items: FeedItem[] = [];
+  for (const row of rows) {
+    const item = fileItem(row);
+    if (item) items.push(item);
+  }
+  return items;
 }
 
-function fileItem(row: FileRow): FeedItem {
+function fileItem(row: FileRow): FeedItem | null {
+  const metadata = parseMetadataJson(row.metadata_json);
+  if (!metadata) return null;
   return {
     kind: "file",
     id: row.id,
@@ -455,12 +464,13 @@ function fileItem(row: FileRow): FeedItem {
     name: row.name,
     mediaType: row.media_type,
     byteLength: row.byte_length,
-    metadata: parseMetadataJson(row.metadata_json),
+    metadata,
     createdAt: row.created_at,
   };
 }
 
 function fileRecord(row: FileRow): RoomFile {
+  const metadata = parseMetadataJson(row.metadata_json) ?? {};
   return {
     id: row.id,
     roomId: row.room_id,
@@ -469,8 +479,8 @@ function fileRecord(row: FileRow): RoomFile {
     name: row.name,
     mediaType: row.media_type,
     byteLength: row.byte_length,
-    metadata: parseMetadataJson(row.metadata_json),
-    held: row.held === 1,
+    metadata,
+    held: row.held !== 0,
     createdAt: row.created_at,
   };
 }
@@ -480,14 +490,19 @@ function hitOf(row: { block_category: GuardHit["category"] | null; block_locatio
   return { category: row.block_category, location: row.block_location };
 }
 
-function parseMetadataJson(value: string): Record<string, string> {
-  const parsed = JSON.parse(value) as unknown;
-  if (!isRecord(parsed)) return {};
-  const out: Record<string, string> = {};
-  for (const [key, item] of Object.entries(parsed)) {
-    if (typeof item === "string") out[key] = item;
+function parseMetadataJson(value: string): Record<string, string> | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isRecord(parsed)) return null;
+    const out: Record<string, string> = {};
+    for (const [key, item] of Object.entries(parsed)) {
+      if (typeof item !== "string") return null;
+      out[key] = item;
+    }
+    return out;
+  } catch {
+    return null;
   }
-  return out;
 }
 
 function parsePost(body: unknown): { text: string; replyToId: string | null } {

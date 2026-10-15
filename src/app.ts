@@ -14,7 +14,7 @@ import {
 } from "../contract/index.js";
 import { createAuditLog, registerLogRoute } from "./audit/index.js";
 import { createTokenStore } from "./auth/index.js";
-import { guard } from "./guard/index.js";
+import { createPrivacyGuard } from "./guard/index.js";
 import { createOwnerNotifier, registerNoticeRoute } from "./notices/index.js";
 import type { RoomDeps } from "./room/deps.js";
 import { RoomHttpError } from "./room/http.js";
@@ -63,7 +63,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     tokens,
     audit,
     sharing: options.sharing ?? shared?.sharing ?? createSharingDirectory(db),
-    guard: options.guard ?? shared?.guard ?? guard,
+    guard: options.guard ?? shared?.guard ?? createPrivacyGuard(db),
     notices,
     ...(wakeQueue ? { wakeQueue } : {}),
     ...(deliverWake ? { deliverWake } : {}),

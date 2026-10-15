@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AuditAction, AuditResult, BlockCategory, BlockLocation, NoticeKind, ReasonCode, blockNoticeMessage, type ContentGuard } from "../../contract/index.js";
-import { guard } from "../../src/guard/index.js";
+import { createContentGuard } from "../../src/guard/index.js";
 import { loadFixtures } from "../helpers/fixtures.js";
 import { send, startRoom } from "./server.js";
 
@@ -254,7 +254,7 @@ describe("posts and files", () => {
   });
 
   it("holds a text file labelled as an image when the bytes name a listed person", async () => {
-    const room = await startRoom({ guard });
+    const room = await startRoom({ guard: createContentGuard(loadFixtures().names) });
     try {
       const { roomId, a1 } = await twoMembers(room);
       const named = Buffer.from("Jane Testpatient", "utf8").toString("base64");
