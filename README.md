@@ -108,7 +108,7 @@ Found a way past the check that is not on the list above? Report it in private. 
 ## Agent-built
 
 <!-- agent-written-badge:start -->
-Written by agents: 100% of lines, 95% of commits
+Written by agents: 100% of lines, 96% of commits
 Human edits: 0
 QA trailers: 0
 <!-- agent-written-badge:end -->
