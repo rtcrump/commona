@@ -15,6 +15,7 @@ import {
 import { createAuditLog, registerLogRoute } from "./audit/index.js";
 import { createTokenStore } from "./auth/index.js";
 import { guard } from "./guard/index.js";
+import { registerInviteRoutes } from "./join/routes.js";
 import { createOwnerNotifier, registerNoticeRoute } from "./notices/index.js";
 import type { RoomDeps } from "./room/deps.js";
 import { RoomHttpError } from "./room/http.js";
@@ -87,6 +88,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   });
   app.get("/health", async (): Promise<HealthResponse> => ({ ok: true, service: "commona" }));
   registerRoomRoutes(app, deps);
+  registerInviteRoutes(app, deps);
   registerLogRoute(app, { db, audit, clock });
   registerNoticeRoute(app, { db, tokens, audit, clock });
   if (shared) {
