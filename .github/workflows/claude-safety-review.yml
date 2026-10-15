@@ -84,18 +84,19 @@ jobs:
           use_commit_signing: "false"
           include_fix_links: "false"
           prompt: |
-            Review pull request ${{ github.event.pull_request.number }} in this repository for safety-core defects only.
-            Read AGENTS.md, SECURITY.md, and .github/safety-core-paths.txt.
+            Review pull request ${{ github.event.pull_request.number }} in ${{ github.repository }} for safety-core defects only.
+            The branch is already checked out. Read the diff with gh pr diff and gh pr view. Then read only the safety-core files that diff touches, plus AGENTS.md, SECURITY.md, and .github/safety-core-paths.txt.
             Flag P0 or P1 when a change could leak data across owners; let a patient name, health number, or date of birth through, apart from the known limits in SECURITY.md; edit, delete, or truncate audit entries undetected; bypass the loop limit; or skip join auth. Real data in fixtures is P0. Changing acceptance test wording is P1. Known limits and style nits are not findings.
             A clean review has no P0 and no P1.
             Do not commit. Do not push. Do not edit files. Do not open a branch or a pull request. Reviewers only review.
-            Post one pull request comment with the verdict (clean or fail) and the findings.
+            Do not retry a tool that was denied.
+            Post one pull request comment with the verdict (clean or fail) and the findings, then stop.
           # No --json-schema here. A JSON object in claude_args is passed through
           # a shell, and brace expansion deletes a closing brace, so the CLI
           # rejects the schema. The archive step reads the execution log instead.
           claude_args: |
-            --max-turns 8
-            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*)"
+            --max-turns 30
+            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
             --disallowedTools "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git push:*),Bash(git rebase:*),Bash(gh pr merge:*)"
           settings: |
             {"permissions":{"deny":["Edit","Write","NotebookEdit"]}}
