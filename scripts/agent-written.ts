@@ -127,7 +127,12 @@ export function readBadge(readme: string): string | null {
   const start = readme.indexOf(START);
   const end = readme.indexOf(END);
   if (start === -1 || end === -1 || end < start) return null;
-  return readme.slice(start + START.length, end).replace(/^\n/, "").replace(/\n$/, "");
+  return readme
+    .slice(start + START.length, end)
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\r", "\n")
+    .replace(/^\n/, "")
+    .replace(/\n$/, "");
 }
 
 export function writeBadge(readme: string, badge: string): string {
