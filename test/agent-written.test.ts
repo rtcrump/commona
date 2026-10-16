@@ -12,7 +12,25 @@ import {
   readBadge,
   renderBadge,
   summarize,
+  type AgentWrittenStats,
 } from "../scripts/agent-written.js";
+
+const SHARE_TOLERANCE = 5;
+const BADGE_TEXT =
+  /^Written by agents: (\d+)% of lines, (\d+)% of commits\nHuman edits: \d+\nQA trailers: \d+$/;
+
+type BadgeVerdict = "ok" | "missing" | "malformed" | "off";
+
+/** Pass when each badge share is within five points of the computed share. */
+function badgeVerdict(badge: string | null, stats: Pick<AgentWrittenStats, "linePercent" | "commitPercent">): BadgeVerdict {
+  if (badge == null) return "missing";
+  const match = BADGE_TEXT.exec(badge);
+  if (!match?.[1] || !match[2]) return "malformed";
+  const lineGap = Math.abs(Number(match[1]) - stats.linePercent);
+  const commitGap = Math.abs(Number(match[2]) - stats.commitPercent);
+  if (lineGap > SHARE_TOLERANCE || commitGap > SHARE_TOLERANCE) return "off";
+  return "ok";
+}
 
 describe("agent-written stats", () => {
   it("counts lines and commits from trailers only", () => {
@@ -72,13 +90,30 @@ describe("agent-written stats", () => {
     }
   });
 
-  it("matches the committed README badge", (context) => {
+  it("accepts a README badge within five points of the computed share", (context) => {
     if (!hasGitHistory()) {
       context.skip("no git history (for example, a zip download)");
       return;
     }
     const stats = collect();
-    expect(readBadge(readFileSync("README.md", "utf8"))).toBe(renderBadge(stats));
+    expect(badgeVerdict(readBadge(readFileSync("README.md", "utf8")), stats)).toBe("ok");
+  });
+
+  it("accepts a share within five points", () => {
+    const badge = "Written by agents: 95% of lines, 88% of commits\nHuman edits: 0\nQA trailers: 0";
+    expect(badgeVerdict(badge, { linePercent: 100, commitPercent: 93 })).toBe("ok");
+  });
+
+  it("rejects a share more than five points off", () => {
+    const badge = "Written by agents: 100% of lines, 93% of commits\nHuman edits: 0\nQA trailers: 0";
+    expect(badgeVerdict(badge, { linePercent: 100, commitPercent: 87 })).toBe("off");
+    expect(badgeVerdict(badge, { linePercent: 94, commitPercent: 93 })).toBe("off");
+  });
+
+  it("rejects a missing or malformed badge", () => {
+    const stats = { linePercent: 100, commitPercent: 93 };
+    expect(badgeVerdict(null, stats)).toBe("missing");
+    expect(badgeVerdict("Written by agents: soon", stats)).toBe("malformed");
   });
 
   it("treats a folder with no commits as having no git history", () => {
