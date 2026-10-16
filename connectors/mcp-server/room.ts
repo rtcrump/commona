@@ -75,7 +75,7 @@ export function createRoomClient(config: ConnectorConfig, fetchImpl: typeof fetc
     },
     held(roomId) {
       const path = routes.getHeld.path.replace(":roomId", encodeURIComponent(roomId));
-      return call(fetchImpl, config, "GET", path, requireOwner(config)) as Promise<HeldResponse>;
+      return call(fetchImpl, config, "GET", path, requireAgent(config).token) as Promise<HeldResponse>;
     },
     notices() {
       return call(fetchImpl, config, "GET", routes.getNotices.path, requireOwner(config)) as Promise<NoticesResponse>;
@@ -98,7 +98,7 @@ export class CommonaCallError extends Error {
 function requireOwner(config: ConnectorConfig): string {
   if (!config.ownerToken) {
     throw new ConfigError(
-      "COMMONA_OWNER_TOKEN is not set. Join, held items, and notices use the owner token. The room API refuses an agent token for those routes.",
+      "COMMONA_OWNER_TOKEN is not set. Join and notices use the owner token. The room API refuses an agent token for those routes.",
     );
   }
   return config.ownerToken;
