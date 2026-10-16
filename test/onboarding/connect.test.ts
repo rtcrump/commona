@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { hashToken } from "../../contract/index.js";
 import { startMcpHttp } from "../../connectors/mcp-server/http.js";
 import { HANDOFF_TTL_MS } from "../../src/onboarding/handoff.js";
@@ -649,5 +650,163 @@ describe("guided connect", () => {
     expect(checked.body).not.toContain(room.roomId);
     expect(tableCount(room.db, "posts")).toBe(postsBefore);
     expect(tableCount(room.db, "files")).toBe(filesBefore);
+  });
+
+  it("requires the bearer when the handoff query is not a real link", async () => {
+    room = await startJoinHarness();
+    connector = await startMcpHttp({
+      config: { baseUrl: room.baseUrl, wakePollMs: 20 },
+      bearer: "test-bearer",
+    });
+    const bogus = new URL(connector.url);
+    bogus.searchParams.set("handoff", "not-a-real-handoff");
+    bogus.searchParams.set("room", room.roomId);
+    const denied = await initializeMcp(bogus.toString());
+    expect(denied.status).toBe(401);
+    expect(denied.body).not.toContain("not-a-real-handoff");
+
+    const authed = await fetch(connector.url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: "Bearer test-bearer",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } },
+      }),
+    });
+    expect(authed.status).toBe(200);
+    const session = authed.headers.get("mcp-session-id") ?? "";
+    const hijack = new URL(connector.url);
+    hijack.searchParams.set("handoff", "not-a-real-handoff");
+    hijack.searchParams.set("room", room.roomId);
+    const stolen = await fetch(hijack, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        "mcp-session-id": session,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+    });
+    expect(stolen.status).toBe(401);
+
+    process.env.COMMONA_CONNECT_URL = connector.url;
+    const person = await joinPerson(room, room.roomId, "Alex");
+    const page = await openGuided(room, person);
+    const copied = await call(room.baseUrl, "POST", `/j/${person.id}/connect/link`, {
+      cookie: jar(person, page.form),
+      json: { nonce: page.nonce },
+    });
+    const link = new URL((JSON.parse(copied.body) as { url: string }).url);
+    const opened = await initializeMcp(link.toString());
+    expect(opened.status).toBe(200);
+    expect(opened.body).toContain("2025-06-18");
+    const secret = link.searchParams.get("handoff") ?? "";
+    expect(opened.body).not.toContain(secret);
+  });
+
+  it("keeps the claimed credential when arrival reporting fails", async () => {
+    room = await startJoinHarness();
+    let arriveAttempts = 0;
+    connector = await startMcpHttp({
+      config: { baseUrl: room.baseUrl, wakePollMs: 20 },
+      fetchImpl: async (input, init) => {
+        const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (new URL(raw).pathname === "/connect/arrive") {
+          arriveAttempts += 1;
+          if (arriveAttempts === 1) return new Response("unavailable", { status: 503 });
+        }
+        return fetch(input, init);
+      },
+    });
+    process.env.COMMONA_CONNECT_URL = connector.url;
+    const person = await joinPerson(room, room.roomId, "Alex");
+    const page = await openGuided(room, person);
+    const copied = await call(room.baseUrl, "POST", `/j/${person.id}/connect/link`, {
+      cookie: jar(person, page.form),
+      json: { nonce: page.nonce },
+    });
+    const link = new URL((JSON.parse(copied.body) as { url: string }).url);
+    const issuedBefore = room.issued.length;
+    const opened = await initializeMcp(link.toString());
+    expect(opened.status).toBe(200);
+    expect(opened.body).toContain("2025-06-18");
+    expect(opened.body).not.toContain("The connector link is dead.");
+    const credential = room.issued.slice(issuedBefore).find((item) => item.kind === "agent")?.token ?? "";
+    expect(room.tokens.authenticate(credential)).toMatchObject({ kind: "agent" });
+    expect(arriveAttempts).toBeGreaterThanOrEqual(1);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    expect(arriveAttempts).toBeGreaterThanOrEqual(2);
+    const connected = await openGuided(room, person);
+    expect(connected.page.body).toContain("Your assistant is connected");
+    const again = await initializeMcp(link.toString());
+    expect(again.status).toBe(200);
+    expect(again.body).not.toContain("The connector link is dead.");
+    expect(room.issued.length).toBe(issuedBefore + 1);
+    expect(room.tokens.authenticate(credential)).toMatchObject({ kind: "agent" });
+  });
+});
+
+describe("connect copy button", () => {
+  it("ignores a second click while the first copy is still going", async () => {
+    const source = readFileSync(new URL("../../web/onboarding/connect.js", import.meta.url), "utf8");
+    class ButtonElement {
+      disabled = false;
+      listeners: Array<() => void> = [];
+      getAttribute(name: string): string | null {
+        return name === "data-copy" ? "/j/invite_test/connect/link" : null;
+      }
+      addEventListener(_type: string, fn: () => void): void {
+        this.listeners.push(fn);
+      }
+    }
+    class InputElement {
+      value = "nonce-1";
+    }
+    const button = new ButtonElement();
+    const input = new InputElement();
+    let fetches = 0;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = new Function(
+      "document",
+      "fetch",
+      "navigator",
+      "HTMLButtonElement",
+      "HTMLInputElement",
+      source,
+    ) as (document: unknown, fetch: unknown, navigator: unknown, buttonType: unknown, inputType: unknown) => void;
+    run(
+      {
+        querySelector(selector: string) {
+          if (selector === "#copy-link") return button;
+          if (selector === 'input[name="nonce"]') return input;
+          return null;
+        },
+      },
+      async () => {
+        fetches += 1;
+        await gate;
+        return { ok: true, json: async () => ({ url: "http://127.0.0.1/mcp?handoff=kept" }) };
+      },
+      { clipboard: { writeText: async () => undefined } },
+      ButtonElement,
+      InputElement,
+    );
+    button.listeners[0]?.();
+    button.listeners[0]?.();
+    expect(fetches).toBe(1);
+    expect(button.disabled).toBe(true);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(button.disabled).toBe(false);
+    expect(fetches).toBe(1);
   });
 });

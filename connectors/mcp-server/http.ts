@@ -109,7 +109,14 @@ async function handle(
   const handoffPresent = typeof handoff === "string" && handoff.length > 0;
   const earlyId = sessionId(request);
   const earlySession = earlyId ? ctx.sessions.get(earlyId) : undefined;
-  if (ctx.bearer && !handoffPresent && !earlySession?.viaHandoff && !bearerMatches(request, ctx.bearer)) {
+  // A handoff query is not a bearer. Only a real unexpired or bound handoff for this room may skip it.
+  const handoffAllowed =
+    ctx.bearer !== undefined &&
+    handoffPresent &&
+    handoff !== null &&
+    !earlySession?.viaHandoff &&
+    (await handoffIsReal(ctx, handoff, url.searchParams.get("room") ?? ""));
+  if (ctx.bearer && !handoffAllowed && !earlySession?.viaHandoff && !bearerMatches(request, ctx.bearer)) {
     json(response, 401, { error: "unauthorized" });
     return;
   }
@@ -192,6 +199,33 @@ async function handle(
     return;
   }
   json(response, 200, result, existingId ? { "mcp-session-id": existingId } : {});
+}
+
+/**
+ * Ask the room server whether this handoff is real for the room.
+ * A miss, a timeout, or a wrong room does not skip the bearer.
+ */
+async function handoffIsReal(
+  ctx: {
+    config: ConnectorConfig;
+    fetchImpl?: typeof fetch;
+    adopted: Map<string, AdoptedLink>;
+  },
+  handoff: string,
+  roomId: string,
+): Promise<boolean> {
+  if (!handoff || !roomId || !ctx.config.baseUrl) return false;
+  if (ctx.adopted.has(adoptionKey(handoff, roomId))) return true;
+  try {
+    const response = await (ctx.fetchImpl ?? fetch)(`${ctx.config.baseUrl}/connect/handoff`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ handoff, roomId }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 function adoptionKey(handoff: string, roomId: string): string {

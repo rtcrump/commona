@@ -34,17 +34,69 @@ export async function adoptHandoff(
   config.agentToken = credential;
   config.agentId = agentId;
   config.roomId = boundRoom;
-  const arrived = await fetchImpl(`${config.baseUrl}/connect/arrive`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${credential}`,
-      "content-type": "application/json",
-      accept: "application/json",
-    },
-    body: "{}",
-  });
-  if (!arrived.ok) throw new Error("connector link is dead");
-  return startCheckInLoop(config, fetchImpl);
+  const stopChecks = startCheckInLoop(config, fetchImpl);
+  const arrived = await reportArrival(config, fetchImpl);
+  const stopArrive = arrived ? () => undefined : retryArrive(config, fetchImpl);
+  return () => {
+    stopArrive();
+    stopChecks();
+  };
+}
+
+async function reportArrival(config: ConnectorConfig, fetchImpl: typeof fetch): Promise<boolean> {
+  const token = config.agentToken;
+  if (!token || !config.baseUrl) return false;
+  try {
+    const arrived = await fetchImpl(`${config.baseUrl}/connect/arrive`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: "{}",
+    });
+    return arrived.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** First wait before another arrival report. Later waits double up to the cap. */
+const ARRIVE_RETRY_MS = 200;
+const ARRIVE_RETRY_MAX_MS = 5_000;
+
+/**
+ * Keep the claimed credential and report arrival again after a failed report.
+ * The report does not post to a room.
+ */
+function retryArrive(config: ConnectorConfig, fetchImpl: typeof fetch): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let delay = ARRIVE_RETRY_MS;
+
+  const attempt = async () => {
+    if (stopped) return;
+    const ok = await reportArrival(config, fetchImpl);
+    if (stopped || ok) return;
+    delay = Math.min(delay * 2, ARRIVE_RETRY_MAX_MS);
+    arm();
+  };
+
+  const arm = () => {
+    if (stopped) return;
+    timer = setTimeout(() => {
+      timer = undefined;
+      void attempt();
+    }, delay);
+  };
+
+  arm();
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+  };
 }
 
 /**

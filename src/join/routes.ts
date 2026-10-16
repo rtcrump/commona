@@ -1,6 +1,12 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { hashToken, HTTP_STATUS, readBearerToken, type AuthPrincipal } from "../../contract/index.js";
-import { answerCheck, claimConnectLink, noteArrival, takePendingCheck } from "../onboarding/connect.js";
+import {
+  answerCheck,
+  claimConnectLink,
+  handoffAllowsConnector,
+  noteArrival,
+  takePendingCheck,
+} from "../onboarding/connect.js";
 import { openWelcome } from "../onboarding/join-flow.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
@@ -127,6 +133,16 @@ export function registerInviteRoutes(app: FastifyInstance, deps: RoomDeps): void
       reply.header("Set-Cookie", serializeCookie(INVITE_COOKIE, secret, "/j", maxAge));
     }
     return reply.code(HTTP_STATUS.ok).send(body);
+  });
+
+  app.post("/connect/handoff", async (request, reply) => {
+    const parsed = readClaim(request.body);
+    if (!parsed || !handoffAllowsConnector(handoffDeps(deps), parsed.handoff, parsed.roomId)) {
+      throw RoomHttpError.forbidden();
+    }
+    reply.header("Cache-Control", "no-store");
+    reply.header("Referrer-Policy", "no-referrer");
+    return reply.code(HTTP_STATUS.ok).send({ ok: true });
   });
 
   app.post("/connect/claim", async (request, reply) => {

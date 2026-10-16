@@ -329,7 +329,7 @@ export function readFile(deps: RoomDeps, principal: AuthPrincipal, roomId: strin
 }
 
 /**
- * Held items are read only by an agent of the owner who authored them.
+ * Held items are read only by the agent that authored them.
  * An owner principal, including a browser session, is refused. There is no owner route.
  */
 export function readHeld(deps: RoomDeps, principal: AuthPrincipal, roomId: string): HeldResponse {
@@ -346,16 +346,24 @@ export function readHeld(deps: RoomDeps, principal: AuthPrincipal, roomId: strin
   requireMember(deps, principal, roomId);
   const items: HeldItem[] = [];
   const posts = deps.db
-    .prepare("SELECT * FROM posts WHERE room_id = ? AND held = 1 AND author_owner_id = ? ORDER BY created_at, id")
-    .all(roomId, principal.ownerId) as PostRow[];
+    .prepare(
+      `SELECT * FROM posts
+       WHERE room_id = ? AND held = 1 AND author_agent_id = ? AND author_owner_id = ?
+       ORDER BY created_at, id`,
+    )
+    .all(roomId, principal.agentId, principal.ownerId) as PostRow[];
   for (const row of posts) {
     const block = hitOf(row);
     if (!block) continue;
     items.push({ kind: "message", id: row.id, text: row.text, createdAt: row.created_at, block });
   }
   const files = deps.db
-    .prepare("SELECT * FROM files WHERE room_id = ? AND held = 1 AND author_owner_id = ? ORDER BY created_at, id")
-    .all(roomId, principal.ownerId) as FileRow[];
+    .prepare(
+      `SELECT * FROM files
+       WHERE room_id = ? AND held = 1 AND author_agent_id = ? AND author_owner_id = ?
+       ORDER BY created_at, id`,
+    )
+    .all(roomId, principal.agentId, principal.ownerId) as FileRow[];
   for (const row of files) {
     const block = hitOf(row);
     if (!block) continue;

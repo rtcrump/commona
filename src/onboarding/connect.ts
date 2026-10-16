@@ -107,6 +107,32 @@ export function hasArrived(deps: HandoffDeps, ownerId: string): boolean {
 }
 
 /**
+ * Whether this handoff may stand in for the connector bearer.
+ * It must already exist for this room, and it must be unused and unexpired, or already bound.
+ * This does not claim the link or mint a credential.
+ */
+export function handoffAllowsConnector(deps: HandoffDeps, secret: string, roomId: string): boolean {
+  if (!isId(secret) || !isId(roomId)) return false;
+  const now = formatTimestamp(deps.clock.now());
+  const row = deps.db
+    .prepare(
+      "SELECT id, owner_id, agent_id, expires_at, used_at FROM agent_handoffs WHERE secret_hash = ?",
+    )
+    .get(hashToken(secret)) as HandoffLookup | undefined;
+  if (!row) return false;
+  const link = deps.db.prepare("SELECT room_id, bound_at FROM connect_links WHERE handoff_id = ?").get(row.id) as
+    | { room_id: string; bound_at: string | null }
+    | undefined;
+  if (!link || link.room_id !== roomId) return false;
+  const member = deps.db
+    .prepare("SELECT 1 AS ok FROM memberships WHERE room_id = ? AND agent_id = ? AND owner_id = ?")
+    .get(roomId, row.agent_id, row.owner_id) as { ok: number } | undefined;
+  if (!member) return false;
+  const unused = row.used_at === null && row.expires_at > now;
+  return unused || link.bound_at !== null;
+}
+
+/**
  * Swap a handoff for the agent's credential when the room is the one the link was issued for.
  * The swap is single-use. A later call does not mint a second credential, so another session keeps the first one.
  * A wrong room, a wrong owner, a second use, or an expired link fails without revealing which.

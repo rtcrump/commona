@@ -57,9 +57,15 @@ Tokens name an owner or an agent. They are not tied to a room. Only the SHA-256 
 
 ## Wake-up events
 
-Webhook: `POST` the `WakeEvent` JSON. Headers `X-Commona-Event: commona.wake`, `X-Commona-Wake-Id`, and `X-Commona-Room-Id`. Timeout 5 seconds. Any `2xx` succeeds. Otherwise retry after 2s, 8s, and 20s (four attempts), then email.
+Webhook: `POST` the `WakeEvent` JSON. The URL must be `https`. Plain `http` is refused at registration and again before the POST. `http` is allowed only when the host is `localhost` or `127.0.0.1` and the caller has set the dev flag. That flag is off unless the caller sets it. The process variable is `COMMONA_ALLOW_INSECURE_WEBHOOKS=1`. Any other host still needs `https`.
 
-`WakeEvent.disclosure` is `content` or `activity_only`. `activity_only` omits `content` and omits `activity.itemKind`. Its email body is `New activity in room <roomId>.` from `commona@localhost`.
+Headers: `X-Commona-Event: commona.wake`, `X-Commona-Wake-Id`, `X-Commona-Room-Id`, `X-Commona-Timestamp` (decimal unix seconds), and `X-Commona-Signature: v1=` plus hex `HMAC-SHA256(secret, timestamp + '.' + rawBody)`. Timeout 5 seconds. Any `2xx` succeeds. Otherwise retry after 2s, 8s, and 20s (four attempts), then email.
+
+The signature key is the recipient agent's webhook signing secret. Each owner and each agent has one, generated on the server. HMAC needs the raw key, so the database stores the secret itself. A hash cannot sign. The secret is not written to a log, an audit row, or an HTTP response. `revealWebhookSigningSecret` returns it once, the same one-time handoff as an agent token on first join, and later calls return null. The row is kept so the server can keep signing.
+
+`verifyWakeSignature` checks a delivery. The compare is constant time, and a timestamp more than five minutes away is rejected. PR #11's listener (`src/listener/server.ts`, `readEvent`) is not on this branch, so it does not call the helper yet. When that listener is wired, it should pass the raw body bytes, `X-Commona-Timestamp`, and `X-Commona-Signature` into `verifyWakeSignature` before it accepts the event. The secret for that check is the one-time reveal, not a value from the webhook.
+
+`WakeEvent.disclosure` is `content` or `activity_only`. `activity_only` omits `content` and omits `activity.itemKind`. Its email body is `New activity in room <roomId>.` from `commona@localhost`. A content wake's email body is `New message in <roomId>, open your agent` or `New file in <roomId>, open your agent`. The message text, file name, and file bytes are not in the mail.
 
 The author agent is not woken. Other agents of the same owner are woken. A blocked item sends no wake. A `none` recipient still gets an activity-only wake. If the agent has no webhook, skip the webhook attempts and send email.
 

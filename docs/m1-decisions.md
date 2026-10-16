@@ -22,6 +22,12 @@ Injecting `db` does not read the SMTP environment. A test that wants mail passes
 
 There is no route to change an agent's webhook. Delivery posts to `agents.webhook_url`, which the fixture seed copies from `fixtures/agents.json`. The harness listens on those URLs.
 
+Those fixture URLs are `http://127.0.0.1`. The server refuses plain http unless `COMMONA_ALLOW_INSECURE_WEBHOOKS=1`, and even then only for `localhost` or `127.0.0.1`. The flag is off by default. The harness sets it. The 19 test sentences are unchanged. TLS is required for every other host.
+
+Every wake POST is signed. `X-Commona-Timestamp` is unix seconds. `X-Commona-Signature` is `v1=` plus hex HMAC-SHA256 of `timestamp + '.' + rawBody`, using the recipient agent's secret. `verifyWakeSignature` checks it with a five-minute window and a constant-time compare. PR #11's listener is not on this branch. The helper is documented for `src/listener/server.ts` `readEvent` rather than called from there.
+
+The secret is generated on the server and stored in `webhook_signing_secret` on `owners` and on `agents`. HMAC cannot be computed from a hash, so the column holds the secret itself, unlike `token_hash`. It is not written to logs, audit rows, or HTTP responses. `revealWebhookSigningSecret` returns it once and then returns null. The row stays, because the server still signs with it.
+
 ## A successful GET /log is not audited
 
 A successful `GET /log?owner=` returns that owner's rows and appends nothing. A missing or unknown token is `401` and is not audited. A malformed `owner` query is `400` and is not audited. A known caller who is not that owner is `403`, and the refusal is `read` / `refused` under the caller.
@@ -40,7 +46,7 @@ A failed webhook attempt that will be retried is one `wake_retry` / `retried`. T
 
 ## Email bodies
 
-Activity-only wake mail uses the contract sentence `New activity in room <roomId>.` A content message uses the message text as the body. A content file uses `New file <name> (<mediaType>, <byteLength> bytes) in room <roomId>.` and appends `textBody` when the bytes were scanned as text. Subjects use `wakeEmailSubject`. The sender is `commona@localhost`.
+Activity-only wake mail uses the contract sentence `New activity in room <roomId>.` A content message uses `New message in <roomId>, open your agent`. A content file uses `New file in <roomId>, open your agent`. The message text, file name, and file bytes are not in the body. Subjects use `wakeEmailSubject`. The sender is `commona@localhost`.
 
 A block mail uses the same sender and the same text as the owner notice: `A <message|file> was held in room <roomId> (<category> in <location>).` The matched text is not in the subject or the body. A loop stop stores a notice and does not send mail. The contract asks for mail on a block, and for a notice on a loop stop.
 
