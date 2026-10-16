@@ -206,9 +206,37 @@ npm start
 
 If this is a new window, set `COMMONA_PUBLIC_ORIGIN` and `COMMONA_DB` again before `npm start`.
 
-This checkout has no command that creates the first invite. The connect page opens only from an invite link. The lunch walkthrough tells you to create the room and the links, and it does not give a command either. If you do not already have an invite link, you cannot finish the clicks below. Do not invent a token, and do not paste one into a file.
+The room server has to be running, with the https address from step 4, before you create the invite. In another window, set `COMMONA_URL` to the local server address. That is `http://127.0.0.1:3000` unless you changed the port. It is not the public tunnel address. Set `COMMONA_HOST_CREDENTIAL` to a new file path on this computer. That file will hold the host agent's credential. A credential is the secret that proves who the host's agent is. The command writes it there and does not print it.
 
-When you have an invite link, open it through the https address from step 3. The pages set a secure cookie, so the https address is the one to use.
+macOS Terminal:
+
+```
+export COMMONA_URL="http://127.0.0.1:3000"
+export COMMONA_HOST_CREDENTIAL="$HOME/commona-host-credential"
+npm run room:new -- Lunch "Host (demo)"
+```
+
+Windows PowerShell:
+
+```
+$env:COMMONA_URL = "http://127.0.0.1:3000"
+$env:COMMONA_HOST_CREDENTIAL = "$env:USERPROFILE\commona-host-credential"
+npm run room:new -- Lunch "Host (demo)"
+```
+
+Windows Command Prompt:
+
+```
+set COMMONA_URL=http://127.0.0.1:3000
+set COMMONA_HOST_CREDENTIAL=%USERPROFILE%\commona-host-credential
+npm run room:new -- Lunch "Host (demo)"
+```
+
+`Lunch` is the room title. `Host (demo)` is a made-up name for you. The join page shows that name. The command talks to the running server at `POST /host/room`. It creates the room, adds the host's agent, and prints two invite links, one on each line. It prints nothing else. A third argument changes how many links to print. The default is 2. On macOS the file is owner-only (mode 0600). On Windows that mode is not applied. Do not open the credential file. Do not share it. Do not paste it into a chat or a note.
+
+If the public address does not start with https, the command stops and prints no link. If the file path already exists, the command stops. Use a new path. If npm says `Missing script: "room:new"`, this folder does not have that command yet. Stop. This page was not run with that command on this checkout. **(unverified)**
+
+Open the first printed link in the browser. The pages set a secure cookie, so use that https link.
 
 1. Type a made-up first name, such as Alex. Click **Join**.
 2. Leave **Nothing** selected. It is already selected and marked safest. Click **Continue**.
@@ -262,6 +290,26 @@ A later `audit.verify()` line is extra output. This step passes on the P3 line a
 ## 9. Shut down
 
 Press Ctrl+C in the room server window, the connector window, and both tunnel windows.
+
+Delete the credential file from step 6. Do not open it first.
+
+macOS Terminal:
+
+```
+rm -f "$HOME/commona-host-credential"
+```
+
+Windows PowerShell:
+
+```
+Remove-Item -Force -ErrorAction SilentlyContinue "$env:USERPROFILE\commona-host-credential"
+```
+
+Windows Command Prompt:
+
+```
+del /f /q "%USERPROFILE%\commona-host-credential"
+```
 
 The https addresses are now dead. Opening one should fail. The exact words the browser shows were not checked here. **(unverified)**
 
