@@ -632,7 +632,7 @@ a:hover {
   }
 
   .points {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .cards {
@@ -731,5 +731,12 @@ a:hover {
 @media (min-width: 1100px) {
   .story {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Four sharing cards: 2x2 on tablets, 4 across on desktop. */
+@media (min-width: 1024px) {
+  .points {
+    grid-template-columns: repeat(4, 1fr);
   }
 }
