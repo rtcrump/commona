@@ -2,14 +2,15 @@ import type { ConnectorConfig } from "./config.js";
 
 /**
  * Swap a one-time connect link for an agent credential.
- * The credential stays on the config object. Callers must not put it in a response or a log.
+ * Returns once the claim succeeds. Does not report arrival.
+ * The credential is not written here. Callers must not put it in a response or a log.
  */
-export async function adoptHandoff(
+export async function claimHandoff(
   config: ConnectorConfig,
   handoff: string,
   roomId: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<() => void> {
+): Promise<{ credential: string; agentId: string; roomId: string }> {
   if (!config.baseUrl) throw new Error("connector link is dead");
   const response = await fetchImpl(`${config.baseUrl}/connect/claim`, {
     method: "POST",
@@ -31,7 +32,21 @@ export async function adoptHandoff(
   if (typeof credential !== "string" || typeof agentId !== "string" || typeof boundRoom !== "string") {
     throw new Error("connector link is dead");
   }
-  return holdCredential(config, credential, agentId, boundRoom, fetchImpl);
+  return { credential, agentId, roomId: boundRoom };
+}
+
+/**
+ * Swap a one-time connect link for an agent credential, then report arrival.
+ * The credential stays on the config object. Callers must not put it in a response or a log.
+ */
+export async function adoptHandoff(
+  config: ConnectorConfig,
+  handoff: string,
+  roomId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<() => void> {
+  const claimed = await claimHandoff(config, handoff, roomId, fetchImpl);
+  return holdCredential(config, claimed.credential, claimed.agentId, claimed.roomId, fetchImpl);
 }
 
 /**

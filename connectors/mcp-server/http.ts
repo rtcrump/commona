@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, type ConnectorConfig } from "./config.js";
 import { openLinkStore, type LinkStore } from "./bound-link.js";
-import { adoptHandoff, resumeHandoff } from "./handoff.js";
+import { claimHandoff, resumeHandoff } from "./handoff.js";
 import { createMcpServer, type JsonRpcNotification, type McpServer } from "./server.js";
 import { isDirectRun } from "../../src/listener/run.js";
 
@@ -281,14 +281,17 @@ async function adoptedLink(
         if (still === "no") ctx.store?.forget(handoff, roomId);
         throw new Error("connector link is dead");
       }
-      const stop = await adoptHandoff(config, handoff, roomId, fetchImpl);
-      if (ctx.store && config.agentToken && config.agentId && config.roomId === roomId) {
+      const claimed = await claimHandoff(config, handoff, roomId, fetchImpl);
+      if (claimed.roomId !== roomId) throw new Error("connector link is dead");
+      // Save before arrival. A crash or a hung arrive must leave the bound link on disk.
+      if (ctx.store) {
         try {
-          ctx.store.remember(handoff, roomId, config.agentId, config.agentToken);
+          ctx.store.remember(handoff, roomId, claimed.agentId, claimed.credential);
         } catch {
           // This process still holds the credential. A failed write must not sign it out.
         }
       }
+      const stop = await resumeHandoff(config, claimed.credential, claimed.agentId, claimed.roomId, fetchImpl);
       const link = { config, stop };
       ctx.adopted.set(key, link);
       return link;
