@@ -81,6 +81,63 @@ if hostile.returncode == 0 or os.path.exists("/tmp/pwned-login"):
 print("python gates: ok")
 PY
 
+rm -f /tmp/pwned-exec
+body_py="${root}/.github/scripts/claude_review_body.py"
+runner="$(mktemp -d)"
+export RUNNER_TEMP="${runner}"
+unset EXECUTION_FILE
+got="$(python3 "${body_py}")"
+case "${got}" in
+  "Claude finished without a readable review in the execution log."*) ;;
+  *) fail "missing execution log should fall back" ;;
+esac
+EXECUTION_FILE='$(touch /tmp/pwned-exec)' python3 "${body_py}" >/dev/null
+[ ! -e /tmp/pwned-exec ] || fail "execution path was executed"
+outside="$(mktemp)"
+printf '%s\n' 'secret' > "${outside}"
+ln -s "${outside}" "${runner}/claude-execution-output.json"
+EXECUTION_FILE="${runner}/claude-execution-output.json" python3 "${body_py}" > "${runner}/symlink-out.txt"
+grep -F 'Claude finished without a readable review' "${runner}/symlink-out.txt" >/dev/null || fail 'symlink escaped the runner temp'
+rm -f "${runner}/claude-execution-output.json"
+python3 - <<PY
+import json, pathlib
+path = pathlib.Path("${runner}") / "claude-execution-output.json"
+path.write_text(json.dumps([
+    {"type": "assistant", "message": {"content": [{"type": "text", "text": "draft"}]}},
+    {"type": "result", "result": "verdict: clean\n\$(touch /tmp/pwned-exec)"},
+]))
+PY
+EXECUTION_FILE="${runner}/claude-execution-output.json" python3 "${body_py}" > "${runner}/body.txt"
+grep -F 'verdict: clean' "${runner}/body.txt" >/dev/null || fail 'result text missing'
+grep -F '$(touch /tmp/pwned-exec)' "${runner}/body.txt" >/dev/null || fail 'result text not literal'
+[ ! -e /tmp/pwned-exec ] || fail 'result text executed'
+python3 - <<PY
+import json, pathlib
+path = pathlib.Path("${runner}") / "claude-execution-output.json"
+path.write_text(json.dumps([
+    {"type": "assistant", "message": {"content": [{"type": "text", "text": "assistant only"}]}},
+]))
+PY
+EXECUTION_FILE="${runner}/claude-execution-output.json" python3 "${body_py}" > "${runner}/assistant.txt"
+grep -F 'assistant only' "${runner}/assistant.txt" >/dev/null || fail 'assistant text missing'
+python3 - <<'PY'
+from pathlib import Path
+for line in Path(".github/workflows/claude-safety-review.yml").read_text().splitlines():
+    stripped = line.strip()
+    if stripped.startswith("#"):
+        continue
+    if "--json-schema" in line:
+        raise SystemExit("claude workflow still passes a json schema")
+text = Path(".github/workflows/claude-safety-review.yml").read_text()
+if "--max-turns 30" not in text:
+    raise SystemExit("claude review turn cap drifted")
+if "Bash(gh pr diff:*)" not in text or "Bash(gh pr view:*)" not in text:
+    raise SystemExit("claude review cannot read the pull request diff")
+PY
+unset EXECUTION_FILE
+unset RUNNER_TEMP
+printf '%s\n' "claude review body: ok"
+
 rm -f /tmp/pwned-title /tmp/pwned-body /tmp/pwned-login
 work="$(mktemp -d)"
 printf '%s' $'line one\n$(touch /tmp/pwned-body)\n`id`' > "${work}/review-body.txt"
