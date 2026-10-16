@@ -19,7 +19,6 @@ import { registerInviteRoutes } from "./join/routes.js";
 import { createOwnerNotifier, registerNoticeRoute } from "./notices/index.js";
 import type { RoomDeps } from "./room/deps.js";
 import { RoomHttpError } from "./room/http.js";
-import { registerHostCommand } from "./room/host.js";
 import { registerRoomRoutes } from "./room/routes.js";
 import { closeDefaultRuntime, defaultRuntime } from "./runtime.js";
 import { createSharingDirectory } from "./sharing/index.js";
@@ -90,7 +89,6 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.get("/health", async (): Promise<HealthResponse> => ({ ok: true, service: "commona" }));
   registerRoomRoutes(app, deps);
   registerInviteRoutes(app, deps);
-  registerHostCommand(app, deps);
   registerLogRoute(app, { db, audit, clock });
   registerNoticeRoute(app, { db, tokens, audit, clock });
   if (shared) {

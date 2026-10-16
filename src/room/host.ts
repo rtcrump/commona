@@ -1,4 +1,8 @@
-import type { FastifyInstance } from "fastify";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+import Fastify, { type FastifyRequest } from "fastify";
 import { guard } from "../guard/index.js";
 import { dropInviteSecret } from "../join/pending.js";
 import { ensureInviteSchema } from "../join/schema.js";
@@ -11,6 +15,12 @@ import { addMember, createRoom } from "./membership.js";
 const LABEL_MAX = 80;
 const MAX_INVITE_COUNT = 20;
 const HTTPS_ORIGIN = /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?$/;
+const FORWARDED_HEADERS = ["cf-connecting-ip", "x-forwarded-for", "forwarded", "x-real-ip"];
+
+/** Sent by room:new. Never written to a log. */
+export const HOST_SECRET_HEADER = "x-commona-host-secret";
+
+export const DEFAULT_HOST_PORT = 3002;
 
 class HostInputError extends Error {
   constructor(message: string) {
@@ -24,27 +34,103 @@ export function isLoopbackAddress(address: string | undefined): boolean {
   return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
+/** Secret file for the host command. Override with COMMONA_HOST_SECRET_FILE. */
+export function hostSecretPath(env: NodeJS.ProcessEnv = process.env): string {
+  const set = env.COMMONA_HOST_SECRET_FILE?.trim();
+  if (set) return set;
+  return path.join(homedir(), ".commona", "host-secret");
+}
+
+export interface HostListener {
+  url: string;
+  secretPath: string;
+  close: () => Promise<void>;
+}
+
 /**
- * Local setup for `npm run room:new`. The invite secret stays in this process.
- * The response carries the host agent credential once. It is not audited.
+ * A second listener, bound only to 127.0.0.1, for `npm run room:new`.
+ * The public server does not serve this route. A tunnel that connects to the
+ * main port never reaches this one. The host secret is written to a file and
+ * is not logged.
  */
-export function registerHostCommand(app: FastifyInstance, deps: RoomDeps): void {
+export async function startHostListener(
+  deps: RoomDeps,
+  options: { port?: number; secretPath?: string } = {},
+): Promise<HostListener> {
+  const port = resolvePort(options.port);
+  const secretPath = options.secretPath ?? hostSecretPath();
+  const secret = randomBytes(32).toString("base64url");
+  writeHostSecret(secretPath, secret);
+  const app = Fastify({ logger: false });
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof RoomHttpError) return reply.status(error.status).send(error.body());
+    if (error instanceof HostInputError) return reply.status(400).send({ error: { message: error.message } });
+    return reply.status(500).send({ error: { message: "room:new failed" } });
+  });
   app.post("/host/room", async (request, reply) => {
-    if (!isLoopbackAddress(request.socket.remoteAddress)) {
+    if (hasForwardedHeader(request) || !isLoopbackAddress(request.socket.remoteAddress)) {
       throw RoomHttpError.forbidden();
     }
-    try {
-      const body = readBody(request.body);
-      const origin = requireHttpsOrigin(process.env.COMMONA_PUBLIC_ORIGIN);
-      const created = createHostRoom(deps, body, origin);
-      return reply.code(201).send(created);
-    } catch (error) {
-      if (error instanceof HostInputError) {
-        return reply.code(400).send({ error: { message: error.message } });
-      }
-      throw error;
-    }
+    if (!secretsEqual(headerSecret(request), secret)) throw RoomHttpError.forbidden();
+    const body = readBody(request.body);
+    const origin = requireHttpsOrigin(process.env.COMMONA_PUBLIC_ORIGIN);
+    const created = createHostRoom(deps, body, origin, secret);
+    return reply.code(201).send(created);
   });
+  try {
+    await app.listen({ host: "127.0.0.1", port });
+  } catch {
+    await app.close();
+    throw new Error("host command could not listen");
+  }
+  const address = app.server.address();
+  if (address === null || typeof address === "string") {
+    await app.close();
+    throw new Error("host command could not listen");
+  }
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    secretPath,
+    close: () => app.close(),
+  };
+}
+
+function resolvePort(override: number | undefined): number {
+  if (override !== undefined) return override;
+  const raw = process.env.COMMONA_HOST_PORT?.trim();
+  if (!raw) return DEFAULT_HOST_PORT;
+  if (!/^\d+$/.test(raw)) throw new Error("COMMONA_HOST_PORT is not a port");
+  const port = Number(raw);
+  if (port > 65535) throw new Error("COMMONA_HOST_PORT is not a port");
+  return port;
+}
+
+function writeHostSecret(file: string, secret: string): void {
+  // 0o600 is owner-only on Unix. Windows does not apply that mode.
+  const dir = path.dirname(file);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(file, secret, { encoding: "utf8", mode: 0o600 });
+  if (process.platform === "win32") return;
+  chmodSync(file, 0o600);
+}
+
+function hasForwardedHeader(request: FastifyRequest): boolean {
+  return FORWARDED_HEADERS.some((name) => request.headers[name] !== undefined);
+}
+
+function headerSecret(request: FastifyRequest): string {
+  const value = request.headers[HOST_SECRET_HEADER];
+  return typeof value === "string" ? value : "";
+}
+
+function secretsEqual(got: string, expected: string): boolean {
+  const right = Buffer.from(expected);
+  const left = Buffer.from(got);
+  if (left.length !== right.length) {
+    timingSafeEqual(right, right);
+    return false;
+  }
+  return timingSafeEqual(left, right);
 }
 
 interface HostRoomBody {
@@ -53,12 +139,12 @@ interface HostRoomBody {
   inviteCount: number;
 }
 
-export interface HostRoomResult {
+interface HostRoomResult {
   invites: string[];
   credential: string;
 }
 
-function createHostRoom(deps: RoomDeps, body: HostRoomBody, origin: string): HostRoomResult {
+function createHostRoom(deps: RoomDeps, body: HostRoomBody, origin: string, hostSecret: string): HostRoomResult {
   const inviteIds: string[] = [];
   try {
     const write = deps.db.transaction(() => {
@@ -76,7 +162,7 @@ function createHostRoom(deps: RoomDeps, body: HostRoomBody, origin: string): Hos
         invites.push(`${origin}/j/${created.id}`);
       }
       const credential = deps.tokens.issueAgentToken(opened.agentId);
-      assertClean(deps, invites, [credential, opened.sessionToken]);
+      assertClean(deps, invites, credential, [credential, opened.sessionToken, hostSecret]);
       return { invites, credential };
     });
     return write();
@@ -86,7 +172,12 @@ function createHostRoom(deps: RoomDeps, body: HostRoomBody, origin: string): Hos
   }
 }
 
-function assertClean(deps: RoomDeps, invites: readonly string[], hidden: readonly string[]): void {
+function assertClean(
+  deps: RoomDeps,
+  invites: readonly string[],
+  credential: string,
+  hidden: readonly string[],
+): void {
   const details = deps.db.prepare("SELECT detail_json FROM audit_log").all() as { detail_json: string }[];
   const auditText = details.map((row) => row.detail_json).join("\n");
   for (const secret of hidden) {
@@ -94,6 +185,9 @@ function assertClean(deps: RoomDeps, invites: readonly string[], hidden: readonl
     if (invites.some((url) => url.includes(secret)) || auditText.includes(secret)) {
       throw new HostInputError("room:new failed");
     }
+  }
+  for (const other of hidden.slice(1)) {
+    if (other.length > 0 && credential.includes(other)) throw new HostInputError("room:new failed");
   }
   for (const url of invites) {
     let parsed: URL;

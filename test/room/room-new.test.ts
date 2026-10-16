@@ -4,8 +4,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { systemClock } from "../../contract/index.js";
 import { buildApp } from "../../src/app.js";
+import { createAuditLog } from "../../src/audit/index.js";
+import { createTokenStore } from "../../src/auth/index.js";
 import { openDatabase } from "../../src/db.js";
+import { guard } from "../../src/guard/index.js";
+import { createOwnerNotifier } from "../../src/notices/index.js";
+import { HOST_SECRET_HEADER, startHostListener } from "../../src/room/host.js";
+import { createSharingDirectory } from "../../src/sharing/index.js";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const script = path.join(root, "scripts/room-new.ts");
@@ -112,22 +119,74 @@ describe("room:new", () => {
     return dir;
   }
 
-  async function startServer(): Promise<{ base: string; dbPath: string; stop: () => Promise<void> }> {
+  async function startServer(): Promise<{
+    base: string;
+    host: string;
+    secretPath: string;
+    dbPath: string;
+    stop: () => Promise<void>;
+  }> {
     const dir = await tempDir();
     const dbPath = path.join(dir, "room.sqlite");
+    const secretPath = path.join(dir, "host-secret");
     const db = openDatabase(dbPath);
-    const app = buildApp({ db });
+    const deps = {
+      db,
+      clock: systemClock,
+      tokens: createTokenStore(db),
+      audit: createAuditLog(db, systemClock),
+      sharing: createSharingDirectory(db),
+      guard,
+      notices: createOwnerNotifier(db, systemClock),
+    };
+    const app = buildApp(deps);
     await app.listen({ host: "127.0.0.1", port: 0 });
     const address = app.server.address();
-    if (address === null || typeof address === "string") throw new Error("room server did not bind");
+    if (address === null || typeof address === "string") {
+      await app.close();
+      if (db.open) db.close();
+      throw new Error("room server did not bind");
+    }
+    let host;
+    try {
+      host = await startHostListener(deps, { port: 0, secretPath });
+    } catch (error) {
+      await app.close();
+      if (db.open) db.close();
+      throw error;
+    }
     return {
       base: `http://127.0.0.1:${address.port}`,
+      host: host.url,
+      secretPath,
       dbPath,
       stop: async () => {
+        await host.close();
         await app.close();
         if (db.open) db.close();
       },
     };
+  }
+
+  function roomCount(dbPath: string): number {
+    const db = openDatabase(dbPath);
+    try {
+      return (db.prepare("SELECT COUNT(*) AS n FROM rooms").get() as { n: number }).n;
+    } finally {
+      if (db.open) db.close();
+    }
+  }
+
+  async function postHost(
+    host: string,
+    headers: Record<string, string>,
+  ): Promise<{ status: number; body: string }> {
+    const response = await fetch(`${host}/host/room`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ title, hostName, inviteCount: 1 }),
+    });
+    return { status: response.status, body: await response.text() };
   }
 
   it("joins through an invite and the host credential file can post", async () => {
@@ -136,9 +195,13 @@ describe("room:new", () => {
     const dir = path.dirname(server.dbPath);
     const credentialPath = path.join(dir, "host-credential");
     try {
+      const secret = await readFile(server.secretPath, "utf8");
+      expect(secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect((await stat(server.secretPath)).mode & 0o777).toBe(0o600);
       const result = await run([title, hostName, "2"], {
-        COMMONA_URL: server.base,
+        COMMONA_URL: server.host,
         COMMONA_HOST_CREDENTIAL: credentialPath,
+        COMMONA_HOST_SECRET_FILE: server.secretPath,
       });
       expect(result.code).toBe(0);
       expect(result.stderr).toBe("");
@@ -146,15 +209,21 @@ describe("room:new", () => {
       expect(urls).toHaveLength(2);
       const credential = await readFile(credentialPath, "utf8");
       expect(credential.length).toBeGreaterThan(20);
+      expect(credential).not.toContain(secret);
       expect(result.stdout).not.toContain(credential);
       expect(result.stderr).not.toContain(credential);
+      expect(result.stdout).not.toContain(secret);
+      expect(result.stderr).not.toContain(secret);
       const mode = (await stat(credentialPath)).mode & 0o777;
       expect(mode).toBe(0o600);
 
       const db = openDatabase(server.dbPath);
       try {
         const details = db.prepare("SELECT detail_json FROM audit_log").all() as { detail_json: string }[];
-        for (const row of details) expect(row.detail_json).not.toContain(credential);
+        for (const row of details) {
+          expect(row.detail_json).not.toContain(credential);
+          expect(row.detail_json).not.toContain(secret);
+        }
         const storedTitle = db.prepare("SELECT title FROM room_titles").get() as { title: string };
         expect(storedTitle.title).toBe(title);
         const room = db.prepare("SELECT id FROM rooms").get() as { id: string };
@@ -216,8 +285,9 @@ describe("room:new", () => {
     const credentialPath = path.join(path.dirname(server.dbPath), "host-credential");
     try {
       const result = await run([title, hostName], {
-        COMMONA_URL: server.base,
+        COMMONA_URL: server.host,
         COMMONA_HOST_CREDENTIAL: credentialPath,
+        COMMONA_HOST_SECRET_FILE: server.secretPath,
       });
       expect(result.code).toBe(0);
       expect(result.stderr).toBe("");
@@ -233,8 +303,9 @@ describe("room:new", () => {
     const credentialPath = path.join(path.dirname(server.dbPath), "host-credential");
     try {
       const result = await run([title, hostName], {
-        COMMONA_URL: server.base,
+        COMMONA_URL: server.host,
         COMMONA_HOST_CREDENTIAL: credentialPath,
+        COMMONA_HOST_SECRET_FILE: server.secretPath,
       });
       expect(result.code).toBe(1);
       expect(result.stdout).toBe("");
@@ -245,24 +316,54 @@ describe("room:new", () => {
     }
   });
 
-  it("refuses a non-local socket even when a header says loopback", async () => {
+  it("does not serve the host command on the public port", async () => {
     process.env.COMMONA_PUBLIC_ORIGIN = origin;
-    const dir = await tempDir();
-    const db = openDatabase(path.join(dir, "room.sqlite"));
-    const app = buildApp({ db });
+    const server = await startServer();
     try {
-      const refused = await app.inject({
+      const secret = await readFile(server.secretPath, "utf8");
+      const response = await fetch(`${server.base}/host/room`, {
         method: "POST",
-        url: "/host/room",
-        remoteAddress: "203.0.113.9",
-        headers: { "x-forwarded-for": "127.0.0.1", "content-type": "application/json" },
-        payload: { title, hostName, inviteCount: 1 },
+        headers: {
+          "content-type": "application/json",
+          [HOST_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({ title, hostName, inviteCount: 1 }),
       });
-      expect(refused.statusCode).toBe(403);
-      expect(refused.body).not.toContain("inv_");
+      const body = await response.text();
+      expect(response.status).toBe(404);
+      expect(body).not.toContain(secret);
+      expect(body).not.toContain("inv_");
+      expect(roomCount(server.dbPath)).toBe(0);
     } finally {
-      await app.close();
-      if (db.open) db.close();
+      await server.stop();
+    }
+  });
+
+  it("refuses a forwarded header and a wrong or missing secret", async () => {
+    process.env.COMMONA_PUBLIC_ORIGIN = origin;
+    const server = await startServer();
+    try {
+      const secret = await readFile(server.secretPath, "utf8");
+      const forwarded = ["cf-connecting-ip", "x-forwarded-for", "forwarded", "x-real-ip"];
+      for (const name of forwarded) {
+        const hit = await postHost(server.host, {
+          [HOST_SECRET_HEADER]: secret,
+          [name]: "127.0.0.1",
+        });
+        expect(hit.status).toBe(403);
+        expect(hit.body).not.toContain(secret);
+        expect(hit.body).not.toContain("inv_");
+      }
+      const missing = await postHost(server.host, {});
+      expect(missing.status).toBe(403);
+      expect(missing.body).not.toContain("inv_");
+      const wrong = await postHost(server.host, { [HOST_SECRET_HEADER]: "a".repeat(43) });
+      expect(wrong.status).toBe(403);
+      expect(wrong.body).not.toContain(secret);
+      expect(wrong.body).not.toContain("inv_");
+      expect(roomCount(server.dbPath)).toBe(0);
+    } finally {
+      await server.stop();
     }
   });
 });

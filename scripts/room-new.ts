@@ -1,6 +1,7 @@
-import { chmodSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { guard } from "../src/guard/index.js";
+import { HOST_SECRET_HEADER, hostSecretPath } from "../src/room/host.js";
 
 const LABEL_MAX = 80;
 const DEFAULT_INVITE_COUNT = 2;
@@ -48,12 +49,16 @@ export async function createRoomInvites(input: RoomNewInput): Promise<string[]> 
     "host display name is not allowed",
   );
   const inviteCount = requireCount(input.inviteCount);
+  const hostSecret = readHostSecret(hostSecretPath());
 
   let response: Response;
   try {
     response = await fetch(`${serverUrl}/host/room`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        [HOST_SECRET_HEADER]: hostSecret,
+      },
       body: JSON.stringify({ title, hostName, inviteCount }),
     });
   } catch {
@@ -61,9 +66,20 @@ export async function createRoomInvites(input: RoomNewInput): Promise<string[]> 
   }
   const text = await response.text();
   if (!response.ok) throw new RoomNewError(safeServerMessage(text));
-  const parsed = readResult(text);
+  const parsed = readResult(text, hostSecret);
   writeCredential(credentialPath, parsed.credential);
   return parsed.invites;
+}
+
+function readHostSecret(file: string): string {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8").trim();
+  } catch {
+    throw new RoomNewError("room:new could not read the host secret");
+  }
+  if (!/^[A-Za-z0-9_-]{43}$/.test(text)) throw new RoomNewError("room:new could not read the host secret");
+  return text;
 }
 
 function writeCredential(file: string, credential: string): void {
@@ -82,7 +98,7 @@ function writeCredential(file: string, credential: string): void {
   }
 }
 
-function readResult(text: string): { invites: string[]; credential: string } {
+function readResult(text: string, hostSecret: string): { invites: string[]; credential: string } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
@@ -92,12 +108,22 @@ function readResult(text: string): { invites: string[]; credential: string } {
   if (typeof parsed !== "object" || parsed === null) throw new RoomNewError("room:new failed");
   const invites = (parsed as { invites?: unknown }).invites;
   const credential = (parsed as { credential?: unknown }).credential;
-  if (!Array.isArray(invites) || typeof credential !== "string" || !/^[A-Za-z0-9_-]+$/.test(credential)) {
+  if (
+    !Array.isArray(invites) ||
+    typeof credential !== "string" ||
+    !/^[A-Za-z0-9_-]+$/.test(credential) ||
+    credential.includes(hostSecret)
+  ) {
     throw new RoomNewError("room:new failed");
   }
   const urls: string[] = [];
   for (const invite of invites) {
-    if (typeof invite !== "string" || !INVITE_URL.test(invite) || invite.includes(credential)) {
+    if (
+      typeof invite !== "string" ||
+      !INVITE_URL.test(invite) ||
+      invite.includes(credential) ||
+      invite.includes(hostSecret)
+    ) {
       throw new RoomNewError("room:new failed");
     }
     urls.push(invite);
