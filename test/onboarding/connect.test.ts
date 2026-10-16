@@ -394,6 +394,18 @@ describe("guided connect", () => {
     });
     const arrived = await call(room.baseUrl, "POST", "/connect/arrive", { token: credential });
     expect(arrived.status).toBe(200);
+    const arrivalRows = () =>
+      (
+        room.db
+          .prepare(
+            "SELECT COUNT(*) AS n FROM audit_log WHERE action = 'setting_change' AND instr(detail_json, 'authorAgentId') > 0",
+          )
+          .get() as { n: number }
+      ).n;
+    expect(arrivalRows()).toBe(1);
+    const again = await call(room.baseUrl, "POST", "/connect/arrive", { token: credential });
+    expect(again.status).toBe(200);
+    expect(arrivalRows()).toBe(1);
     const alexAfter = await openGuided(room, alex);
     const blairAfter = await openGuided(room, blair);
     expect(alexAfter.page.body).toContain("Your assistant is connected");

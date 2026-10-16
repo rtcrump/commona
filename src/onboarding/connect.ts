@@ -159,6 +159,9 @@ export function noteArrival(deps: HandoffDeps, agentId: string, ownerId: string)
     .prepare("SELECT 1 AS ok FROM memberships WHERE room_id = ? AND agent_id = ? AND owner_id = ?")
     .get(link.room_id, agentId, ownerId) as { ok: number } | undefined;
   if (!member) throw new ConnectError();
+  const prior = deps.db
+    .prepare("SELECT agent_id, room_id FROM connect_presence WHERE owner_id = ?")
+    .get(ownerId) as { agent_id: string; room_id: string } | undefined;
   const now = formatTimestamp(deps.clock.now());
   deps.db
     .prepare(
@@ -172,16 +175,20 @@ export function noteArrival(deps: HandoffDeps, agentId: string, ownerId: string)
     .run(ownerId, agentId, link.room_id, now);
   // The action list has no connect value. Arrival is a setting change that names
   // the agent and carries no sharing level, so an owner's log can show the
-  // connect after the sharing choice and before any post.
-  createAuditLog(deps.db, deps.clock).append({
-    ts: now,
-    room: link.room_id,
-    agentId,
-    ownerId,
-    action: AuditAction.SettingChange,
-    result: AuditResult.Ok,
-    detail: { authorAgentId: agentId },
-  });
+  // connect after the sharing choice and before any post. A second arrive with
+  // the same agent and room only refreshes checked_in_at.
+  const sameConnector = prior !== undefined && prior.agent_id === agentId && prior.room_id === link.room_id;
+  if (!sameConnector) {
+    createAuditLog(deps.db, deps.clock).append({
+      ts: now,
+      room: link.room_id,
+      agentId,
+      ownerId,
+      action: AuditAction.SettingChange,
+      result: AuditResult.Ok,
+      detail: { authorAgentId: agentId },
+    });
+  }
   inviteLog(`connect arrive owner=${ownerId} agent=${agentId}`);
 }
 
