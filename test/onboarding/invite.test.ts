@@ -395,8 +395,9 @@ describe.sequential("invite links", () => {
         token: room.ownerTwo,
       });
       hits.push(stranger);
+      const roomCreatorAgent = room.tokens.issueAgentToken("A1");
       const revoked = await call(room.baseUrl, "DELETE", `/rooms/${room.roomId}/invites/${revokeId}`, {
-        token: room.owner,
+        token: roomCreatorAgent,
       });
       hits.push(revoked);
       expect(revoked.status).toBe(200);
@@ -546,6 +547,60 @@ describe.sequential("invite links", () => {
     } finally {
       if (previous === undefined) delete process.env.COMMONA_PUBLIC_ORIGIN;
       else process.env.COMMONA_PUBLIC_ORIGIN = previous;
+      await room.stop();
+    }
+  });
+
+  it("lets the creating agent revoke and refuses a sibling and a non-member", async () => {
+    const clock = manualClock();
+    const room = await openHarness(clock);
+    try {
+      room.db
+        .prepare(
+          `INSERT INTO agents (id, owner_id, display_name, email, webhook_url, event_target, token_hash)
+           VALUES ('A2b', 'O2', 'Sibling Agent', 'sibling@example.test', NULL, NULL, NULL)`,
+        )
+        .run();
+      room.db
+        .prepare(
+          `INSERT INTO agents (id, owner_id, display_name, email, webhook_url, event_target, token_hash)
+           VALUES ('A1x', 'O1', 'Spare Agent', 'spare@example.test', NULL, NULL, NULL)`,
+        )
+        .run();
+      room.db
+        .prepare("INSERT INTO memberships (room_id, agent_id, owner_id, created_at) VALUES (?, 'A2b', 'O2', ?)")
+        .run(room.roomId, "2026-04-01T12:00:00.000Z");
+      const creator = room.tokens.issueAgentToken("A2");
+      const sibling = room.tokens.issueAgentToken("A2b");
+      const nonMember = room.tokens.issueAgentToken("A1x");
+      const created = await call(room.baseUrl, "POST", `/rooms/${room.roomId}/invites`, {
+        token: creator,
+        body: {},
+      });
+      expect(created.status).toBe(201);
+      const id = (json(created) as { invite: { id: string } }).invite.id;
+
+      const siblingHit = await call(room.baseUrl, "DELETE", `/rooms/${room.roomId}/invites/${id}`, {
+        token: sibling,
+      });
+      expect(siblingHit.status).toBe(403);
+      expect(json(siblingHit)).toEqual(GENERIC);
+      const outsiderHit = await call(room.baseUrl, "DELETE", `/rooms/${room.roomId}/invites/${id}`, {
+        token: nonMember,
+      });
+      expect(outsiderHit.status).toBe(403);
+      expect(json(outsiderHit)).toEqual(GENERIC);
+      const stillOpen = room.db.prepare("SELECT revoked_at FROM invites WHERE id = ?").get(id) as {
+        revoked_at: string | null;
+      };
+      expect(stillOpen.revoked_at).toBeNull();
+
+      const revoked = await call(room.baseUrl, "DELETE", `/rooms/${room.roomId}/invites/${id}`, {
+        token: creator,
+      });
+      expect(revoked.status).toBe(200);
+      expect(json(revoked)).toEqual({ revoked: true });
+    } finally {
       await room.stop();
     }
   });
