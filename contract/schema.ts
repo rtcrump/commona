@@ -13,6 +13,8 @@ function quote(values: readonly string[]): string {
  * Column names are snake_case. TypeScript fields are camelCase (`owner_id` ↔ `ownerId`,
  * `room_id` ↔ `room` on audit rows and `roomId` everywhere else).
  * `openDatabase` applies this string. Feature modules do not invent a second schema.
+ * `privacy_filters` is the phrase list that owner set. The table starts with no rows.
+ * A missing row blocks nothing.
  */
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS owners (
@@ -21,6 +23,13 @@ CREATE TABLE IF NOT EXISTS owners (
   display_name TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('participant', 'outsider')),
   token_hash TEXT
+);
+
+CREATE TABLE IF NOT EXISTS privacy_filters (
+  owner_id TEXT PRIMARY KEY,
+  terms_json TEXT NOT NULL,
+  patterns_json TEXT NOT NULL,
+  presets_json TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS agents (

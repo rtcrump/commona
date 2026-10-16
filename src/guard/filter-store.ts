@@ -13,20 +13,13 @@ import {
 import { CLARITY_PRESET } from "./preset.js";
 
 /**
- * One row per owner. Creating the table inserts no row.
+ * One row per owner. The table is `privacy_filters` in `SCHEMA_SQL`.
+ * This module inserts no row when the table is created.
  * A new row blocks nothing: no terms, no built-in patterns, no presets.
  * A missing row is that same empty filter. The caller allows the item.
- * A corrupt row is not empty. The caller holds the item.
+ * A corrupt row, or a table that cannot be read, is not empty. The caller holds the item.
  * Terms are not copied into the audit log.
  */
-export const PRIVACY_FILTER_SQL = `
-CREATE TABLE IF NOT EXISTS privacy_filters (
-  owner_id TEXT PRIMARY KEY,
-  terms_json TEXT NOT NULL,
-  patterns_json TEXT NOT NULL,
-  presets_json TEXT NOT NULL
-);
-`;
 
 export interface PatternFlags {
   healthNumber: boolean;

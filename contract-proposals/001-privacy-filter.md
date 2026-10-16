@@ -1,6 +1,6 @@
 # Proposal: owner privacy-filter route
 
-The milestone 1 contract has no route for an owner to edit the privacy filter. This change does not add one, and it does not edit `contract/`.
+The milestone 1 contract has no route for an owner to edit the privacy filter. This change does not add one. The `privacy_filters` table is in `SCHEMA_SQL`, so a database built from the exported schema has the table. A missing row is still an empty filter and blocks nothing.
 
 ## Proposed route
 
