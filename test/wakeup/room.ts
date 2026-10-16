@@ -66,6 +66,8 @@ export async function setupRoom(options?: { sameOwnerAgent?: boolean }): Promise
         sleeps.push(ms);
       },
       smtp: { host: mail.host, port: mail.port },
+      // The sink is http://127.0.0.1. The product flag is off; this fixture turns it on.
+      allowInsecureLocalhost: true,
     });
     return { db, webhook, mail, clock, sleeps, service };
   } catch (error) {
@@ -84,6 +86,7 @@ export function useService(ctx: RoomContext, overrides: Partial<WakeServiceOptio
       ctx.sleeps.push(ms);
     },
     smtp: { host: ctx.mail.host, port: ctx.mail.port },
+    allowInsecureLocalhost: true,
     ...overrides,
   });
   ctx.service = service;

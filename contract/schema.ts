@@ -20,7 +20,12 @@ CREATE TABLE IF NOT EXISTS owners (
   email TEXT NOT NULL,
   display_name TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('participant', 'outsider')),
-  token_hash TEXT
+  token_hash TEXT,
+  -- HMAC-SHA256 needs the raw key. A hash of the secret cannot sign, so this column
+  -- stores the secret itself. Do not copy it into a log, an audit row, or a response.
+  webhook_signing_secret TEXT,
+  -- 0 until the one-time reveal. Later reveals return null. The secret stays for signing.
+  webhook_secret_revealed INTEGER NOT NULL DEFAULT 0 CHECK (webhook_secret_revealed IN (0, 1))
 );
 
 CREATE TABLE IF NOT EXISTS agents (
@@ -30,7 +35,12 @@ CREATE TABLE IF NOT EXISTS agents (
   email TEXT NOT NULL,
   webhook_url TEXT,
   event_target TEXT,
-  token_hash TEXT
+  token_hash TEXT,
+  -- HMAC-SHA256 needs the raw key. A hash of the secret cannot sign, so this column
+  -- stores the secret itself. Do not copy it into a log, an audit row, or a response.
+  webhook_signing_secret TEXT,
+  -- 0 until the one-time reveal. Later reveals return null. The secret stays for signing.
+  webhook_secret_revealed INTEGER NOT NULL DEFAULT 0 CHECK (webhook_secret_revealed IN (0, 1))
 );
 
 CREATE TABLE IF NOT EXISTS rooms (
@@ -165,6 +175,34 @@ CREATE TABLE IF NOT EXISTS notices (
   created_at TEXT NOT NULL
 );
 `;
+
+/**
+ * Columns added after the first M1 database file.
+ * `openDatabase` runs each statement when that column is missing.
+ * A row that already exists gets a null secret and `webhook_secret_revealed` 0.
+ */
+export const SIGNING_SECRET_MIGRATIONS = [
+  {
+    table: "owners",
+    column: "webhook_signing_secret",
+    sql: "ALTER TABLE owners ADD COLUMN webhook_signing_secret TEXT",
+  },
+  {
+    table: "owners",
+    column: "webhook_secret_revealed",
+    sql: "ALTER TABLE owners ADD COLUMN webhook_secret_revealed INTEGER NOT NULL DEFAULT 0 CHECK (webhook_secret_revealed IN (0, 1))",
+  },
+  {
+    table: "agents",
+    column: "webhook_signing_secret",
+    sql: "ALTER TABLE agents ADD COLUMN webhook_signing_secret TEXT",
+  },
+  {
+    table: "agents",
+    column: "webhook_secret_revealed",
+    sql: "ALTER TABLE agents ADD COLUMN webhook_secret_revealed INTEGER NOT NULL DEFAULT 0 CHECK (webhook_secret_revealed IN (0, 1))",
+  },
+] as const;
 
 /** Reason codes live in audit detail JSON. Exported so a drift test can see them next to the schema. */
 export const SCHEMA_REASON_CODES = REASON_CODES;
