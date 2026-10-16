@@ -107,9 +107,9 @@ export function hasArrived(deps: HandoffDeps, ownerId: string): boolean {
 
 /**
  * Swap a handoff for the agent's credential when the room is the one the link was issued for.
- * The first swap is single-use. After that, the same link stays bound so Claude can connect again.
- * A wrong room, a wrong owner, an unbound second use, or an expired unused link fails without revealing which.
- * A room mismatch does not use up the link and does not replace the bound one.
+ * The swap is single-use. A later call does not mint a second credential, so another session keeps the first one.
+ * A wrong room, a wrong owner, a second use, or an expired link fails without revealing which.
+ * A room mismatch does not use up the link.
  */
 export function claimConnectLink(
   deps: HandoffDeps,
@@ -132,12 +132,7 @@ export function claimConnectLink(
     .prepare("SELECT 1 AS ok FROM memberships WHERE room_id = ? AND agent_id = ? AND owner_id = ?")
     .get(roomId, row.agent_id, row.owner_id) as { ok: number } | undefined;
   if (!member) throw new ConnectError();
-  if (link.bound_at !== null) {
-    const credential = deps.tokens.issueAgentToken(row.agent_id);
-    inviteLog(`connect rebind owner=${row.owner_id} agent=${row.agent_id}`);
-    return { agentId: row.agent_id, ownerId: row.owner_id, roomId, credential };
-  }
-  if (row.used_at !== null || row.expires_at <= now) throw new ConnectError();
+  if (row.used_at !== null || row.expires_at <= now || link.bound_at !== null) throw new ConnectError();
   let claimed: { agentId: string; ownerId: string; credential: string };
   try {
     claimed = claimAgentHandoff(deps, secret);

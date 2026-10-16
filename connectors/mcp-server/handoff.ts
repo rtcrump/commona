@@ -48,13 +48,19 @@ export async function adoptHandoff(
 }
 
 /**
+ * How often to look for Check connection.
+ * The page waits one second. This stays under that and does not follow the wake-spool interval.
+ */
+const CHECK_IN_MS = 200;
+
+/**
  * While this connector is open, answer Check connection.
  * The answer is a check-in. It does not post to a room.
  */
-function startCheckInLoop(config: ConnectorConfig, fetchImpl: typeof fetch): () => void {
+export function startCheckInLoop(config: ConnectorConfig, fetchImpl: typeof fetch): () => void {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const delay = Math.max(20, config.wakePollMs);
+  const delay = CHECK_IN_MS;
 
   const arm = () => {
     if (stopped) return;

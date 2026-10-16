@@ -20,6 +20,11 @@ interface Session {
   viaHandoff: boolean;
 }
 
+interface AdoptedLink {
+  config: ConnectorConfig;
+  stop: () => void;
+}
+
 /**
  * Streamable HTTP MCP endpoint at `/mcp`.
  * One process serves one agent. Bind stays on loopback unless COMMONA_MCP_BEARER is set.
@@ -37,6 +42,8 @@ export function startMcpHttp(options: {
     return Promise.reject(new Error("COMMONA_MCP_BEARER is required when COMMONA_MCP_HOST is not loopback."));
   }
   const sessions = new Map<string, Session>();
+  const adopted = new Map<string, AdoptedLink>();
+  const adopting = new Map<string, Promise<AdoptedLink>>();
   const server = createServer((request, response) => {
     void handle(request, response, {
       config: options.config,
@@ -44,6 +51,8 @@ export function startMcpHttp(options: {
       allowedOrigins: options.allowedOrigins ?? [],
       fetchImpl: options.fetchImpl,
       sessions,
+      adopted,
+      adopting,
     });
   });
   return new Promise((resolve, reject) => {
@@ -64,7 +73,9 @@ export function startMcpHttp(options: {
               session.server.close();
               session.sse?.end();
             }
+            for (const link of adopted.values()) link.stop();
             sessions.clear();
+            adopted.clear();
             server.close((error) => (error ? fail(error) : done()));
           }),
       });
@@ -81,6 +92,8 @@ async function handle(
     allowedOrigins: string[];
     fetchImpl?: typeof fetch;
     sessions: Map<string, Session>;
+    adopted: Map<string, AdoptedLink>;
+    adopting: Map<string, Promise<AdoptedLink>>;
   },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -139,16 +152,11 @@ async function handle(
   let session = existingId ? ctx.sessions.get(existingId) : undefined;
   if (method === "initialize") {
     let sessionConfig = ctx.config;
-    let stop: (() => void) | undefined;
     const viaHandoff = handoffPresent;
     if (handoffPresent && handoff) {
-      sessionConfig = {
-        baseUrl: ctx.config.baseUrl,
-        wakePollMs: ctx.config.wakePollMs,
-        wakeSpool: ctx.config.wakeSpool,
-      };
       try {
-        stop = await adoptHandoff(sessionConfig, handoff, url.searchParams.get("room") ?? "", ctx.fetchImpl ?? fetch);
+        const link = await adoptedLink(ctx, handoff, url.searchParams.get("room") ?? "");
+        sessionConfig = link.config;
       } catch {
         json(response, 200, {
           jsonrpc: "2.0",
@@ -165,14 +173,8 @@ async function handle(
       ctx.sessions.delete(existingId as string);
     }
     const id = randomUUID();
-    let created: McpServer;
-    try {
-      created = createMcpServer(sessionConfig, ctx.fetchImpl);
-    } catch (error) {
-      stop?.();
-      throw error;
-    }
-    session = { server: created, sse: null, stop, viaHandoff };
+    const created = createMcpServer(sessionConfig, ctx.fetchImpl);
+    session = { server: created, sse: null, viaHandoff };
     created.onNotification((note) => writeSse(session as Session, note));
     ctx.sessions.set(id, session);
     const result = await created.handle(message);
@@ -190,6 +192,49 @@ async function handle(
     return;
   }
   json(response, 200, result, existingId ? { "mcp-session-id": existingId } : {});
+}
+
+function adoptionKey(handoff: string, roomId: string): string {
+  return `${roomId}\n${handoff}`;
+}
+
+/**
+ * The first initialize claims the handoff. Later sessions in this process reuse that credential.
+ * A second claim would replace the only stored credential and sign the first session out.
+ */
+async function adoptedLink(
+  ctx: {
+    config: ConnectorConfig;
+    fetchImpl?: typeof fetch;
+    adopted: Map<string, AdoptedLink>;
+    adopting: Map<string, Promise<AdoptedLink>>;
+  },
+  handoff: string,
+  roomId: string,
+): Promise<AdoptedLink> {
+  const key = adoptionKey(handoff, roomId);
+  const cached = ctx.adopted.get(key);
+  if (cached) return cached;
+  const pending = ctx.adopting.get(key);
+  if (pending) return pending;
+  const flight = (async () => {
+    const config: ConnectorConfig = {
+      baseUrl: ctx.config.baseUrl,
+      wakePollMs: ctx.config.wakePollMs,
+      wakeSpool: ctx.config.wakeSpool,
+    };
+    try {
+      const stop = await adoptHandoff(config, handoff, roomId, ctx.fetchImpl ?? fetch);
+      const link = { config, stop };
+      ctx.adopted.set(key, link);
+      return link;
+    } catch (error) {
+      ctx.adopting.delete(key);
+      throw error;
+    }
+  })();
+  ctx.adopting.set(key, flight);
+  return flight;
 }
 
 function openSse(request: IncomingMessage, response: ServerResponse, sessions: Map<string, Session>): void {

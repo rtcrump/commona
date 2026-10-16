@@ -7,7 +7,7 @@ const applied = new WeakSet<Database.Database>();
 /** Apply the invite migration. Safe to call more than once on the same database. */
 export function ensureInviteSchema(db: Database.Database): void {
   if (applied.has(db)) return;
-  for (const name of ["001_invites.sql", "002_connect.sql"]) {
+  for (const name of ["001_invites.sql", "002_connect.sql", "003_invite_owner.sql"]) {
     const sqlPath = fileURLToPath(new URL(`./migrations/${name}`, import.meta.url));
     db.exec(readFileSync(sqlPath, "utf8"));
   }
