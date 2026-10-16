@@ -26,7 +26,13 @@ export async function startConnectorRoom(): Promise<ConnectorRoom> {
   const audit = createAuditLog(db);
   const notices = createOwnerNotifier(db, systemClock);
   const sharing = createSharingDirectory(db);
-  const wake = createWakeService({ db, audit, notices });
+  const wake = createWakeService({
+    db,
+    audit,
+    notices,
+    // The listener is http://127.0.0.1. The product flag is off; this fixture turns it on.
+    allowInsecureLocalhost: true,
+  });
   const app = buildApp({
     db,
     tokens,
