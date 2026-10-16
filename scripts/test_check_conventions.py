@@ -28,6 +28,7 @@ class Commits(unittest.TestCase):
     def test_pass_qa_fail_on_branch(self): self.ok(msg("fix(nameblock): p5", AG, "QA: chatgpt round 1 fail"))
     def test_merge_commit_skipped(self): self.ok("Merge pull request #3 from x/y\n\nwhatever")
     def test_pass_grok_agent(self): self.ok(msg("feat(room): x", "Authored-by-agent: grok/grok-build\nModel: grok-build"))
+    def test_pass_legacy_agent_grok_build(self): self.ok(msg("feat(nameblock): fold text", "Agent: grok-build"))
     def test_docs_components_match_checker(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         path = os.path.join(root, "docs", "conventions.md")
@@ -78,6 +79,7 @@ class Commits(unittest.TestCase):
     def test_fail_human_bad_value(self): self.bad(msg("feat(room): x", "Authored-by: trafford"), "want human/", email="t@example.test")
     def test_fail_bot_as_human(self): self.bad(msg("feat(room): x", "Authored-by: human/trafford"), "bot identity")
     def test_fail_typo_key(self): self.bad(msg("feat(room): x", "Authored-By-Agent: cursor/bc-1\nModel: m"), "unknown trailer")
+    def test_fail_legacy_agent_other(self): self.bad(msg("feat(room): x", "Agent: cursor"), "legacy Agent")
     def test_fail_bad_qa(self): self.bad(msg("feat(room): x", AG, "QA: looks good"), "bad QA")
     def test_fail_round4(self): self.bad(msg("feat(room): x", AG, "QA: chatgpt round 4 pass"), "bad QA")
     def test_fail_wrong_approver(self): self.bad(msg("feat(room): x", AG, "Approved-by: someone"), "must be 'trafford'")

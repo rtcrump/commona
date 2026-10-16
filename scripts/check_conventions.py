@@ -13,7 +13,9 @@ TYPES = "feat|fix|test|docs|chore|ci|refactor"
 COMPONENTS = "room|wake|sharing|nameblock|audit|loop|data|ci|docs|tracking|m1|release|readme|demo"
 SUBJECT_RE = re.compile(rf"^({TYPES})\(({COMPONENTS})\): \S.*$")
 TRAILER_RE = re.compile(r"^([A-Za-z][A-Za-z-]*): (.+)$")
-ALLOWED = {"Authored-by-agent", "Model", "Authored-by", "QA", "Approved-by", "Co-authored-by", "Refs"}
+ALLOWED = {"Authored-by-agent", "Model", "Authored-by", "QA", "Approved-by", "Co-authored-by", "Refs", "Agent"}
+# Older grok commits used one line. It means the two-line grok authorship block.
+LEGACY_AGENT = "grok-build"
 AGENT_RE = re.compile(
     r"^(cursor/[A-Za-z0-9._-]+|grok/[A-Za-z0-9._-]+|community/[A-Za-z0-9-]+/[A-Za-z0-9._-]+)$"
 )
@@ -107,6 +109,20 @@ def check_commit(email, msg, mode):
             errs.append(f"trailer {k} appears more than once")
     agent = keys.get("Authored-by-agent", [None])[0]
     human = keys.get("Authored-by", [None])[0]
+    legacy = keys.get("Agent", [])
+    if len(legacy) > 1:
+        errs.append("trailer Agent appears more than once")
+    elif legacy and legacy[0] != LEGACY_AGENT:
+        errs.append(f"legacy Agent trailer must be grok-build: {legacy[0]!r}")
+    elif legacy and (agent or human):
+        errs.append("legacy Agent trailer cannot sit beside Authored-by-agent or Authored-by")
+    elif legacy == [LEGACY_AGENT]:
+        agent = "grok/grok-build"
+        model = keys.get("Model")
+        if model and model != [LEGACY_AGENT]:
+            errs.append("Agent: grok-build uses Model grok-build")
+        elif not model:
+            keys["Model"] = [LEGACY_AGENT]
     if agent and human:
         errs.append("commit has both Authored-by-agent and Authored-by (pick one)")
     elif not agent and not human:

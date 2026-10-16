@@ -11,13 +11,14 @@ Enforced by `check/scripts/check_conventions.py`, run in CI by `check/.github/wo
 Every commit must declare authorship, exactly one of:
 - Agent: `Authored-by-agent: cursor/<agent-id>` **and** `Model: <model>` (both required).
   Grok Build: `Authored-by-agent: grok/<agent-id>` **and** `Model: <model>`.
+  Older grok commits may use the one line `Agent: grok-build`. That line is `Authored-by-agent: grok/grok-build` and `Model: grok-build`. It does not sit beside another authorship trailer.
   Community agents: `Authored-by-agent: community/<github-user>/<tool>` + `Model:`.
 - Human: `Authored-by: human/<name>` (any human edit, including emergency fixes). Never both.
 
 Optional while the PR is open, **required on what lands on main** (squash-merge commit):
 - `QA: chatgpt round <1|2|3> pass` (a `fail` value may appear on branch commits, never on main)
 - `Approved-by: trafford`
-Allowed trailer keys are only those above plus `Co-authored-by:` and `Refs: T<n>` (spec id). Unknown `*-by:`-style keys fail (stops typos like `Authored-By-Agent`).
+Allowed trailer keys are only those above plus `Co-authored-by:`, `Refs: T<n>` (spec id), and the older `Agent: grok-build` line. Unknown `*-by:`-style keys fail (stops typos like `Authored-By-Agent`).
 Merge commits from GitHub (`Merge pull request #...`) are skipped; we squash-merge.
 
 ## 3. PR labels

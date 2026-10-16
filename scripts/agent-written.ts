@@ -43,9 +43,12 @@ export function classifyTrailers(message: string): { kind: CommitStat["kind"]; q
   const trailers = parseTrailerBlock(message);
   const agent = trailers.filter(([key]) => key === "Authored-by-agent").length;
   const human = trailers.filter(([key]) => key === "Authored-by").length;
+  const legacy = trailers.filter(([key, value]) => key === "Agent" && value === "grok-build").length;
   const qa = trailers.find(([key]) => key === "QA")?.[1] ?? null;
-  if (agent === 1 && human === 0) return { kind: "agent", qa };
-  if (human === 1 && agent === 0) return { kind: "human", qa };
+  if (agent === 1 && human === 0 && legacy === 0) return { kind: "agent", qa };
+  if (human === 1 && agent === 0 && legacy === 0) return { kind: "human", qa };
+  // Older grok commits used one line. It is the same authorship as grok/grok-build.
+  if (agent === 0 && human === 0 && legacy === 1) return { kind: "agent", qa };
   return { kind: "unattributed", qa };
 }
 
@@ -58,6 +61,7 @@ const ALLOWED_TRAILERS = new Set([
   "Approved-by",
   "Co-authored-by",
   "Refs",
+  "Agent",
 ]);
 
 function paragraphs(message: string): string[][] {

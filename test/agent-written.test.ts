@@ -79,6 +79,10 @@ describe("agent-written stats", () => {
     ).toBe("agent");
   });
 
+  it("counts the older Agent grok-build line as agent-written", () => {
+    expect(classifyTrailers("feat(nameblock): fold text\n\nAgent: grok-build\n").kind).toBe("agent");
+  });
+
   it("counts a split trailer block as agent-written", () => {
     const split = classifyTrailers(
       "fix(ci): quote claude review json schema\n\nAuthored-by-agent: cursor/commona-cos\n\nModel: grok-bot\n",
