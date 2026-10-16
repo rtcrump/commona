@@ -35,7 +35,6 @@ describe("browser session scope", () => {
     const paths = [
       `/rooms/${room.roomId}/feed`,
       `/rooms/${room.roomId}/files/${CANARY_FILE_ID}`,
-      `/rooms/${room.roomId}/held`,
     ];
     for (const path of paths) {
       const hit = await call(room.baseUrl, "GET", path, {
@@ -47,5 +46,20 @@ describe("browser session scope", () => {
       expect(hit.body).not.toContain(session);
       expect(hit.body).not.toContain("Sunday lunch");
     }
+
+    const ownerHeld = await call(room.baseUrl, "GET", `/rooms/${room.roomId}/held`, {
+      token: room.owner,
+      accept: "text/html",
+    });
+    expect(ownerHeld.status).toBe(403);
+    for (const canary of CANARIES) expect(ownerHeld.body).not.toContain(canary);
+
+    const cookieHeld = await call(room.baseUrl, "GET", `/rooms/${room.roomId}/held`, {
+      accept: "text/html",
+      cookie: `commona_session=${session}`,
+    });
+    expect(cookieHeld.status).toBe(403);
+    for (const canary of CANARIES) expect(cookieHeld.body).not.toContain(canary);
+    expect(cookieHeld.body).not.toContain(session);
   });
 });

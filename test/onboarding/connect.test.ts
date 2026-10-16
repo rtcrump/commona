@@ -65,7 +65,7 @@ function recordFetch(calls: string[]): typeof fetch {
   };
 }
 
-async function initializeMcp(url: string): Promise<{ status: number; body: string }> {
+async function initializeMcp(url: string): Promise<{ status: number; body: string; sessionId: string }> {
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
@@ -80,7 +80,19 @@ async function initializeMcp(url: string): Promise<{ status: number; body: strin
       },
     }),
   });
-  return { status: response.status, body: await response.text() };
+  return {
+    status: response.status,
+    body: await response.text(),
+    sessionId: response.headers.get("mcp-session-id") ?? "",
+  };
+}
+
+async function deleteMcp(url: string, sessionId: string): Promise<number> {
+  const response = await fetch(url, {
+    method: "DELETE",
+    headers: { "mcp-session-id": sessionId, accept: "application/json" },
+  });
+  return response.status;
 }
 
 async function joinPerson(room: JoinHarness, roomId: string, name: string): Promise<Person> {
@@ -91,10 +103,13 @@ async function joinPerson(room: JoinHarness, roomId: string, name: string): Prom
   const invite = cookieValue(welcome.setCookies, "commona_invite");
   const welcomeNonce = cookieValue(welcome.setCookies, "commona_form");
   await call(room.baseUrl, "POST", `/j/${id}/continue`, {
-    cookie: `commona_form=${welcomeNonce}`,
+    cookie: `commona_invite=${invite}; commona_form=${welcomeNonce}`,
     form: { nonce: welcomeNonce, firstName: name },
   });
-  const sharing = await call(room.baseUrl, "GET", `/j/${id}/sharing`, { accept: "text/html" });
+  const sharing = await call(room.baseUrl, "GET", `/j/${id}/sharing`, {
+    accept: "text/html",
+    cookie: `commona_invite=${invite}`,
+  });
   const shareNonce = cookieValue(sharing.setCookies, "commona_form");
   const finished = await call(room.baseUrl, "POST", `/j/${id}/finish`, {
     cookie: `commona_invite=${invite}; commona_form=${shareNonce}`,
@@ -275,10 +290,18 @@ describe("guided connect", () => {
     expect(tableCount(room.db, "files")).toBe(filesBefore);
     expect(calls.some((line) => FORBIDDEN_PATH.test(line))).toBe(false);
 
+    const issuedAfterOpen = room.issued.length;
     const again = await initializeMcp(link.toString());
-    expect(again.body).toContain("The connector link is dead.");
+    expect(again.status).toBe(200);
+    expect(again.body).toContain("2025-06-18");
+    expect(again.body).not.toContain("The connector link is dead.");
     expect(again.body).not.toContain(secret);
     expect(again.body).not.toContain(credential);
+    expect(room.issued.length).toBe(issuedAfterOpen);
+    expect(room.tokens.authenticate(credential)).toMatchObject({
+      kind: "agent",
+      ownerId: ownerRecord(room, "Alex").id,
+    });
 
     await connector.close();
     connector = undefined;
@@ -314,7 +337,7 @@ describe("guided connect", () => {
     expect(dump).toContain(hashToken(secret));
   });
 
-  it("refuses a second use, another room, and another owner", async () => {
+  it("refuses another room and another owner", async () => {
     room = await startJoinHarness();
     const logs: string[] = [];
     setInviteLog((line) => logs.push(line));
@@ -369,11 +392,6 @@ describe("guided connect", () => {
       ownerId: alexOwner.id,
       agentId: alexOwner.agentId,
     });
-    const second = await call(room.baseUrl, "POST", "/connect/claim", {
-      json: { handoff: alexSecret, roomId: room.roomId },
-    });
-    expect(second.status).toBe(403);
-
     const arrived = await call(room.baseUrl, "POST", "/connect/arrive", { token: credential });
     expect(arrived.status).toBe(200);
     const alexAfter = await openGuided(room, alex);
@@ -383,6 +401,18 @@ describe("guided connect", () => {
     expect(blairAfter.page.body).toContain("Connect your assistant");
 
     const audit = JSON.stringify(room.db.prepare("SELECT action, detail_json FROM audit_log").all());
+    const second = await call(room.baseUrl, "POST", "/connect/claim", {
+      json: { handoff: alexSecret, roomId: room.roomId },
+    });
+    expect(second.status).toBe(403);
+    expect(second.body).not.toContain(alexSecret);
+    expect(second.body).not.toContain(credential);
+    expect(room.tokens.authenticate(credential)).toEqual({
+      kind: "agent",
+      ownerId: alexOwner.id,
+      agentId: alexOwner.agentId,
+    });
+
     assertAbsent(
       [alexAfter.page.body, blairAfter.page.body, refused.body, cross.body, second.body, ...logs, audit],
       [alexSecret, blairSecret, credential, alex.session, blair.session],
@@ -419,5 +449,192 @@ describe("guided connect", () => {
     expect(agentHash(room, "Alex")).toBe(hashBefore);
     const audit = JSON.stringify(room.db.prepare("SELECT action, detail_json FROM audit_log").all());
     assertAbsent([expiredPage.page.body, refused.body, ...logs, audit], [secret, person.session]);
+  });
+
+  it("keeps the same link when Claude connects again", async () => {
+    room = await startJoinHarness();
+    seedCanaries(room.db, room.roomId);
+    room.db.prepare("INSERT INTO room_titles (room_id, title) VALUES (?, ?)").run(room.roomId, "Sunday lunch");
+    const postsBefore = tableCount(room.db, "posts");
+    const filesBefore = tableCount(room.db, "files");
+    const logs: string[] = [];
+    setInviteLog((line) => logs.push(line));
+    const calls: string[] = [];
+    connector = await startMcpHttp({
+      config: { baseUrl: room.baseUrl, wakePollMs: 20 },
+      fetchImpl: recordFetch(calls),
+    });
+    process.env.COMMONA_CONNECT_URL = connector.url;
+
+    const person = await joinPerson(room, room.roomId, "Alex");
+    const page = await openGuided(room, person);
+    const copied = await call(room.baseUrl, "POST", `/j/${person.id}/connect/link`, {
+      cookie: jar(person, page.form),
+      json: { nonce: page.nonce },
+    });
+    const link = new URL((JSON.parse(copied.body) as { url: string }).url);
+    const secret = link.searchParams.get("handoff") ?? "";
+    const issuedBefore = room.issued.length;
+
+    const opened = await initializeMcp(link.toString());
+    expect(opened.status).toBe(200);
+    expect(opened.body).toContain("2025-06-18");
+    expect(opened.body).not.toContain(secret);
+    const credential = room.issued.slice(issuedBefore).find((item) => item.kind === "agent")?.token ?? "";
+    expect(credential.length).toBeGreaterThan(20);
+    expect(opened.body).not.toContain(credential);
+    const boundHash = agentHash(room, "Alex");
+
+    const connected = await openGuided(room, person);
+    expect(connected.page.body).toContain("Your assistant is connected");
+    expect(connected.page.body).toContain("Claude can keep using that link");
+    expect(connected.page.body).not.toContain("ran out of time");
+    expect(connected.page.body).not.toContain(secret);
+    expect(connected.page.body).not.toContain(room.roomId);
+    expect(connected.page.body).not.toContain("Sunday lunch");
+    for (const canary of CANARIES) expect(connected.page.body).not.toContain(canary);
+
+    const wrongRoom = new URL(link.toString());
+    wrongRoom.searchParams.set("room", "room_other");
+    const refused = await initializeMcp(wrongRoom.toString());
+    expect(refused.body).toContain("The connector link is dead.");
+    expect(refused.body).not.toContain(secret);
+    expect(agentHash(room, "Alex")).toBe(boundHash);
+
+    room.clock.advance(HANDOFF_TTL_MS);
+    const stillBound = await openGuided(room, person);
+    expect(stillBound.page.body).toContain("Claude can keep using that link");
+    expect(stillBound.page.body).not.toContain("ran out of time");
+    expect(stillBound.page.body).not.toContain(secret);
+
+    const issuedAfterOpen = room.issued.length;
+    const again = await initializeMcp(link.toString());
+    expect(again.status).toBe(200);
+    expect(again.body).toContain("2025-06-18");
+    expect(again.body).not.toContain("The connector link is dead.");
+    expect(again.body).not.toContain(secret);
+    expect(again.body).not.toContain(credential);
+    expect(room.issued.length).toBe(issuedAfterOpen);
+    expect(room.tokens.authenticate(credential)).toMatchObject({ kind: "agent", ownerId: ownerRecord(room, "Alex").id });
+    await expect(deleteMcp(link.toString(), opened.sessionId)).resolves.toBe(204);
+
+    const reopened = await initializeMcp(link.toString());
+    expect(reopened.status).toBe(200);
+    expect(reopened.body).toContain("2025-06-18");
+    expect(reopened.body).not.toContain(secret);
+    expect(reopened.body).not.toContain(credential);
+    expect(room.issued.length).toBe(issuedAfterOpen);
+    expect(agentHash(room, "Alex")).toBe(boundHash);
+
+    const online = await call(room.baseUrl, "POST", `/j/${person.id}/connect/check`, {
+      cookie: jar(person, stillBound.form),
+      form: { nonce: stillBound.nonce },
+    });
+    expect(online.status).toBe(200);
+    expect(statusText(online.body)).toBe("Connected");
+    expect(online.body).not.toContain(room.roomId);
+    expect(online.body).not.toContain("Sunday lunch");
+    expect(online.body).not.toContain(secret);
+    expect(online.body).not.toContain(credential);
+    for (const canary of CANARIES) expect(online.body).not.toContain(canary);
+    expect(tableCount(room.db, "posts")).toBe(postsBefore);
+    expect(tableCount(room.db, "files")).toBe(filesBefore);
+    expect(calls.some((line) => FORBIDDEN_PATH.test(line))).toBe(false);
+
+    const other = await startMcpHttp({ config: { baseUrl: room.baseUrl, wakePollMs: 20 } });
+    const replay = new URL(other.url);
+    replay.search = link.search;
+    const retired = await initializeMcp(replay.toString());
+    await other.close();
+    expect(retired.body).toContain("The connector link is dead.");
+    expect(retired.body).not.toContain(secret);
+    expect(retired.body).not.toContain(credential);
+    expect(agentHash(room, "Alex")).toBe(boundHash);
+    expect(room.tokens.authenticate(credential)).toMatchObject({ kind: "agent" });
+    expect(tableCount(room.db, "posts")).toBe(postsBefore);
+    expect(tableCount(room.db, "files")).toBe(filesBefore);
+
+    const audit = JSON.stringify(room.db.prepare("SELECT action, detail_json FROM audit_log").all());
+    assertAbsent(
+      [
+        page.page.body,
+        connected.page.body,
+        stillBound.page.body,
+        online.body,
+        opened.body,
+        refused.body,
+        again.body,
+        reopened.body,
+        retired.body,
+        ...logs,
+        audit,
+      ],
+      [secret, credential, person.session],
+    );
+    const dump = dumpDatabase(room.db);
+    expect(dump).not.toContain(secret);
+    expect(dump).not.toContain(credential);
+    expect(dump).toContain(hashToken(secret));
+  });
+
+  it("resumes connect from the owner session", async () => {
+    room = await startJoinHarness();
+    seedCanaries(room.db, room.roomId);
+    room.db.prepare("INSERT INTO room_titles (room_id, title) VALUES (?, ?)").run(room.roomId, "Sunday lunch");
+    const person = await joinPerson(room, room.roomId, "Alex");
+    const resumed = await call(room.baseUrl, "GET", `/j/${person.id}/connect`, {
+      accept: "text/html",
+      cookie: `commona_session=${person.session}`,
+    });
+    expect(resumed.status).toBe(200);
+    expect(resumed.body).toContain("Check connection");
+    expect(resumed.body).not.toContain(room.roomId);
+    expect(resumed.body).not.toContain("Sunday lunch");
+    for (const canary of CANARIES) expect(resumed.body).not.toContain(canary);
+    assertNoJargon(resumed.body);
+
+    const restarted = await call(room.baseUrl, "GET", `/j/${person.id}/connect`, {
+      accept: "text/html",
+      cookie: `commona_session=${person.session}; commona_joined=missing-marker`,
+    });
+    expect(restarted.status).toBe(200);
+    expect(restarted.body).toContain("Check connection");
+    expect(restarted.body).not.toContain("Sunday lunch");
+
+    const outsider = await call(room.baseUrl, "GET", `/j/${person.id}/connect`, {
+      accept: "text/html",
+      cookie: `commona_session=${room.owner}`,
+    });
+    expect(outsider.body).not.toContain("Check connection");
+    expect(outsider.body).not.toContain("Sunday lunch");
+    const anon = await call(room.baseUrl, "GET", `/j/${person.id}/connect`, { accept: "text/html" });
+    expect(anon.body).not.toContain("Check connection");
+  });
+
+  it("answers Check connection when wake polling is slow", async () => {
+    room = await startJoinHarness();
+    const postsBefore = tableCount(room.db, "posts");
+    const filesBefore = tableCount(room.db, "files");
+    connector = await startMcpHttp({ config: { baseUrl: room.baseUrl, wakePollMs: 60_000 } });
+    process.env.COMMONA_CONNECT_URL = connector.url;
+    const person = await joinPerson(room, room.roomId, "Alex");
+    const page = await openGuided(room, person);
+    const copied = await call(room.baseUrl, "POST", `/j/${person.id}/connect/link`, {
+      cookie: jar(person, page.form),
+      json: { nonce: page.nonce },
+    });
+    const link = new URL((JSON.parse(copied.body) as { url: string }).url);
+    const opened = await initializeMcp(link.toString());
+    expect(opened.body).toContain("2025-06-18");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const checked = await call(room.baseUrl, "POST", `/j/${person.id}/connect/check`, {
+      cookie: jar(person, page.form),
+      form: { nonce: page.nonce },
+    });
+    expect(checked.status).toBe(200);
+    expect(statusText(checked.body)).toBe("Connected");
+    expect(checked.body).not.toContain(room.roomId);
+    expect(tableCount(room.db, "posts")).toBe(postsBefore);
+    expect(tableCount(room.db, "files")).toBe(filesBefore);
   });
 });

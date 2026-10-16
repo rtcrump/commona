@@ -113,7 +113,7 @@ export function registerJoinPages(app: FastifyInstance, deps: RoomDeps): void {
   });
 
   app.get<{ Params: { id: string } }>("/j/:id/sharing", async (request, reply) => {
-    return sendJoinResult(reply, openSharing(deps, request.params.id));
+    return sendJoinResult(reply, openSharing(deps, request.params.id, request.headers.cookie));
   });
 
   app.post<{ Params: { id: string } }>("/j/:id/finish", async (request, reply) => {
