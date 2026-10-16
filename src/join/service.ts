@@ -179,11 +179,15 @@ export function revokeInvite(deps: RoomDeps, principal: AuthPrincipal, roomId: s
   const room = deps.db.prepare("SELECT created_by_owner_id FROM rooms WHERE id = ?").get(roomId) as
     | { created_by_owner_id: string }
     | undefined;
+  const creatingAgent = principal.kind === "agent" && row?.created_by_agent_id === principal.agentId;
+  const roomCreatorAgent =
+    principal.kind === "agent" && room !== undefined && principal.ownerId === room.created_by_owner_id;
   const allowed =
     row !== undefined &&
     row.room_id === roomId &&
     room !== undefined &&
-    (row.created_by_owner_id === actor.ownerId || room.created_by_owner_id === actor.ownerId);
+    isMember(deps, principal, roomId) &&
+    (creatingAgent || roomCreatorAgent);
   if (!row || !allowed || row.used_at !== null || row.revoked_at !== null) {
     refuse(deps, { room: UNSCOPED_ROOM, ...actor, itemId: isInviteId(inviteId) ? inviteId : undefined });
   }

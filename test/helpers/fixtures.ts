@@ -1,7 +1,15 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { HEALTH_NUMBER_PATTERN, type AgentFixture, type FixturePack, type OwnerFixture } from "../../contract/index.js";
+import {
+  assertWakeWebhookUrl,
+  HEALTH_NUMBER_PATTERN,
+  type AgentFixture,
+  type FixturePack,
+  type OwnerFixture,
+} from "../../contract/index.js";
 import { openDatabase } from "../../src/db.js";
+import { registerAgentWebhook } from "../../src/wakeup/register.js";
+import { signingSecretFor } from "../../src/wakeup/secret.js";
 
 type Sqlite = ReturnType<typeof openDatabase>;
 
@@ -115,27 +123,41 @@ function assertPack(pack: FixturePack): void {
   }
 }
 
-/** Insert owners and agents. Rooms, posts, and tokens are left for later specs. */
+/**
+ * Insert owners and agents. Rooms, posts, and tokens are left for later specs.
+ * Fixture webhook URLs are http://127.0.0.1. Registration allows that only with the dev flag.
+ * The product default is off. This seeder turns the flag on for these rows.
+ */
 export function seedFixtures(db: Sqlite, pack: FixturePack): void {
   const owner = db.prepare(
     "INSERT INTO owners (id, email, display_name, role) VALUES (@id, @email, @displayName, @role)",
   );
   const agent = db.prepare(
     `INSERT INTO agents (id, owner_id, display_name, email, webhook_url, event_target)
-     VALUES (@id, @ownerId, @displayName, @email, @webhook, @eventTarget)`,
+     VALUES (@id, @ownerId, @displayName, @email, NULL, @eventTarget)`,
   );
   const insert = db.transaction(() => {
     for (const row of pack.owners) owner.run(row);
     for (const row of pack.agents) {
+      const webhook = row.wake.webhook;
+      if (webhook) assertWakeWebhookUrl(webhook, { allowInsecureLocalhost: true });
       agent.run({
         id: row.id,
         ownerId: row.ownerId,
         displayName: row.displayName,
         email: row.wake.email,
-        webhook: row.wake.webhook ?? null,
         eventTarget: row.wake.event?.target ?? null,
       });
     }
   });
   insert();
+  for (const row of pack.owners) signingSecretFor(db, "owner", row.id);
+  for (const row of pack.agents) {
+    const webhook = row.wake.webhook;
+    if (webhook) {
+      registerAgentWebhook(db, row.id, webhook, { allowInsecureLocalhost: true });
+    } else {
+      signingSecretFor(db, "agent", row.id);
+    }
+  }
 }

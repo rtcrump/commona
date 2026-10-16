@@ -13,6 +13,7 @@ import {
   WAKE_WEBHOOK_TIMEOUT_MS,
   WakeState,
   activityOnlyText,
+  wakeContentNotice,
   wakeEmailSubject,
   wakeFailedNoticeMessage,
 } from "../../contract/index.js";
@@ -116,7 +117,7 @@ describe("W2 retry and email fallback", () => {
     }
   });
 
-  it("skips webhook attempts when the agent has no webhook and emails the content", async () => {
+  it("skips webhook attempts when the agent has no webhook and emails a notice", async () => {
     const room = await setupRoom();
     try {
       const text = ".\nPlease file this under questions.";
@@ -132,7 +133,8 @@ describe("W2 retry and email fallback", () => {
       expect(room.mail.messages).toHaveLength(1);
       expect(room.mail.messages[0]?.from).toBe(WAKE_EMAIL_FROM);
       expect(room.mail.messages[0]?.headers.Subject).toBe(`Commona: new message in room ${ROOM_ID}`);
-      expect(room.mail.messages[0]?.body).toBe(text);
+      expect(room.mail.messages[0]?.body).toBe(wakeContentNotice(ROOM_ID, "message"));
+      expect(room.mail.messages[0]?.body).not.toContain(text);
       const audit = expectChain(room.db);
       expect(audit.map((row) => [row.action, row.result])).toEqual([
         [AuditAction.WakeFallbackEmail, AuditResult.FellBack],
@@ -144,7 +146,7 @@ describe("W2 retry and email fallback", () => {
     }
   });
 
-  it("emails a file description when webhook attempts are exhausted", async () => {
+  it("emails a file notice without the file body when webhook attempts are exhausted", async () => {
     const room = await setupRoom();
     try {
       const text = "The checklist is complete.";
@@ -154,9 +156,10 @@ describe("W2 retry and email fallback", () => {
       const event = room.service.enqueue(enqueueInput({ itemKind: "file", itemId: "file_1" }))[0];
       await room.service.deliver(event?.wakeId ?? "");
       expect(room.mail.messages[0]?.headers.Subject).toBe(`Commona: new file in room ${ROOM_ID}`);
+      expect(room.mail.messages[0]?.body).toBe(wakeContentNotice(ROOM_ID, "file"));
       expect(room.mail.messages[0]?.body).toBe(wakeEmailText(event!));
-      expect(room.mail.messages[0]?.body).toContain("notes.txt");
-      expect(room.mail.messages[0]?.body).toContain(text);
+      expect(room.mail.messages[0]?.body).not.toContain("notes.txt");
+      expect(room.mail.messages[0]?.body).not.toContain(text);
     } finally {
       await stopRoom(room);
     }

@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import {
+  allowInsecureLocalWebhook,
   systemClock,
   type AuditLog,
   type AuthPrincipal,
@@ -53,6 +54,8 @@ export function defaultRuntime(): Runtime {
     audit,
     notices,
     ...(smtp ? { smtp } : {}),
+    // Off unless COMMONA_ALLOW_INSECURE_WEBHOOKS=1. The harness sets that for loopback fixtures.
+    allowInsecureLocalhost: allowInsecureLocalWebhook(),
   });
   runtime = {
     db,

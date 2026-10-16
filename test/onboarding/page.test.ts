@@ -233,7 +233,7 @@ describe("join pages", () => {
 
     const revokedId = await createInvite(room);
     const revokedDelete = await call(room.baseUrl, "DELETE", `/rooms/${room.roomId}/invites/${revokedId}`, {
-      token: room.owner,
+      token: room.tokens.issueAgentToken("A1"),
     });
     expect(revokedDelete.status).toBe(200);
     const revoked = await openWelcome(room, revokedId);

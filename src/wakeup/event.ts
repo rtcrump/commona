@@ -5,6 +5,7 @@ import {
   WAKE_HEADER_ROOM_ID,
   WAKE_HEADER_WAKE_ID,
   activityOnlyText,
+  wakeContentNotice,
   wakeEmailSubject,
   type WakeEmail,
   type WakeEvent,
@@ -69,18 +70,13 @@ function wireContent(content: WakeMessageContent | WakeFileContent): WakeMessage
 
 /**
  * Body of a wake email.
- * Activity-only text is the contract string. The contract does not define the content body;
- * a message uses its text, and a file uses a one-line description plus textBody when present.
+ * Activity-only mail keeps the contract sentence. A content wake is a notice that names
+ * the room and the kind. The message text, file name, and file bytes are not copied in.
  */
 export function wakeEmailText(event: Pick<WakeEvent, "disclosure" | "roomId" | "content">): string {
   if (event.disclosure === "activity_only") return activityOnlyText(event.roomId);
-  if (event.content?.kind === "message") return event.content.text;
-  if (event.content?.kind === "file") {
-    const file = event.content;
-    const summary = `New file ${file.name} (${file.mediaType}, ${file.byteLength} bytes) in room ${event.roomId}.`;
-    return file.textBody === undefined ? summary : `${summary}\n\n${file.textBody}`;
-  }
-  return activityOnlyText(event.roomId);
+  const kind = event.content?.kind === "file" ? "file" : "message";
+  return wakeContentNotice(event.roomId, kind);
 }
 
 export function buildWakeEmail(event: WakeEvent, to: string): WakeEmail {

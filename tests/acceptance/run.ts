@@ -38,6 +38,9 @@ export async function runAcceptance(): Promise<number> {
     process.env.COMMONA_DB = database;
     process.env.COMMONA_SMTP_HOST = mail.host;
     process.env.COMMONA_SMTP_PORT = String(mail.port);
+    // Fixture webhooks are http://127.0.0.1. TLS is required unless this flag is set.
+    // The 19 test sentences are unchanged. This is the only adaptation for those URLs.
+    process.env.COMMONA_ALLOW_INSECURE_WEBHOOKS = "1";
 
     const { startTestServer } = await import("../../test/helpers/server.js");
     const server = await startTestServer();
