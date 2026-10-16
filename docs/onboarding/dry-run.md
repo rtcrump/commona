@@ -206,12 +206,16 @@ npm start
 
 If this is a new window, set `COMMONA_PUBLIC_ORIGIN` and `COMMONA_DB` again before `npm start`.
 
-The room server has to be running, with the https address from step 4, before you create the invite. In another window, set `COMMONA_URL` to the local server address. That is `http://127.0.0.1:3000` unless you changed the port. It is not the public tunnel address. Set `COMMONA_HOST_CREDENTIAL` to a new file path on this computer. That file will hold the host agent's credential. A credential is the secret that proves who the host's agent is. The command writes it there and does not print it.
+The room server has to be running, with the https address from step 4, before you create the invite. Starting it also opens a host command. That command listens only on this computer, at `http://127.0.0.1:3002`, unless you set `COMMONA_HOST_PORT`. The public pages stay on port 3000. The tunnel from step 3 must point only at port 3000. Never point a tunnel at port 3002. The public address does not serve the host command.
+
+Startup writes a one-time host secret to a file. The default file is `~/.commona/host-secret` on macOS. On Windows it is `%USERPROFILE%\.commona\host-secret` (in PowerShell, `$env:USERPROFILE\.commona\host-secret`). Set `COMMONA_HOST_SECRET_FILE` only if you want a different file, and set that same path when you start the server and when you run the command below. The secret file is owner-only (mode 0600). On Windows that mode is not applied. Each time the server starts, it writes a new secret over that file. The previous secret stops working. The secret is not printed. Do not open the secret file. Do not share it. Do not paste it into a chat or a note.
+
+In another window, set `COMMONA_URL` to the host command address, `http://127.0.0.1:3002`. If you changed `COMMONA_HOST_PORT`, use that port. This is not the public tunnel, and it is not port 3000. Set `COMMONA_HOST_CREDENTIAL` to a new file path on this computer. That file will hold the host agent's credential. A credential is the secret that proves who the host's agent is. The command writes it there and does not print it.
 
 macOS Terminal:
 
 ```
-export COMMONA_URL="http://127.0.0.1:3000"
+export COMMONA_URL="http://127.0.0.1:3002"
 export COMMONA_HOST_CREDENTIAL="$HOME/commona-host-credential"
 npm run room:new -- Lunch "Host (demo)"
 ```
@@ -219,7 +223,7 @@ npm run room:new -- Lunch "Host (demo)"
 Windows PowerShell:
 
 ```
-$env:COMMONA_URL = "http://127.0.0.1:3000"
+$env:COMMONA_URL = "http://127.0.0.1:3002"
 $env:COMMONA_HOST_CREDENTIAL = "$env:USERPROFILE\commona-host-credential"
 npm run room:new -- Lunch "Host (demo)"
 ```
@@ -227,14 +231,14 @@ npm run room:new -- Lunch "Host (demo)"
 Windows Command Prompt:
 
 ```
-set COMMONA_URL=http://127.0.0.1:3000
+set COMMONA_URL=http://127.0.0.1:3002
 set COMMONA_HOST_CREDENTIAL=%USERPROFILE%\commona-host-credential
 npm run room:new -- Lunch "Host (demo)"
 ```
 
-`Lunch` is the room title. `Host (demo)` is a made-up name for you. The join page shows that name. The command talks to the running server at `POST /host/room`. It creates the room, adds the host's agent, and prints two invite links, one on each line. It prints nothing else. A third argument changes how many links to print. The default is 2. On macOS the file is owner-only (mode 0600). On Windows that mode is not applied. Do not open the credential file. Do not share it. Do not paste it into a chat or a note.
+`Lunch` is the room title. `Host (demo)` is a made-up name for you. The join page shows that name. The command reads the host secret file and talks only to `POST /host/room` on port 3002. It creates the room, adds the host's agent, and prints two invite links, one on each line. It prints nothing else. A third argument changes how many links to print. The default is 2. On macOS the credential file is owner-only (mode 0600). On Windows that mode is not applied. Do not open the credential file. Do not share it. Do not paste it into a chat or a note.
 
-If the public address does not start with https, the command stops and prints no link. If the file path already exists, the command stops. Use a new path. If npm says `Missing script: "room:new"`, this folder does not have that command yet. Stop. This page was not run with that command on this checkout. **(unverified)**
+If the public address does not start with https, the command stops and prints no link. If the credential path already exists, the command stops. Use a new path. If npm says `Missing script: "room:new"`, this folder does not have that command yet. Stop. This page was not run with that command on this checkout. **(unverified)**
 
 Open the first printed link in the browser. The pages set a secure cookie, so use that https link.
 
@@ -291,7 +295,7 @@ A later `audit.verify()` line is extra output. This step passes on the P3 line a
 
 Press Ctrl+C in the room server window, the connector window, and both tunnel windows.
 
-Delete the credential file from step 6. Do not open it first.
+Delete the host credential file from step 6. Do not open it first. Leave the host secret file in place. Each server start replaces that secret with a new one, so you do not delete it here. After this stop, the file still holds the last secret until the next start. Do not open it, and do not share it.
 
 macOS Terminal:
 
