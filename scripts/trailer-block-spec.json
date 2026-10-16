@@ -35,11 +35,11 @@
     },
     {
       "name": "later Co-authored-by paragraph",
-      "message": "ci(ci): check\n\nAuthored-by-agent: grok/grok-build\nModel: grok-build\n\nCo-authored-by: Trafford Crump <rtcrump@users.noreply.github.com>\n",
+      "message": "ci(ci): check\n\nAuthored-by-agent: grok/grok-build\nModel: grok-build\n\nCo-authored-by: Nim Quill <nim@example.test>\n",
       "trailers": [
         ["Authored-by-agent", "grok/grok-build"],
         ["Model", "grok-build"],
-        ["Co-authored-by", "Trafford Crump <rtcrump@users.noreply.github.com>"]
+        ["Co-authored-by", "Nim Quill <nim@example.test>"]
       ]
     },
     {

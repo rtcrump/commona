@@ -11,3 +11,4 @@ coverage/
 m1-report.md
 m1-report.json
 *.tsbuildinfo
+test-artifacts/
