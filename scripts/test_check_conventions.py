@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Self-tests for check_conventions.py: must-pass and must-fail cases, plus a real throwaway git repo."""
-import os, subprocess, sys, tempfile, unittest
+import json, os, subprocess, sys, tempfile, unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import check_conventions as cc
 
@@ -27,6 +27,42 @@ class Commits(unittest.TestCase):
     def test_pass_main(self): self.ok(msg("feat(room): join auth", AG, MAIN), mode="main")
     def test_pass_qa_fail_on_branch(self): self.ok(msg("fix(nameblock): p5", AG, "QA: chatgpt round 1 fail"))
     def test_merge_commit_skipped(self): self.ok("Merge pull request #3 from x/y\n\nwhatever")
+    def test_pass_grok_agent(self): self.ok(msg("feat(room): x", "Authored-by-agent: grok/grok-build\nModel: grok-build"))
+    def test_docs_components_match_checker(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.join(root, "docs", "conventions.md")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        prefix = "- component: `"
+        line = next(item for item in text.splitlines() if item.startswith(prefix))
+        documented = set(line[len(prefix):-1].split())
+        self.assertEqual(documented, set(cc.COMPONENTS.split("|")))
+
+    def test_trailer_block_spec(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trailer-block-spec.json")
+        with open(path) as f:
+            spec = json.load(f)
+        for case in spec["cases"]:
+            parsed, _bad = cc.trailers(case["message"])
+            self.assertEqual(parsed, [tuple(pair) for pair in case["trailers"]], case["name"])
+
+    def test_pass_cursor_commona_build(self):
+        self.ok(msg("ci(ci): check the build", "Authored-by-agent: cursor/commona-build\nModel: cursor"))
+    def test_pass_split_trailer_block(self):
+        # Exact message of 70da75f: a blank line splits the two trailers.
+        self.ok("fix(ci): quote claude review json schema\n\nAuthored-by-agent: cursor/commona-cos\n\nModel: grok-bot")
+    def test_pass_pr10_b10a681(self):
+        self.ok(
+            "docs(readme): write a warmer, fuller welcome\n\n"
+            "Rewrite the milestone 1 page in a warmer voice. Keep the one-link join marked as coming at launch, "
+            "describe today's setup without naming a product, and tie each behavior to the tests.\n\n"
+            "Authored-by-agent: grok/grok-build\n"
+            "Model: grok-build"
+        )
+    def test_pass_pr10_1bc3fe9(self):
+        self.ok("docs(readme): add commona icon to header\n\nAuthored-by-agent: grok/grok-build\nModel: grok-build")
+    def test_pass_demo_component(self):
+        self.ok(msg("feat(demo): show the room", "Authored-by-agent: grok/grok-build\nModel: grok-build"))
 
     # must fail
     def test_fail_no_trailer(self): self.bad(msg("feat(room): x"), "missing authorship")
@@ -36,6 +72,8 @@ class Commits(unittest.TestCase):
     def test_fail_long_subject(self): self.bad(msg("feat(room): " + "x" * 70, AG), "longer than 72")
     def test_fail_agent_no_model(self): self.bad(msg("feat(room): x", "Authored-by-agent: cursor/bc-1"), "requires a Model")
     def test_fail_bad_agent_value(self): self.bad(msg("feat(room): x", "Authored-by-agent: me\nModel: m"), "bad Authored-by-agent")
+    def test_fail_unknown_agent(self):
+        self.bad(msg("ci(ci): check the build", "Authored-by-agent: unknown/not-a-build\nModel: unknown"), "bad Authored-by-agent")
     def test_fail_both(self): self.bad(msg("feat(room): x", AG, "Authored-by: human/trafford"), "both")
     def test_fail_human_bad_value(self): self.bad(msg("feat(room): x", "Authored-by: trafford"), "want human/", email="t@example.test")
     def test_fail_bot_as_human(self): self.bad(msg("feat(room): x", "Authored-by: human/trafford"), "bot identity")
@@ -48,6 +86,12 @@ class Commits(unittest.TestCase):
     def test_fail_main_qa_fail(self): self.bad(msg("feat(room): x", AG, "QA: chatgpt round 3 fail\nApproved-by: trafford"), "needs 'QA", mode="main")
     def test_fail_main_no_approval(self): self.bad(msg("feat(room): x", AG, "QA: chatgpt round 1 pass"), "Approved-by: trafford", mode="main")
     def test_fail_malformed_line(self): self.bad(msg("feat(room): x", AG + "\nnot a trailer"), "malformed")
+    def test_fail_body_between_trailers(self):
+        self.bad(
+            "feat(room): x\n\nAuthored-by-agent: cursor/bc-1234\n\n"
+            "A body paragraph of prose sits between the trailers.\n\nModel: x",
+            "missing authorship",
+        )
 
 class Labels(unittest.TestCase):
     def errs(self, labels, files=(), human=0, mode="pr"):
@@ -56,6 +100,10 @@ class Labels(unittest.TestCase):
     def test_pass_critical(self): self.assertEqual(self.errs("agent:cursor,critical-core", ["src/audit/log.ts"]), [])
     def test_pass_human(self): self.assertEqual(self.errs("agent:cursor,human-edit", human=1), [])
     def test_pass_merge(self): self.assertEqual(self.errs("agent:cursor,qa-round-2,agent:chatgpt-qa", mode="merge"), [])
+    def test_pass_grok_label(self): self.assertEqual(self.errs("agent:grok-build"), [])
+    def test_fail_grok_and_cursor(self):
+        self.assertTrue(self.errs("agent:grok-build,agent:cursor"))
+        self.assertTrue(self.errs("agent:grok-build,agent:community"))
     def test_fail_no_author(self): self.assertTrue(self.errs("critical-core"))
     def test_fail_both_agents(self): self.assertTrue(self.errs("agent:cursor,agent:community"))
     def test_fail_missing_human_edit(self): self.assertTrue(self.errs("agent:cursor", human=1))
