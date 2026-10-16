@@ -53,7 +53,10 @@ describe("join pages", () => {
     expect(continued.status).toBe(303);
     expect(locationPath(continued.location)).toBe(`/j/${id}/sharing`);
 
-    const sharing = await call(room.baseUrl, "GET", `/j/${id}/sharing`, { accept: "text/html" });
+    const sharing = await call(room.baseUrl, "GET", `/j/${id}/sharing`, {
+      accept: "text/html",
+      cookie: `commona_invite=${invite}`,
+    });
     expect(sharing.status).toBe(200);
     expect(sharing.body).toContain("Safest");
     expect(sharing.body).toContain('value="Nothing" checked');
@@ -127,11 +130,14 @@ describe("join pages", () => {
     const invite = cookieValue(welcome.setCookies, "commona_invite");
     const welcomeNonce = cookieValue(welcome.setCookies, "commona_form");
     const continued = await call(room.baseUrl, "POST", `/j/${id}/continue`, {
-      cookie: `commona_form=${welcomeNonce}`,
+      cookie: `commona_invite=${invite}; commona_form=${welcomeNonce}`,
       form: { nonce: welcomeNonce, firstName: "Alex" },
     });
     expect(continued.status).toBe(303);
-    const sharing = await call(room.baseUrl, "GET", `/j/${id}/sharing`, { accept: "text/html" });
+    const sharing = await call(room.baseUrl, "GET", `/j/${id}/sharing`, {
+      accept: "text/html",
+      cookie: `commona_invite=${invite}`,
+    });
     const shareNonce = cookieValue(sharing.setCookies, "commona_form");
     const finished = await call(room.baseUrl, "POST", `/j/${id}/finish`, {
       cookie: `commona_invite=${invite}; commona_form=${shareNonce}`,
@@ -150,10 +156,13 @@ describe("join pages", () => {
     const invite = cookieValue(welcome.setCookies, "commona_invite");
     const welcomeNonce = cookieValue(welcome.setCookies, "commona_form");
     await call(room.baseUrl, "POST", `/j/${id}/continue`, {
-      cookie: `commona_form=${welcomeNonce}`,
+      cookie: `commona_invite=${invite}; commona_form=${welcomeNonce}`,
       form: { nonce: welcomeNonce, firstName: "Blair" },
     });
-    const sharing = await call(room.baseUrl, "GET", `/j/${id}/sharing`, { accept: "text/html" });
+    const sharing = await call(room.baseUrl, "GET", `/j/${id}/sharing`, {
+      accept: "text/html",
+      cookie: `commona_invite=${invite}`,
+    });
     const shareNonce = cookieValue(sharing.setCookies, "commona_form");
     const finished = await call(room.baseUrl, "POST", `/j/${id}/finish`, {
       cookie: `commona_invite=${invite}; commona_form=${shareNonce}`,
@@ -170,10 +179,13 @@ describe("join pages", () => {
     const filesInvite = cookieValue(filesWelcome.setCookies, "commona_invite");
     const filesNonce = cookieValue(filesWelcome.setCookies, "commona_form");
     await call(room.baseUrl, "POST", `/j/${filesId}/continue`, {
-      cookie: `commona_form=${filesNonce}`,
+      cookie: `commona_invite=${filesInvite}; commona_form=${filesNonce}`,
       form: { nonce: filesNonce, firstName: "Casey" },
     });
-    const filesSharing = await call(room.baseUrl, "GET", `/j/${filesId}/sharing`, { accept: "text/html" });
+    const filesSharing = await call(room.baseUrl, "GET", `/j/${filesId}/sharing`, {
+      accept: "text/html",
+      cookie: `commona_invite=${filesInvite}`,
+    });
     const filesShareNonce = cookieValue(filesSharing.setCookies, "commona_form");
     const filesFinished = await call(room.baseUrl, "POST", `/j/${filesId}/finish`, {
       cookie: `commona_invite=${filesInvite}; commona_form=${filesShareNonce}`,

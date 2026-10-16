@@ -35,6 +35,7 @@ const NAME_RE = /^[\p{L}][\p{L} '-]{0,39}$/u;
 const LOCATION_RE =
   /^\/j\/inv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/(sharing|done))?$/;
 
+/** Pending first name, keyed by invite id and the invite secret hash. */
 const firstNames = new Map<string, string>();
 
 interface JoinedMark {
@@ -113,6 +114,52 @@ function readFirstName(value: string | undefined): string | null {
   return name;
 }
 
+function pendingKey(inviteId: string, secretHash: string): string {
+  return `${inviteId}:${secretHash}`;
+}
+
+/** The invite secret hash when this browser still holds the one-time invite cookie. */
+function matchingInviteHash(
+  deps: RoomDeps,
+  inviteId: string,
+  cookieHeader: string | string[] | undefined,
+): string | null {
+  const secret = readCookie(cookieHeader, INVITE_COOKIE);
+  if (!secret) return null;
+  const row = deps.db.prepare("SELECT secret_hash FROM invites WHERE id = ?").get(inviteId) as
+    | { secret_hash: string }
+    | undefined;
+  if (!row) return null;
+  const got = Buffer.from(hashToken(secret));
+  const expected = Buffer.from(row.secret_hash);
+  if (got.length === 0 || got.length !== expected.length) return null;
+  return timingSafeEqual(got, expected) ? row.secret_hash : null;
+}
+
+function displayNameAllowed(deps: RoomDeps, name: string): boolean {
+  return deps.guard.check({ kind: "message", text: name }).outcome === "allow";
+}
+
+function welcomeAgain(
+  deps: RoomDeps,
+  inviteId: string,
+  view: InviteView,
+  note: string,
+): JoinResult {
+  const { nonce, cookie } = issueNonce(cookieMaxAge(deps, inviteId));
+  return page(
+    400,
+    renderWelcome({
+      inviter: view.inviter,
+      room: view.roomTitle,
+      action: `${pathFor(inviteId)}/continue`,
+      nonce,
+      note,
+    }),
+    [cookie],
+  );
+}
+
 function seeingFromForm(value: string | undefined): SharingLevelName {
   if (value === "Messages") return SharingLevel.Messages;
   if (value === "Messages and files") return SharingLevel.MessagesFiles;
@@ -164,30 +211,25 @@ export function submitName(
   if (view.status !== "open") return errorPage(view);
   const fields = formFields(body);
   if (!csrfOk(cookieHeader, fields.nonce)) return stalePage();
+  const secretHash = matchingInviteHash(deps, inviteId, cookieHeader);
+  if (!secretHash) return stalePage();
   const name = readFirstName(fields.firstName);
-  const maxAge = cookieMaxAge(deps, inviteId);
-  if (!name) {
-    const { nonce, cookie } = issueNonce(maxAge);
-    return page(
-      400,
-      renderWelcome({
-        inviter: view.inviter,
-        room: view.roomTitle,
-        action: `${pathFor(inviteId)}/continue`,
-        nonce,
-        note: NAME_NOTE,
-      }),
-      [cookie],
-    );
-  }
-  firstNames.set(inviteId, name);
+  if (!name || !displayNameAllowed(deps, name)) return welcomeAgain(deps, inviteId, view, NAME_NOTE);
+  firstNames.set(pendingKey(inviteId, secretHash), name);
   return redirect(pathFor(inviteId, "/sharing"), [], []);
 }
 
-export function openSharing(deps: RoomDeps, inviteId: string): JoinResult {
+export function openSharing(
+  deps: RoomDeps,
+  inviteId: string,
+  cookieHeader: string | string[] | undefined,
+): JoinResult {
   const view = describeInvite(deps, inviteId);
   if (view.status !== "open") return errorPage(view);
-  if (!firstNames.has(inviteId)) return redirect(pathFor(inviteId), [], []);
+  const secretHash = matchingInviteHash(deps, inviteId, cookieHeader);
+  if (!secretHash || !firstNames.has(pendingKey(inviteId, secretHash))) {
+    return redirect(pathFor(inviteId), [], []);
+  }
   const { nonce, cookie } = issueNonce(cookieMaxAge(deps, inviteId));
   return page(200, renderSharing({ action: `${pathFor(inviteId)}/finish`, nonce }), [cookie]);
 }
@@ -227,9 +269,14 @@ export function submitSharing(
   if (view.status !== "open") return errorPage(view);
   const fields = formFields(body);
   if (!csrfOk(cookieHeader, fields.nonce)) return stalePage();
-  const name = firstNames.get(inviteId);
-  if (!name) {
+  const secretHash = matchingInviteHash(deps, inviteId, cookieHeader);
+  const name = secretHash ? firstNames.get(pendingKey(inviteId, secretHash)) : undefined;
+  if (!secretHash || !name) {
     return page(400, renderError(STALE));
+  }
+  if (!displayNameAllowed(deps, name)) {
+    firstNames.delete(pendingKey(inviteId, secretHash));
+    return page(400, renderError(NAME_NOTE));
   }
   const secret = readCookie(cookieHeader, INVITE_COOKIE);
   let redeemed;
@@ -243,7 +290,7 @@ export function submitSharing(
   }
   deps.db.prepare("UPDATE owners SET display_name = ? WHERE id = ?").run(name, redeemed.owner.id);
   grantSeeing(deps, redeemed.member.roomId, redeemed.owner.id, seeingFromForm(fields.seeing));
-  firstNames.delete(inviteId);
+  firstNames.delete(pendingKey(inviteId, secretHash));
   if (!/^[A-Za-z0-9_-]+$/.test(redeemed.sessionToken)) throw new Error("refusing to send a secret");
   const marker = rememberJoined(inviteId, redeemed.owner.id);
   const secrets = [redeemed.sessionToken, hashToken(redeemed.sessionToken), marker, secret ?? ""].filter(

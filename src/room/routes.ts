@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { HTTP_STATUS, readBearerToken, type AuthPrincipal } from "../../contract/index.js";
+import { readCookie, SESSION_COOKIE } from "../join/cookies.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
 import { addMember, createRoom } from "./membership.js";
@@ -59,7 +60,7 @@ export function registerRoomRoutes(app: FastifyInstance, deps: RoomDeps): void {
   });
 
   app.get<{ Params: { roomId: string } }>("/rooms/:roomId/held", async (request, reply) => {
-    const principal = requirePrincipal(deps, request.headers.authorization);
+    const principal = heldPrincipal(deps, request.headers.authorization, request.headers.cookie);
     const held = readHeld(deps, principal, request.params.roomId);
     return reply.code(HTTP_STATUS.ok).send(held);
   });
@@ -70,6 +71,29 @@ function requirePrincipal(deps: RoomDeps, authorization: string | string[] | und
   const token = readBearerToken(header);
   if (!token) throw RoomHttpError.unauthorized();
   const principal = deps.tokens.authenticate(token);
+  if (!principal) throw RoomHttpError.unauthorized();
+  return principal;
+}
+
+/**
+ * Bearer token when one is sent. Otherwise the browser session cookie.
+ * A known owner from either one is refused by readHeld. A missing or unknown value is 401.
+ */
+function heldPrincipal(
+  deps: RoomDeps,
+  authorization: string | string[] | undefined,
+  cookie: string | string[] | undefined,
+): AuthPrincipal {
+  const header = Array.isArray(authorization) ? authorization[0] : authorization;
+  const bearer = readBearerToken(header);
+  if (bearer) {
+    const principal = deps.tokens.authenticate(bearer);
+    if (!principal) throw RoomHttpError.unauthorized();
+    return principal;
+  }
+  const session = readCookie(cookie, SESSION_COOKIE);
+  if (!session) throw RoomHttpError.unauthorized();
+  const principal = deps.tokens.authenticate(session);
   if (!principal) throw RoomHttpError.unauthorized();
   return principal;
 }

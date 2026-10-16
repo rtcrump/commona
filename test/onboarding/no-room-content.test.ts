@@ -36,12 +36,15 @@ describe("join pages show no room content", () => {
     const invite = cookieValue(welcome.setCookies, "commona_invite");
     const welcomeNonce = cookieValue(welcome.setCookies, "commona_form");
     const continued = await call(room.baseUrl, "POST", `/j/${welcomeId}/continue`, {
-      cookie: `commona_form=${welcomeNonce}`,
+      cookie: `commona_invite=${invite}; commona_form=${welcomeNonce}`,
       form: { nonce: welcomeNonce, firstName: "Alex" },
     });
     pages.push(continued.body, continued.location ?? "");
 
-    const sharing = await call(room.baseUrl, "GET", `/j/${welcomeId}/sharing`, { accept: "text/html" });
+    const sharing = await call(room.baseUrl, "GET", `/j/${welcomeId}/sharing`, {
+      accept: "text/html",
+      cookie: `commona_invite=${invite}`,
+    });
     expect(sharing.status).toBe(200);
     pages.push(sharing.body);
 
