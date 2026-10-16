@@ -53,7 +53,7 @@ describe("lunch demo", () => {
 
     expect(demo.owners).toHaveLength(3);
     expect(demo.agreed).toEqual({ day: "Wed", time: "12:30", place: "North Cafe" });
-    const expected = overlap([PROPOSALS.trafford, PROPOSALS.ava, PROPOSALS.ben]);
+    const expected = overlap([PROPOSALS.orla, PROPOSALS.pim, PROPOSALS.tavi]);
     expect(expected).toHaveLength(1);
     expect(demo.agreed && slotText(demo.agreed)).toBe(slotText(expected[0]!));
 
@@ -89,7 +89,7 @@ describe("lunch demo", () => {
       owner_id: string;
     }[];
     expect(new Set(members.map((row) => row.owner_id)).size).toBe(3);
-    const friendIds = demo.owners.filter((owner) => owner.key !== "trafford").map((owner) => owner.ownerId);
+    const friendIds = demo.owners.filter((owner) => owner.key !== "orla").map((owner) => owner.ownerId);
     const levels = demo.db
       .prepare("SELECT from_owner_id, to_owner_id, level FROM sharing WHERE room_id = ?")
       .all(demo.roomId) as { from_owner_id: string; to_owner_id: string; level: string }[];

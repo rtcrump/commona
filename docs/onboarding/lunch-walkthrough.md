@@ -1,6 +1,6 @@
 # Lunch walkthrough
 
-This is the real test, for a person to run later with Trafford and two friends. The rehearsal on this computer is `npm run demo:lunch`. That rehearsal uses the fake owners Trafford (demo), Ava (demo), and Ben (demo). It is not the real test.
+This is the real test, for a person to run later with Trafford and two friends. The rehearsal on this computer is `npm run demo:lunch`. That rehearsal uses the fake owners Orla (demo), Pim (demo), and Tavi (demo). It is not the real test.
 
 The assistants agree a lunch. Each person hears the day, the time, and the place from their own assistant. The Commona pages stay on join and connect.
 

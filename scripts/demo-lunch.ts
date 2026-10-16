@@ -35,26 +35,26 @@ export interface LunchSlot {
 }
 
 export const DEMO_OWNERS = [
-  { key: "trafford", name: "Trafford (demo)", firstName: "Trafford" },
-  { key: "ava", name: "Ava (demo)", firstName: "Ava" },
-  { key: "ben", name: "Ben (demo)", firstName: "Ben" },
+  { key: "orla", name: "Orla (demo)", firstName: "Orla" },
+  { key: "pim", name: "Pim (demo)", firstName: "Pim" },
+  { key: "tavi", name: "Tavi (demo)", firstName: "Tavi" },
 ] as const;
 
 export type DemoOwnerKey = (typeof DEMO_OWNERS)[number]["key"];
 
 /** Fixed proposals. Exactly one slot is in all three lists. */
 export const PROPOSALS: Record<DemoOwnerKey, readonly LunchSlot[]> = {
-  trafford: [
+  orla: [
     { day: "Tue", time: "12:00", place: LUNCH_PLACE },
     { day: "Wed", time: "12:30", place: LUNCH_PLACE },
     { day: "Thu", time: "13:00", place: LUNCH_PLACE },
   ],
-  ava: [
+  pim: [
     { day: "Wed", time: "12:30", place: LUNCH_PLACE },
     { day: "Fri", time: "12:00", place: LUNCH_PLACE },
     { day: "Sat", time: "13:00", place: LUNCH_PLACE },
   ],
-  ben: [
+  tavi: [
     { day: "Mon", time: "11:30", place: LUNCH_PLACE },
     { day: "Wed", time: "12:30", place: LUNCH_PLACE },
     { day: "Sun", time: "12:00", place: LUNCH_PLACE },
@@ -272,7 +272,7 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
   const serverLines: string[] = [];
   const secrets: string[] = [];
   const owners: DemoOwner[] = [];
-  const connectorText: Record<DemoOwnerKey, string> = { trafford: "", ava: "", ben: "" };
+  const connectorText: Record<DemoOwnerKey, string> = { orla: "", pim: "", tavi: "" };
   let agreed: LunchSlot | null = null;
   let roomId = "";
   let failed = "";
@@ -369,51 +369,51 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
     if (address === null || typeof address === "string") throw new DemoError("bind");
     const baseUrl = `http://127.0.0.1:${address.port}`;
 
-    let traffordToken = "";
-    let trafford: DemoOwner | undefined;
+    let orlaToken = "";
+    let orla: DemoOwner | undefined;
 
     await run("create-room", async () => {
       const account = openAccount(db, tokens);
       secrets.push(account.sessionToken);
-      traffordToken = account.sessionToken;
-      db.prepare("UPDATE owners SET display_name = ? WHERE id = ?").run("Trafford (demo)", account.ownerId);
-      const created = await request(baseUrl, "POST", "/rooms", { token: traffordToken, json: {} });
+      orlaToken = account.sessionToken;
+      db.prepare("UPDATE owners SET display_name = ? WHERE id = ?").run("Orla (demo)", account.ownerId);
+      const created = await request(baseUrl, "POST", "/rooms", { token: orlaToken, json: {} });
       if (created.status !== 201) throw new DemoError("create-room");
       roomId = (JSON.parse(created.body) as { room: { id: string } }).room.id;
       db.prepare("INSERT INTO room_titles (room_id, title) VALUES (?, ?)").run(roomId, "Lunch");
       const joined = await request(baseUrl, "POST", `/rooms/${roomId}/members`, {
-        token: traffordToken,
+        token: orlaToken,
         json: { agentId: account.agentId },
       });
       if (joined.status !== 201 && joined.status !== 200) throw new DemoError("create-room");
-      trafford = { key: "trafford", name: "Trafford (demo)", ownerId: account.ownerId, agentId: account.agentId };
-      owners.push(trafford);
-      transcript("owner Trafford (demo) created room Lunch");
+      orla = { key: "orla", name: "Orla (demo)", ownerId: account.ownerId, agentId: account.agentId };
+      owners.push(orla);
+      transcript("owner Orla (demo) created room Lunch");
     });
 
     const inviteIds: string[] = [];
     await run("invite-links", async () => {
-      if (!traffordToken || !roomId) throw new DemoError("invite-links");
+      if (!orlaToken || !roomId) throw new DemoError("invite-links");
       for (let n = 0; n < 2; n += 1) {
-        const created = await request(baseUrl, "POST", `/rooms/${roomId}/invites`, { token: traffordToken, json: {} });
+        const created = await request(baseUrl, "POST", `/rooms/${roomId}/invites`, { token: orlaToken, json: {} });
         if (created.status !== 201) throw new DemoError("invite-links");
         const id = (JSON.parse(created.body) as { invite: { id: string; link: string } }).invite.id;
         inviteIds.push(id);
       }
       if (inviteIds.length !== 2) throw new DemoError("invite-links");
-      transcript("owner Trafford (demo) created 2 invite links");
+      transcript("owner Orla (demo) created 2 invite links");
     });
 
     const friendTokens = new Map<DemoOwnerKey, string>();
     const friendJars = new Map<DemoOwnerKey, Map<string, string>>();
 
-    const joinFriend = async (key: "ava" | "ben", inviteId: string) => {
+    const joinFriend = async (key: "pim" | "tavi", inviteId: string) => {
       const spec = DEMO_OWNERS.find((owner) => owner.key === key);
       if (!spec) throw new DemoError("join");
       const jar = new Map<string, string>();
       const welcome = await request(baseUrl, "GET", `/j/${inviteId}`, { accept: "text/html" });
       if (welcome.status !== 200) throw new DemoError("join");
-      if (!welcome.body.includes("Lunch") || !welcome.body.includes("Trafford (demo)")) throw new DemoError("join");
+      if (!welcome.body.includes("Lunch") || !welcome.body.includes("Orla (demo)")) throw new DemoError("join");
       absorb(jar, welcome.setCookies);
       const welcomeNonce = nonceOf(welcome.body);
       const named = await request(baseUrl, "POST", `/j/${inviteId}/continue`, {
@@ -454,32 +454,32 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
       transcript(`owner ${spec.name} joined and chose Messages`);
     };
 
-    await run("join-ava", async () => {
+    await run("join-pim", async () => {
       const id = inviteIds[0];
-      if (!id) throw new DemoError("join-ava");
-      await joinFriend("ava", id);
+      if (!id) throw new DemoError("join-pim");
+      await joinFriend("pim", id);
     });
-    await run("join-ben", async () => {
+    await run("join-tavi", async () => {
       const id = inviteIds[1];
-      if (!id) throw new DemoError("join-ben");
-      await joinFriend("ben", id);
+      if (!id) throw new DemoError("join-tavi");
+      await joinFriend("tavi", id);
     });
 
     await run("sharing", async () => {
       const byKey = new Map(owners.map((owner) => [owner.key, owner]));
       const pairs: Array<[DemoOwnerKey, DemoOwnerKey]> = [
-        ["trafford", "ava"],
-        ["trafford", "ben"],
-        ["ava", "trafford"],
-        ["ava", "ben"],
-        ["ben", "trafford"],
-        ["ben", "ava"],
+        ["orla", "pim"],
+        ["orla", "tavi"],
+        ["pim", "orla"],
+        ["pim", "tavi"],
+        ["tavi", "orla"],
+        ["tavi", "pim"],
       ];
       for (const [fromKey, toKey] of pairs) {
         const from = byKey.get(fromKey);
         const to = byKey.get(toKey);
         if (!from || !to) throw new DemoError("sharing");
-        const token = fromKey === "trafford" ? traffordToken : friendTokens.get(fromKey);
+        const token = fromKey === "orla" ? orlaToken : friendTokens.get(fromKey);
         if (!token) throw new DemoError("sharing");
         const updated = await request(baseUrl, "PUT", `/rooms/${roomId}/sharing`, {
           token,
@@ -500,7 +500,7 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
       const mcp = await startMcpHttp({ config: { baseUrl, wakePollMs: 20, wakeSpool: spool } });
       mcps.push(mcp);
       let handoffUrl = "";
-      if (key === "trafford") {
+      if (key === "orla") {
         const issued = issueConnectLink(
           { db, clock, tokens },
           owner.ownerId,
@@ -515,7 +515,7 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
         const previous = process.env.COMMONA_CONNECT_URL;
         process.env.COMMONA_CONNECT_URL = mcp.url;
         try {
-          const inviteId = key === "ava" ? inviteIds[0] : inviteIds[1];
+          const inviteId = key === "pim" ? inviteIds[0] : inviteIds[1];
           if (!inviteId) throw new DemoError("connect");
           const jar = friendJars.get(key);
           if (!jar?.get("commona_session") || !jar.get("commona_joined")) throw new DemoError("connect");
@@ -547,18 +547,18 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
       transcript(`agent connected for ${owner.name}`);
     };
 
-    await run("connect-trafford", async () => {
-      await connectOwner("trafford", newId("inv"));
+    await run("connect-orla", async () => {
+      await connectOwner("orla", newId("inv"));
     });
-    await run("connect-ava", async () => {
+    await run("connect-pim", async () => {
       const id = inviteIds[0];
-      if (!id) throw new DemoError("connect-ava");
-      await connectOwner("ava", id);
+      if (!id) throw new DemoError("connect-pim");
+      await connectOwner("pim", id);
     });
-    await run("connect-ben", async () => {
+    await run("connect-tavi", async () => {
       const id = inviteIds[1];
-      if (!id) throw new DemoError("connect-ben");
-      await connectOwner("ben", id);
+      if (!id) throw new DemoError("connect-tavi");
+      await connectOwner("tavi", id);
     });
 
     const agentOf = (key: DemoOwnerKey): LiveAgent => {
@@ -595,7 +595,7 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
     };
 
     await run("propose", async () => {
-      const order: DemoOwnerKey[] = ["trafford", "ava", "ben"];
+      const order: DemoOwnerKey[] = ["orla", "pim", "tavi"];
       for (const key of order) {
         const posted = await postMessage(key, proposalText(PROPOSALS[key]));
         const author = owners.find((owner) => owner.key === key);
@@ -608,8 +608,8 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
     });
 
     await run("agree", async () => {
-      const ben = agentOf("ben");
-      const feed = await callTool(ben.session, "commona_read_feed", {});
+      const tavi = agentOf("tavi");
+      const feed = await callTool(tavi.session, "commona_read_feed", {});
       const proposals = [...feed.matchAll(/proposal [^\n"]+/g)].map((match) => match[0] ?? "");
       const lists = proposals.map((line) => proposalSlots(line));
       if (lists.length < 3) throw new DemoError("agree");
@@ -618,10 +618,10 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
       const slot = common[0];
       if (!slot) throw new DemoError("agree");
       agreed = slot;
-      const posted = await postMessage("ben", agreementText(slot));
+      const posted = await postMessage("tavi", agreementText(slot));
       if (posted.round > 3) throw new DemoError("round");
       for (const other of owners) {
-        if (other.key === "ben") continue;
+        if (other.key === "tavi") continue;
         await waitForWakeRow(other.ownerId, posted.id);
       }
     });
@@ -635,7 +635,7 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
         const seen = agent.session.texts.join("\n");
         connectorText[agent.key] = seen;
         if (!feed.includes(expected)) throw new DemoError("deliver");
-        if (agent.key === "ben") {
+        if (agent.key === "tavi") {
           if (!seen.includes(expected)) throw new DemoError("deliver");
         } else if (!taken.includes(expected)) {
           const deadline = Date.now() + 3000;
