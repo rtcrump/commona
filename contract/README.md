@@ -11,7 +11,7 @@ Shared types for six implementations that can land separately and still fit toge
 | Audit log | `src/audit/` | `AuditLog` |
 | Acceptance harness | `tests/acceptance/` | The 19 tests via `npm run m1` |
 
-`src/nameblock/` re-exports `src/guard/`. Put the name-block code in `src/guard/` so the conventions check treats it as critical core. `src/db.ts` only opens SQLite, applies `SCHEMA_SQL`, and adds the signing-secret columns when an older file does not have them.
+`src/nameblock/` re-exports `src/guard/`. Put the name-block code in `src/guard/` so the conventions check treats it as critical core. `src/db.ts` only opens SQLite and applies `SCHEMA_SQL`.
 
 `GET /health` is the only route this foundation implements. Every other route below is the shape later pull requests fill in.
 
@@ -61,7 +61,7 @@ Webhook: `POST` the `WakeEvent` JSON. The URL must be `https`. Plain `http` is r
 
 Headers: `X-Commona-Event: commona.wake`, `X-Commona-Wake-Id`, `X-Commona-Room-Id`, `X-Commona-Timestamp` (decimal unix seconds), and `X-Commona-Signature: v1=` plus hex `HMAC-SHA256(secret, timestamp + '.' + rawBody)`. Timeout 5 seconds. Any `2xx` succeeds. Otherwise retry after 2s, 8s, and 20s (four attempts), then email.
 
-The signature key is the recipient agent's webhook signing secret. Each owner and each agent has one, generated on the server. HMAC needs the raw key, so the database stores the secret itself. A hash cannot sign. The secret is not written to a log, an audit row, or an HTTP response. `revealWebhookSigningSecret` returns it once, the same one-time handoff as an agent token on first join, and later calls return null. The row is kept so the server can keep signing. A file created before those columns existed receives them on open. An existing row starts with a null secret and `webhook_secret_revealed` 0.
+The signature key is the recipient agent's webhook signing secret. Each owner and each agent has one, generated on the server. HMAC needs the raw key, so the database stores the secret itself. A hash cannot sign. The secret is not written to a log, an audit row, or an HTTP response. `revealWebhookSigningSecret` returns it once, the same one-time handoff as an agent token on first join, and later calls return null. The row is kept so the server can keep signing.
 
 `verifyWakeSignature` checks a delivery. The compare is constant time, and a timestamp more than five minutes away is rejected. PR #11's listener (`src/listener/server.ts`, `readEvent`) is not on this branch, so it does not call the helper yet. When that listener is wired, it should pass the raw body bytes, `X-Commona-Timestamp`, and `X-Commona-Signature` into `verifyWakeSignature` before it accepts the event. The secret for that check is the one-time reveal, not a value from the webhook.
 

@@ -12,10 +12,7 @@ function quote(values: readonly string[]): string {
  * SQLite schema for the one M1 database.
  * Column names are snake_case. TypeScript fields are camelCase (`owner_id` ↔ `ownerId`,
  * `room_id` ↔ `room` on audit rows and `roomId` everywhere else).
- * `openDatabase` applies this string, then `SIGNING_SECRET_MIGRATIONS`.
- * `CREATE TABLE IF NOT EXISTS` does not add columns to a table that already
- * exists, so an older file would otherwise fail the first wake that reads
- * `webhook_signing_secret`. Feature modules do not invent a second schema.
+ * `openDatabase` applies this string. Feature modules do not invent a second schema.
  */
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS owners (

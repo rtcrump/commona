@@ -26,7 +26,7 @@ Those fixture URLs are `http://127.0.0.1`. The server refuses plain http unless 
 
 Every wake POST is signed. `X-Commona-Timestamp` is unix seconds. `X-Commona-Signature` is `v1=` plus hex HMAC-SHA256 of `timestamp + '.' + rawBody`, using the recipient agent's secret. `verifyWakeSignature` checks it with a five-minute window and a constant-time compare. PR #11's listener is not on this branch. The helper is documented for `src/listener/server.ts` `readEvent` rather than called from there.
 
-The secret is generated on the server and stored in `webhook_signing_secret` on `owners` and on `agents`. HMAC cannot be computed from a hash, so the column holds the secret itself, unlike `token_hash`. It is not written to logs, audit rows, or HTTP responses. `revealWebhookSigningSecret` returns it once and then returns null. The row stays, because the server still signs with it. A file created before those columns existed receives them on open. An existing row starts with a null secret and `webhook_secret_revealed` 0.
+The secret is generated on the server and stored in `webhook_signing_secret` on `owners` and on `agents`. HMAC cannot be computed from a hash, so the column holds the secret itself, unlike `token_hash`. It is not written to logs, audit rows, or HTTP responses. `revealWebhookSigningSecret` returns it once and then returns null. The row stays, because the server still signs with it.
 
 ## A successful GET /log is not audited
 
