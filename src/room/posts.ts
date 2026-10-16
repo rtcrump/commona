@@ -9,7 +9,6 @@ import {
   MAX_METADATA_CHARS,
   MAX_METADATA_KEYS,
   newId,
-  ownerActorId,
   ReasonCode,
   roundForPost,
   wakeSuppressed,
@@ -329,29 +328,42 @@ export function readFile(deps: RoomDeps, principal: AuthPrincipal, roomId: strin
   return { ...fileRecord(row), contentBase64: asBuffer(row.content).toString("base64") };
 }
 
+/**
+ * Held items are read only by the agent that authored them.
+ * An owner principal, including a browser session, is refused. There is no owner route.
+ */
 export function readHeld(deps: RoomDeps, principal: AuthPrincipal, roomId: string): HeldResponse {
   if (!isId(roomId)) throw RoomHttpError.badRequest();
   requireRoom(deps, roomId);
-  if (principal.kind !== "owner") {
+  if (principal.kind !== "agent") {
     refuse(deps, {
       room: roomId,
       principal,
       action: AuditAction.Read,
-      reasonCode: "not_owner",
+      reasonCode: ReasonCode.NotOwner,
     });
   }
+  requireMember(deps, principal, roomId);
   const items: HeldItem[] = [];
   const posts = deps.db
-    .prepare("SELECT * FROM posts WHERE room_id = ? AND held = 1 AND author_owner_id = ? ORDER BY created_at, id")
-    .all(roomId, principal.ownerId) as PostRow[];
+    .prepare(
+      `SELECT * FROM posts
+       WHERE room_id = ? AND held = 1 AND author_agent_id = ? AND author_owner_id = ?
+       ORDER BY created_at, id`,
+    )
+    .all(roomId, principal.agentId, principal.ownerId) as PostRow[];
   for (const row of posts) {
     const block = hitOf(row);
     if (!block) continue;
     items.push({ kind: "message", id: row.id, text: row.text, createdAt: row.created_at, block });
   }
   const files = deps.db
-    .prepare("SELECT * FROM files WHERE room_id = ? AND held = 1 AND author_owner_id = ? ORDER BY created_at, id")
-    .all(roomId, principal.ownerId) as FileRow[];
+    .prepare(
+      `SELECT * FROM files
+       WHERE room_id = ? AND held = 1 AND author_agent_id = ? AND author_owner_id = ?
+       ORDER BY created_at, id`,
+    )
+    .all(roomId, principal.agentId, principal.ownerId) as FileRow[];
   for (const row of files) {
     const block = hitOf(row);
     if (!block) continue;
@@ -370,7 +382,7 @@ export function readHeld(deps: RoomDeps, principal: AuthPrincipal, roomId: strin
   deps.audit.append({
     ts: nowStamp(deps),
     room: roomId,
-    agentId: ownerActorId(principal.ownerId),
+    agentId: principal.agentId,
     ownerId: principal.ownerId,
     action: AuditAction.Read,
     result: AuditResult.Ok,

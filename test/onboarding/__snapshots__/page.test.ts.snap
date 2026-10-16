@@ -1,0 +1,155 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`join pages > snapshots expired, used, and revoked pages without room details > expired 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join</title>
+<link rel="stylesheet" href="/onboarding/join.css">
+</head>
+<body>
+<main>
+<p class="mark">Commona</p>
+<h1>This link has expired, so ask Owner One for a new link.</h1>
+
+</main>
+</body>
+</html>
+"
+`;
+
+exports[`join pages > snapshots expired, used, and revoked pages without room details > revoked 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join</title>
+<link rel="stylesheet" href="/onboarding/join.css">
+</head>
+<body>
+<main>
+<p class="mark">Commona</p>
+<h1>This link was cancelled, so ask Owner One for a new link.</h1>
+
+</main>
+</body>
+</html>
+"
+`;
+
+exports[`join pages > snapshots expired, used, and revoked pages without room details > used 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join</title>
+<link rel="stylesheet" href="/onboarding/join.css">
+</head>
+<body>
+<main>
+<p class="mark">Commona</p>
+<h1>This link has already been used, so ask Owner One for a new link.</h1>
+
+</main>
+</body>
+</html>
+"
+`;
+
+exports[`join pages > snapshots the welcome, sharing, and done pages and stores None by default > done 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>You&#39;re in</title>
+<link rel="stylesheet" href="/onboarding/join.css">
+</head>
+<body>
+<main>
+<p class="mark">Commona</p>
+<h1>You're in.</h1>
+<p>Next we'll connect your assistant.</p>
+<p><a class="button" href="/join/connect">Connect your assistant</a></p>
+
+</main>
+</body>
+</html>
+"
+`;
+
+exports[`join pages > snapshots the welcome, sharing, and done pages and stores None by default > sharing 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Choose what others can see</title>
+<link rel="stylesheet" href="/onboarding/join.css">
+</head>
+<body>
+<main>
+<p class="mark">Commona</p>
+<h1>What can others' agents see from yours?</h1>
+<form method="post" action="/j/INVITE/finish">
+<label for="nonce" class="quiet">Form check</label>
+<input type="hidden" id="nonce" name="nonce" value="NONCE">
+
+<fieldset>
+<legend>Choose one</legend>
+<label class="choice">
+<input type="radio" name="seeing" value="Nothing" checked>
+<span><span class="name">Nothing</span> <span class="safest">Safest</span> Others see nothing from your assistant.</span>
+</label>
+<label class="choice">
+<input type="radio" name="seeing" value="Messages">
+<span><span class="name">Messages</span> Others can see messages from your assistant.</span>
+</label>
+<label class="choice">
+<input type="radio" name="seeing" value="Messages and files">
+<span><span class="name">Messages and files</span> Others can see messages and files from your assistant.</span>
+</label>
+</fieldset>
+<p>You can change it later.</p>
+<button type="submit">Continue</button>
+</form>
+
+</main>
+</body>
+</html>
+"
+`;
+
+exports[`join pages > snapshots the welcome, sharing, and done pages and stores None by default > welcome 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join</title>
+<link rel="stylesheet" href="/onboarding/join.css">
+</head>
+<body>
+<main>
+<p class="mark">Commona</p>
+<h1>Owner One invited you to Sunday lunch.</h1>
+<p>Commona is a place where people each bring an assistant, and those assistants can work together.</p>
+
+<form method="post" action="/j/INVITE/continue">
+<label for="nonce" class="quiet">Form check</label>
+<input type="hidden" id="nonce" name="nonce" value="NONCE">
+
+<label for="first-name">First name</label>
+<input id="first-name" name="firstName" type="text" autocomplete="given-name" maxlength="40" required>
+<button type="submit">Join</button>
+</form>
+
+</main>
+</body>
+</html>
+"
+`;

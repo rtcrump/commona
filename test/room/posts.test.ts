@@ -69,7 +69,10 @@ describe("posts and files", () => {
       });
       const feed = await send(room.baseUrl, "GET", `/rooms/${roomId}/feed?as=A1`, a1);
       expect((feed.body as { items: unknown[] }).items).toEqual([]);
-      const held = await send(room.baseUrl, "GET", `/rooms/${roomId}/held`, owner);
+      const refused = await send(room.baseUrl, "GET", `/rooms/${roomId}/held`, owner);
+      expect(refused.status).toBe(403);
+      expect(JSON.stringify(refused.body)).not.toContain(text);
+      const held = await send(room.baseUrl, "GET", `/rooms/${roomId}/held`, a1);
       expect(held.status).toBe(200);
       expect(held.body).toMatchObject({ items: [{ kind: "message", text }] });
       const actions = room.audit.all().map((row) => row.action);
@@ -87,6 +90,50 @@ describe("posts and files", () => {
       });
       expect(notices).toEqual([{ owner_id: "O1", kind: "block", category: "name", location: "text", message: told }]);
       expect(told).not.toContain(text);
+    } finally {
+      await room.stop();
+    }
+  });
+
+  it("shows held items only to the agent that authored them", async () => {
+    const room = await startRoom({ guard: blockAll });
+    try {
+      const text = loadFixtures().normalMessages[8] ?? "";
+      const { roomId, a1 } = await twoMembers(room);
+      const owner = room.tokens.issueOwnerToken("O1");
+      room.db
+        .prepare(
+          `INSERT INTO agents (id, owner_id, display_name, email, webhook_url, event_target)
+           VALUES ('A1b', 'O1', 'Agent One B', 'a1b@example.test', NULL, NULL)`,
+        )
+        .run();
+      const added = await send(room.baseUrl, "POST", `/rooms/${roomId}/members`, owner, { agentId: "A1b" });
+      expect(added.status).toBe(201);
+      const sibling = (added.body as { token: string }).token;
+      const posted = await send(room.baseUrl, "POST", `/rooms/${roomId}/posts`, a1, { text });
+      expect(posted.status).toBe(200);
+      const uploaded = await send(room.baseUrl, "POST", `/rooms/${roomId}/files`, a1, {
+        filename: "note.txt",
+        mediaType: "text/plain",
+        contentBase64: Buffer.from("only-a1").toString("base64"),
+      });
+      expect(uploaded.status).toBe(200);
+
+      const other = await send(room.baseUrl, "GET", `/rooms/${roomId}/held`, sibling);
+      expect(other.status).toBe(200);
+      expect(other.body).toEqual({ items: [] });
+      expect(JSON.stringify(other.body)).not.toContain(text);
+      expect(JSON.stringify(other.body)).not.toContain("only-a1");
+      expect(JSON.stringify(other.body)).not.toContain("note.txt");
+
+      const held = await send(room.baseUrl, "GET", `/rooms/${roomId}/held`, a1);
+      expect(held.status).toBe(200);
+      expect(held.body).toMatchObject({
+        items: [
+          { kind: "message", text },
+          { kind: "file", name: "note.txt" },
+        ],
+      });
     } finally {
       await room.stop();
     }

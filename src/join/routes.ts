@@ -1,13 +1,13 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { hashToken, HTTP_STATUS, readBearerToken, type AuthPrincipal } from "../../contract/index.js";
+import { openWelcome } from "../onboarding/join-flow.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
+import { INVITE_COOKIE, readCookie, serializeCookie, SESSION_COOKIE } from "./cookies.js";
 import { inviteLog } from "./log.js";
+import { registerFormParser, registerJoinPages, sendJoinResult, wantsJoinPage } from "./page-routes.js";
 import { ensureInviteSchema } from "./schema.js";
 import { createInvite, isInviteId, redeemInvite, revokeInvite, secretForCookie } from "./service.js";
-
-const INVITE_COOKIE = "commona_invite";
-const SESSION_COOKIE = "commona_session";
 
 function requirePrincipal(deps: RoomDeps, authorization: string | string[] | undefined): AuthPrincipal {
   const header = Array.isArray(authorization) ? authorization[0] : authorization;
@@ -38,23 +38,6 @@ function configuredPublicOrigin(): string | undefined {
   throw new Error("COMMONA_PUBLIC_ORIGIN must be an https origin");
 }
 
-function serializeCookie(name: string, value: string, path: string, maxAge?: number): string {
-  const age = maxAge === undefined ? "" : `; Max-Age=${maxAge}`;
-  return `${name}=${value}; HttpOnly; Secure; SameSite=Strict; Path=${path}${age}`;
-}
-
-function readCookie(header: string | string[] | undefined, name: string): string | null {
-  const raw = Array.isArray(header) ? header.join("; ") : header;
-  if (!raw) return null;
-  for (const part of raw.split(";")) {
-    const trimmed = part.trim();
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    if (trimmed.slice(0, eq) === name) return trimmed.slice(eq + 1);
-  }
-  return null;
-}
-
 function readRoomHint(body: unknown): string | undefined {
   if (body === undefined || body === null) return undefined;
   if (typeof body !== "object" || Array.isArray(body)) return "";
@@ -75,6 +58,8 @@ function assertPublic(body: unknown, forbidden: readonly string[]): void {
 
 export function registerInviteRoutes(app: FastifyInstance, deps: RoomDeps): void {
   ensureInviteSchema(deps.db);
+  registerFormParser(app);
+  registerJoinPages(app, deps);
 
   app.post<{ Params: { room: string } }>("/rooms/:room/invites", async (request, reply) => {
     const principal = requirePrincipal(deps, request.headers.authorization);
@@ -103,6 +88,9 @@ export function registerInviteRoutes(app: FastifyInstance, deps: RoomDeps): void
     const id = request.params.id;
     if (isInviteId(id)) inviteLog(`invite view id=${id}`);
     const secret = secretForCookie(deps, id);
+    if (wantsJoinPage(request.headers.accept)) {
+      return sendJoinResult(reply, openWelcome(deps, id, secret));
+    }
     const body = { ok: true as const };
     if (secret) assertPublic(body, [secret, hashToken(secret)]);
     reply.header("Cache-Control", "no-store");
