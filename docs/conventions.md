@@ -4,7 +4,7 @@ Enforced by `check/scripts/check_conventions.py`, run in CI by `check/.github/wo
 ## 1. Commit subject
 `<type>(<component>): <summary>` — max 72 chars, lower-case type.
 - type: `feat fix test docs chore ci refactor`
-- component: `room wake sharing nameblock audit loop data ci docs tracking m1 release`
+- component: `room wake sharing nameblock audit loop data ci docs tracking m1 release readme demo`
 - Example: `feat(sharing): add per-owner levels with None default`
 
 ## 2. Commit trailers (git trailer block at end of message)

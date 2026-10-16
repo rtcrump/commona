@@ -1,6 +1,6 @@
 # Conventions check
 - `scripts/check_conventions.py` — stdlib Python checker for commit subjects, trailers and PR labels (rules in [conventions.md](conventions.md)).
-- `scripts/test_check_conventions.py` — 55 self-tests: 14 commit must-pass, 21 commit must-fail, 5 label must-pass + 1 non-critical-path pass, 10 label must-fail groups, 4 end-to-end runs on a throwaway local git repo. The trailer-block cases are shared with the badge parser in `scripts/trailer-block-spec.json`.
+- `scripts/test_check_conventions.py` — 56 self-tests: 15 commit must-pass, 21 commit must-fail, 5 label must-pass + 1 non-critical-path pass, 10 label must-fail groups, 4 end-to-end runs on a throwaway local git repo. The trailer-block cases are shared with the badge parser in `scripts/trailer-block-spec.json`.
 - `.github/workflows/conventions.yml` — runs the self-test, then checks PR commits + labels, merge readiness (informational until branch protection exists), and commits pushed to main.
 - Run locally: `python3 scripts/test_check_conventions.py`.
 - The checker script and its tests are copied unchanged. Bot email in `BOT_EMAILS` is `commona-bot@users.noreply.github.com`.

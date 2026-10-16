@@ -28,6 +28,16 @@ class Commits(unittest.TestCase):
     def test_pass_qa_fail_on_branch(self): self.ok(msg("fix(nameblock): p5", AG, "QA: chatgpt round 1 fail"))
     def test_merge_commit_skipped(self): self.ok("Merge pull request #3 from x/y\n\nwhatever")
     def test_pass_grok_agent(self): self.ok(msg("feat(room): x", "Authored-by-agent: grok/grok-build\nModel: grok-build"))
+    def test_docs_components_match_checker(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.join(root, "docs", "conventions.md")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        prefix = "- component: `"
+        line = next(item for item in text.splitlines() if item.startswith(prefix))
+        documented = set(line[len(prefix):-1].split())
+        self.assertEqual(documented, set(cc.COMPONENTS.split("|")))
+
     def test_trailer_block_spec(self):
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trailer-block-spec.json")
         with open(path) as f:
