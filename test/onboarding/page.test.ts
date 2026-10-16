@@ -90,7 +90,7 @@ describe("join pages", () => {
     expect(done.status).toBe(200);
     expect(done.body).toContain("You're in.");
     expect(done.body).toContain("Next we'll connect your assistant.");
-    expect(done.body).toContain('href="/join/connect"');
+    expect(done.body).toContain(`href="/j/${id}/connect"`);
     expect(done.body).not.toContain(room.roomId);
     assertAccessible(done.body);
     assertNoJargon(done.body);

@@ -74,7 +74,7 @@ exports[`join pages > snapshots the welcome, sharing, and done pages and stores 
 <p class="mark">Commona</p>
 <h1>You're in.</h1>
 <p>Next we'll connect your assistant.</p>
-<p><a class="button" href="/join/connect">Connect your assistant</a></p>
+<p><a class="button" href="/j/INVITE/connect">Connect your assistant</a></p>
 
 </main>
 </body>

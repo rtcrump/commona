@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { CONNECT_OWNER_ACTIONS } from "./connect-steps.js";
 
 // `npm run build` copies web/onboarding to dist/web/onboarding, which is this path from dist/src/onboarding.
 const templateDir = fileURLToPath(new URL("../../web/onboarding/", import.meta.url));
@@ -37,6 +38,10 @@ export function joinStylesheet(): string {
   return readTemplate("join.css");
 }
 
+export function connectScript(): string {
+  return readTemplate("connect.js");
+}
+
 export function renderWelcome(input: {
   inviter: string;
   room: string;
@@ -68,8 +73,9 @@ export function renderSharing(input: { action: string; nonce: string }): string 
   return document("Choose what others can see", body);
 }
 
-export function renderDone(): string {
-  return document("You're in", readTemplate("done.html"));
+export function renderDone(connectHref: string): string {
+  const body = fill(readTemplate("done.html"), { connect: connectHref });
+  return document("You're in", body);
 }
 
 export function renderError(sentence: string): string {
@@ -79,6 +85,43 @@ export function renderError(sentence: string): string {
 
 export function renderConnect(): string {
   return document("Connect your assistant", readTemplate("connect.html"));
+}
+
+export function renderGuided(input: {
+  heading: string;
+  intro: string;
+  note: string;
+  inviter: string;
+  copyLabel: string;
+  copyAction: string;
+  checkAction: string;
+  nonce: string;
+}): string {
+  const steps = CONNECT_OWNER_ACTIONS.map((step) => {
+    const mark = step.unverified ? " (unverified)" : "";
+    return `<li>${escapeHtml(step.text)}${mark}</li>`;
+  }).join("\n");
+  const body = fill(
+    readTemplate("guided.html"),
+    {
+      heading: input.heading,
+      intro: input.intro,
+      note: input.note,
+      steps,
+      inviter: input.inviter,
+      copyLabel: input.copyLabel,
+      copyAction: input.copyAction,
+      checkAction: input.checkAction,
+      check: formCheck(input.nonce),
+    },
+    new Set(["note", "steps", "check"]),
+  );
+  return document(input.heading, body);
+}
+
+export function renderStatus(status: "Connected" | "Not connected"): string {
+  const body = fill(readTemplate("status.html"), { status });
+  return document(status, body);
 }
 
 /** True only when the caller asks for HTML and does not prefer JSON. */

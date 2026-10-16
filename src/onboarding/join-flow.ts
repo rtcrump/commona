@@ -16,11 +16,19 @@ import {
   serializeCookie,
   SESSION_COOKIE,
 } from "../join/cookies.js";
+import { ensureInviteSchema } from "../join/schema.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
+import {
+  connectLinkState,
+  hasArrived,
+  issueConnectLink,
+  requestCheck,
+  waitForCheck,
+} from "./connect.js";
 import { describeInvite, errorSentence, type InviteView } from "./invite-view.js";
-import { renderConnect, renderDone, renderError, renderSharing, renderWelcome } from "./html.js";
+import { renderConnect, renderDone, renderError, renderGuided, renderSharing, renderStatus, renderWelcome } from "./html.js";
 
 const STALE = "This page is out of date, so open the invite link again.";
 const NAME_NOTE = "Enter your first name.";
@@ -30,7 +38,13 @@ const LOCATION_RE =
 
 /** Pending first name, keyed by invite id and the invite secret hash. */
 const firstNames = new Map<string, string>();
-const joined = new Map<string, string>();
+
+interface JoinedMark {
+  inviteId: string;
+  ownerId: string;
+}
+
+const joined = new Map<string, JoinedMark>();
 
 export interface JoinResult {
   status: number;
@@ -50,7 +64,7 @@ function redirect(location: string, cookies: string[], secrets: string[]): JoinR
   return { status: 303, location, cookies, secrets };
 }
 
-function pathFor(id: string, suffix: "" | "/sharing" | "/done" = ""): string {
+function pathFor(id: string, suffix: "" | "/sharing" | "/done" | "/connect" | "/connect/link" | "/connect/check" = ""): string {
   if (!isInviteId(id)) throw new Error("refusing to redirect");
   return `/j/${id}${suffix}`;
 }
@@ -153,13 +167,13 @@ function seeingFromForm(value: string | undefined): SharingLevelName {
   return SharingLevel.None;
 }
 
-function rememberJoined(inviteId: string): string {
+function rememberJoined(inviteId: string, ownerId: string): string {
   const token = randomBytes(32).toString("base64url");
-  joined.set(token, inviteId);
+  joined.set(token, { inviteId, ownerId });
   return token;
 }
 
-function joinedInvite(token: string | null): string | null {
+function joinedMark(token: string | null): JoinedMark | null {
   if (!token) return null;
   return joined.get(token) ?? null;
 }
@@ -279,7 +293,8 @@ export function submitSharing(
   grantSeeing(deps, redeemed.member.roomId, redeemed.owner.id, seeingFromForm(fields.seeing));
   firstNames.delete(pendingKey(inviteId, secretHash));
   if (!/^[A-Za-z0-9_-]+$/.test(redeemed.sessionToken)) throw new Error("refusing to send a secret");
-  const marker = rememberJoined(inviteId);
+  const marker = rememberJoined(inviteId, redeemed.owner.id);
+  rememberInviteOwner(deps, inviteId, redeemed.owner.id, redeemed.member.roomId);
   const secrets = [redeemed.sessionToken, hashToken(redeemed.sessionToken), marker, secret ?? ""].filter(
     (value) => value.length > 0,
   );
@@ -299,12 +314,145 @@ export function openDone(
   cookieHeader: string | string[] | undefined,
 ): JoinResult {
   const marker = readCookie(cookieHeader, JOINED_COOKIE);
-  if (joinedInvite(marker) === inviteId) {
-    return page(200, renderDone(), [], marker ? [marker] : []);
+  if (joinedMark(marker)?.inviteId === inviteId) {
+    return page(200, renderDone(pathFor(inviteId, "/connect")), [], marker ? [marker] : []);
   }
   return errorPage(describeInvite(deps, inviteId));
 }
 
 export function openConnect(): JoinResult {
   return page(200, renderConnect());
+}
+
+type ConnectAuth = { ownerId: string; roomId: string; hidden: string[] };
+
+function rememberInviteOwner(deps: RoomDeps, inviteId: string, ownerId: string, roomId: string): void {
+  ensureInviteSchema(deps.db);
+  deps.db
+    .prepare(
+      `INSERT INTO invite_owners (invite_id, owner_id, room_id)
+       VALUES (?, ?, ?)
+       ON CONFLICT(invite_id) DO NOTHING`,
+    )
+    .run(inviteId, ownerId, roomId);
+}
+
+function authorizeConnect(
+  deps: RoomDeps,
+  inviteId: string,
+  cookieHeader: string | string[] | undefined,
+): ConnectAuth | JoinResult {
+  if (!isInviteId(inviteId)) return errorPage(describeInvite(deps, inviteId));
+  ensureInviteSchema(deps.db);
+  const marker = readCookie(cookieHeader, JOINED_COOKIE);
+  const mark = joinedMark(marker);
+  const session = readCookie(cookieHeader, SESSION_COOKIE);
+  const principal = session ? deps.tokens.authenticate(session) : null;
+  const saved = deps.db.prepare("SELECT owner_id FROM invite_owners WHERE invite_id = ?").get(inviteId) as
+    | { owner_id: string }
+    | undefined;
+  let ownerId: string | null = null;
+  if (mark && mark.inviteId === inviteId) {
+    if (!principal || principal.kind !== "owner" || principal.ownerId !== mark.ownerId) return stalePage();
+    ownerId = mark.ownerId;
+  } else if (saved && principal && principal.kind === "owner" && principal.ownerId === saved.owner_id) {
+    ownerId = saved.owner_id;
+  } else {
+    return errorPage(describeInvite(deps, inviteId));
+  }
+  const invite = deps.db.prepare("SELECT room_id FROM invites WHERE id = ?").get(inviteId) as
+    | { room_id: string }
+    | undefined;
+  if (!invite) return errorPage(describeInvite(deps, inviteId));
+  const member = deps.db
+    .prepare("SELECT 1 AS ok FROM memberships WHERE room_id = ? AND owner_id = ?")
+    .get(invite.room_id, ownerId) as { ok: number } | undefined;
+  if (!member) return stalePage();
+  const hidden = [marker ?? "", session ?? ""].filter((value) => value.length > 0);
+  return { ownerId, roomId: invite.room_id, hidden };
+}
+
+function isAuth(value: ConnectAuth | JoinResult): value is ConnectAuth {
+  return "ownerId" in value;
+}
+
+function handoffDeps(deps: RoomDeps) {
+  return { db: deps.db, clock: deps.clock, tokens: deps.tokens };
+}
+
+export function openConnectPage(
+  deps: RoomDeps,
+  inviteId: string,
+  cookieHeader: string | string[] | undefined,
+): JoinResult {
+  const auth = authorizeConnect(deps, inviteId, cookieHeader);
+  if (!isAuth(auth)) return auth;
+  const view = describeInvite(deps, inviteId);
+  const arrived = hasArrived(handoffDeps(deps), auth.ownerId);
+  const link = connectLinkState(handoffDeps(deps), auth.ownerId);
+  const { nonce, cookie } = issueNonce(10 * 60);
+  const note = link.bound
+    ? "<p>Claude can keep using that link. A new link replaces it.</p>"
+    : link.label === "Get a new link"
+      ? "<p>That link was already used, or it ran out of time.</p>"
+      : "";
+  return page(
+    200,
+    renderGuided({
+      heading: arrived ? "Your assistant is connected" : "Connect your assistant",
+      intro: arrived
+        ? "Click Check connection to ask your assistant to check in again."
+        : "You'll paste one link into Claude. That is three steps.",
+      note,
+      inviter: view.inviter,
+      copyLabel: link.label,
+      copyAction: pathFor(inviteId, "/connect/link"),
+      checkAction: pathFor(inviteId, "/connect/check"),
+      nonce,
+    }),
+    [cookie],
+    auth.hidden,
+  );
+}
+
+export type CopyPrepared =
+  | { ok: true; secret: string; roomId: string; hidden: string[] }
+  | { ok: false; result: JoinResult };
+
+export function prepareCopy(
+  deps: RoomDeps,
+  inviteId: string,
+  body: unknown,
+  cookieHeader: string | string[] | undefined,
+): CopyPrepared {
+  const auth = authorizeConnect(deps, inviteId, cookieHeader);
+  if (!isAuth(auth)) return { ok: false, result: auth };
+  const fields = formFields(body);
+  if (!csrfOk(cookieHeader, fields.nonce)) return { ok: false, result: stalePage() };
+  try {
+    const issued = issueConnectLink(handoffDeps(deps), auth.ownerId, auth.roomId, inviteId);
+    return { ok: true, secret: issued.secret, roomId: auth.roomId, hidden: auth.hidden };
+  } catch {
+    return { ok: false, result: stalePage() };
+  }
+}
+
+export async function submitCheck(
+  deps: RoomDeps,
+  inviteId: string,
+  body: unknown,
+  cookieHeader: string | string[] | undefined,
+): Promise<JoinResult> {
+  const auth = authorizeConnect(deps, inviteId, cookieHeader);
+  if (!isAuth(auth)) return auth;
+  const fields = formFields(body);
+  if (!csrfOk(cookieHeader, fields.nonce)) return stalePage();
+  let checkId: string;
+  try {
+    checkId = requestCheck(handoffDeps(deps), auth.ownerId);
+  } catch {
+    return page(200, renderStatus("Not connected"), [], auth.hidden);
+  }
+  const answered = await waitForCheck(handoffDeps(deps), checkId);
+  return page(200, renderStatus(answered ? "Connected" : "Not connected"), [], auth.hidden);
 }
