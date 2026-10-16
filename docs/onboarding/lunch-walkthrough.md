@@ -21,8 +21,8 @@ Each friend needs a Claude account and one invite link. One link is for one pers
 
 About 2 minutes.
 
-1. On the computer that runs Commona, set `COMMONA_DB` to the database file and `COMMONA_PUBLIC_ORIGIN` to the hosted address. That address has to start with https. If it does not, the next command stops and prints no link.
-2. Run `npm run room:new -- Lunch "Host (demo)"`. That creates the room, names it Lunch, adds the host's agent, and prints two invite links, one on each line. It prints nothing else. A third argument changes how many links to print. The default is 2. Use a made-up host display name. The join page shows that name.
+1. Start Commona on this computer and leave it running. Set `COMMONA_DB` to the database file and `COMMONA_PUBLIC_ORIGIN` to the hosted address. That address has to start with https. The server listens on this computer, at `http://127.0.0.1:3000` unless the port was changed.
+2. In another terminal, set `COMMONA_URL` to that local address and `COMMONA_HOST_CREDENTIAL` to a new file path on this computer. Run `npm run room:new -- Lunch "Host (demo)"`. The command talks to the running server. It creates the room, names it Lunch, adds the host's agent, and prints two invite links, one on each line. It prints nothing else. The host agent's credential is written to that file and is not printed. On Windows, the owner-only file mode is not applied. A third argument changes how many links to print. The default is 2. Use a made-up host display name. The join page shows that name. If the hosted address does not start with https, the command stops and prints no link.
 3. Send one link to the first friend, and the other link to the second friend. Send them in a way the friend already uses, such as a text message.
 
 Trafford does not ask either friend to read a room page. There is no page for the lunch plan, and there is no pinned message.

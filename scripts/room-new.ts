@@ -1,23 +1,22 @@
+import { chmodSync, unlinkSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { systemClock } from "../contract/index.js";
-import { createAuditLog } from "../src/audit/log.js";
-import { createTokenStore } from "../src/auth/store.js";
-import { openDatabase } from "../src/db.js";
 import { guard } from "../src/guard/index.js";
-import { setInviteLog } from "../src/join/log.js";
-import { ensureInviteSchema } from "../src/join/schema.js";
-import { createInvite } from "../src/join/service.js";
-import { createOwnerNotifier } from "../src/notices/store.js";
-import { openAccount } from "../src/onboarding/account.js";
-import type { RoomDeps } from "../src/room/deps.js";
-import { addMember, createRoom } from "../src/room/membership.js";
-import { createSharingDirectory } from "../src/sharing/index.js";
 
-/** Same limit the join page uses before it falls back to a generic label. */
 const LABEL_MAX = 80;
 const DEFAULT_INVITE_COUNT = 2;
 const MAX_INVITE_COUNT = 20;
-const HTTPS_ORIGIN = /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?$/;
+const INVITE_URL =
+  /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?\/j\/inv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+const SAFE_SERVER_MESSAGES = new Set([
+  "COMMONA_PUBLIC_ORIGIN must be an https origin",
+  "room title must be a short label",
+  "room title is not allowed",
+  "host display name must be a short label",
+  "host display name is not allowed",
+  "invite count must be a whole number from 1 to 20",
+  "room:new failed",
+]);
 
 class RoomNewError extends Error {
   constructor(message: string) {
@@ -27,21 +26,21 @@ class RoomNewError extends Error {
 }
 
 export interface RoomNewInput {
-  dbPath: string | undefined;
-  origin: string | undefined;
+  serverUrl: string | undefined;
+  credentialPath: string | undefined;
   title: string;
   hostName: string;
   inviteCount?: string;
 }
 
 /**
- * Create a room, add the host's agent, store the title, and create invites.
- * Returns the public invite URLs. The caller prints those and nothing else.
- * Raw tokens and the invite secret are never returned, logged, or written into audit detail.
+ * Ask the running server to create a room and invites.
+ * Prints nothing. The caller prints the invite URLs and nothing else.
+ * The host agent credential is written to a local file and is not returned.
  */
-export function createRoomInvites(input: RoomNewInput): string[] {
-  const origin = requireHttpsOrigin(input.origin);
-  const dbPath = requireDbPath(input.dbPath);
+export async function createRoomInvites(input: RoomNewInput): Promise<string[]> {
+  const serverUrl = requireLocalUrl(input.serverUrl);
+  const credentialPath = requireCredentialPath(input.credentialPath);
   const title = requireLabel(input.title, "room title must be a short label", "room title is not allowed");
   const hostName = requireLabel(
     input.hostName,
@@ -50,72 +49,102 @@ export function createRoomInvites(input: RoomNewInput): string[] {
   );
   const inviteCount = requireCount(input.inviteCount);
 
-  let db: ReturnType<typeof openDatabase>;
+  let response: Response;
   try {
-    db = openDatabase(dbPath);
-  } catch {
-    throw new RoomNewError("COMMONA_DB could not be opened");
-  }
-
-  try {
-    const deps = services(db);
-    const write = db.transaction(() => {
-      ensureInviteSchema(db);
-      const opened = openAccount(db, deps.tokens);
-      const ownerId = opened.ownerId;
-      const agentId = opened.agentId;
-      db.prepare("UPDATE owners SET display_name = ? WHERE id = ?").run(hostName, ownerId);
-      const principal = { kind: "owner" as const, ownerId };
-      const room = createRoom(deps, principal);
-      const added = addMember(deps, principal, room.id, agentId);
-      db.prepare("INSERT INTO room_titles (room_id, title) VALUES (?, ?)").run(room.id, title);
-      const urls: string[] = [];
-      for (let index = 0; index < inviteCount; index += 1) {
-        const created = createInvite(deps, principal, room.id, {});
-        urls.push(`${origin}/j/${created.id}`);
-      }
-      const hidden = [opened.sessionToken, added.response.token].filter((value): value is string =>
-        Boolean(value),
-      );
-      assertNoSecrets(db, urls, hidden);
-      return urls;
+    response = await fetch(`${serverUrl}/host/room`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title, hostName, inviteCount }),
     });
-    return write();
-  } catch (error) {
-    if (error instanceof RoomNewError) throw error;
+  } catch {
     throw new RoomNewError("room:new failed");
-  } finally {
-    if (db.open) db.close();
+  }
+  const text = await response.text();
+  if (!response.ok) throw new RoomNewError(safeServerMessage(text));
+  const parsed = readResult(text);
+  writeCredential(credentialPath, parsed.credential);
+  return parsed.invites;
+}
+
+function writeCredential(file: string, credential: string): void {
+  // 0o600 is owner-only on Unix. Windows does not apply that mode.
+  try {
+    writeFileSync(file, credential, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  } catch {
+    throw new RoomNewError("room:new failed");
+  }
+  if (process.platform === "win32") return;
+  try {
+    chmodSync(file, 0o600);
+  } catch {
+    unlinkSync(file);
+    throw new RoomNewError("room:new failed");
   }
 }
 
-function services(db: ReturnType<typeof openDatabase>): RoomDeps {
-  const clock = systemClock;
-  const notices = createOwnerNotifier(db, clock);
-  return {
-    db,
-    clock,
-    tokens: createTokenStore(db),
-    audit: createAuditLog(db, clock),
-    sharing: createSharingDirectory(db),
-    guard,
-    notices,
-  };
+function readResult(text: string): { invites: string[]; credential: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    throw new RoomNewError("room:new failed");
+  }
+  if (typeof parsed !== "object" || parsed === null) throw new RoomNewError("room:new failed");
+  const invites = (parsed as { invites?: unknown }).invites;
+  const credential = (parsed as { credential?: unknown }).credential;
+  if (!Array.isArray(invites) || typeof credential !== "string" || !/^[A-Za-z0-9_-]+$/.test(credential)) {
+    throw new RoomNewError("room:new failed");
+  }
+  const urls: string[] = [];
+  for (const invite of invites) {
+    if (typeof invite !== "string" || !INVITE_URL.test(invite) || invite.includes(credential)) {
+      throw new RoomNewError("room:new failed");
+    }
+    urls.push(invite);
+  }
+  if (urls.length === 0) throw new RoomNewError("room:new failed");
+  return { invites: urls, credential };
 }
 
-function requireHttpsOrigin(raw: string | undefined): string {
+function safeServerMessage(text: string): string {
+  try {
+    const parsed = JSON.parse(text) as { error?: { message?: unknown } };
+    const message = parsed.error?.message;
+    if (typeof message === "string" && SAFE_SERVER_MESSAGES.has(message)) return message;
+  } catch {
+    return "room:new failed";
+  }
+  return "room:new failed";
+}
+
+function requireLocalUrl(raw: string | undefined): string {
   const value = raw?.trim() ?? "";
-  if (!HTTPS_ORIGIN.test(value)) {
-    throw new RoomNewError("COMMONA_PUBLIC_ORIGIN must be an https origin");
+  if (!value) throw new RoomNewError("COMMONA_URL is not set");
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new RoomNewError("room:new only talks to a local server");
   }
-  return value;
+  const host = url.hostname;
+  const local = host === "127.0.0.1" || host === "localhost" || host === "::1";
+  if (
+    url.protocol !== "http:" ||
+    !local ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash
+  ) {
+    throw new RoomNewError("room:new only talks to a local server");
+  }
+  return value.replace(/\/$/, "");
 }
 
-function requireDbPath(raw: string | undefined): string {
+function requireCredentialPath(raw: string | undefined): string {
   const value = raw?.trim() ?? "";
-  if (!value || value === ":memory:") {
-    throw new RoomNewError("COMMONA_DB must be a database file");
-  }
+  if (!value) throw new RoomNewError("COMMONA_HOST_CREDENTIAL is not set");
   return value;
 }
 
@@ -142,26 +171,7 @@ function requireCount(raw: string | undefined): number {
   return count;
 }
 
-function assertNoSecrets(db: ReturnType<typeof openDatabase>, urls: string[], hidden: readonly string[]): void {
-  const details = db.prepare("SELECT detail_json FROM audit_log").all() as { detail_json: string }[];
-  const auditText = details.map((row) => row.detail_json).join("\n");
-  for (const secret of hidden) {
-    if (!secret) continue;
-    if (urls.some((url) => url.includes(secret)) || auditText.includes(secret)) {
-      throw new RoomNewError("room:new failed");
-    }
-  }
-  for (const url of urls) {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash) {
-      throw new RoomNewError("room:new failed");
-    }
-  }
-}
-
-function main(): void {
-  // Invite lines go nowhere. The default sink is already empty; keep it that way.
-  setInviteLog(() => {});
+async function main(): Promise<void> {
   try {
     const args = process.argv.slice(2);
     if (args.length < 2 || args.length > 3) {
@@ -169,9 +179,9 @@ function main(): void {
     }
     const title = args[0] ?? "";
     const hostName = args[1] ?? "";
-    const urls = createRoomInvites({
-      dbPath: process.env.COMMONA_DB,
-      origin: process.env.COMMONA_PUBLIC_ORIGIN,
+    const urls = await createRoomInvites({
+      serverUrl: process.env.COMMONA_URL,
+      credentialPath: process.env.COMMONA_HOST_CREDENTIAL,
       title,
       hostName,
       inviteCount: args[2],
@@ -186,5 +196,5 @@ function main(): void {
 
 const entry = process.argv[1];
 if (entry && import.meta.url === pathToFileURL(entry).href) {
-  main();
+  await main();
 }

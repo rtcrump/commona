@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,15 +22,19 @@ interface RunResult {
   stderr: string;
 }
 
+interface Hit {
+  status: number;
+  body: string;
+  location: string | null;
+  setCookies: string[];
+}
+
 function run(args: string[], env: Record<string, string | undefined>): Promise<RunResult> {
   return new Promise((resolve) => {
     execFile(
       process.execPath,
       ["--import", "tsx", script, ...args],
-      {
-        cwd: root,
-        env: { ...process.env, ...env },
-      },
+      { cwd: root, env: { ...process.env, ...env } },
       (error, stdout, stderr) => {
         const code = typeof error?.code === "number" ? error.code : error ? 1 : 0;
         resolve({ code, stdout: String(stdout), stderr: String(stderr) });
@@ -48,87 +52,217 @@ function urlsOf(stdout: string): string[] {
   return lines;
 }
 
+function absorb(jar: Map<string, string>, setCookies: string[]): void {
+  for (const header of setCookies) {
+    const first = header.split(";")[0] ?? "";
+    const eq = first.indexOf("=");
+    if (eq <= 0) continue;
+    jar.set(first.slice(0, eq).trim(), first.slice(eq + 1));
+  }
+}
+
+function cookieHeader(jar: Map<string, string>): string {
+  return [...jar.entries()].map(([key, value]) => `${key}=${value}`).join("; ");
+}
+
+function nonceOf(html: string): string {
+  return /name="nonce" value="([^"]*)"/.exec(html)?.[1] ?? "";
+}
+
+async function call(
+  base: string,
+  method: string,
+  urlPath: string,
+  opts: { cookie?: string; form?: Record<string, string>; accept?: string; token?: string; json?: unknown } = {},
+): Promise<Hit> {
+  const headers: Record<string, string> = {};
+  if (opts.cookie) headers.cookie = opts.cookie;
+  if (opts.accept) headers.accept = opts.accept;
+  if (opts.token) headers.authorization = `Bearer ${opts.token}`;
+  let body: string | undefined;
+  if (opts.json !== undefined) {
+    headers["content-type"] = "application/json";
+    body = JSON.stringify(opts.json);
+  } else if (opts.form) {
+    headers["content-type"] = "application/x-www-form-urlencoded";
+    body = new URLSearchParams(opts.form).toString();
+  }
+  const response = await fetch(`${base}${urlPath}`, { method, headers, body, redirect: "manual" });
+  return {
+    status: response.status,
+    body: await response.text(),
+    location: response.headers.get("location"),
+    setCookies: response.headers.getSetCookie(),
+  };
+}
+
 describe("room:new", () => {
   const dirs: string[] = [];
+  const previousOrigin = process.env.COMMONA_PUBLIC_ORIGIN;
 
   afterEach(async () => {
+    if (previousOrigin === undefined) delete process.env.COMMONA_PUBLIC_ORIGIN;
+    else process.env.COMMONA_PUBLIC_ORIGIN = previousOrigin;
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
-  async function tempDb(): Promise<string> {
+  async function tempDir(): Promise<string> {
     const dir = await mkdtemp(path.join(tmpdir(), "commona-room-new-"));
     dirs.push(dir);
-    return path.join(dir, "room.sqlite");
+    return dir;
   }
 
-  it("prints only invite URLs and those URLs open the join page", async () => {
-    const dbPath = await tempDb();
-    const result = await run([title, hostName, "2"], {
-      COMMONA_DB: dbPath,
-      COMMONA_PUBLIC_ORIGIN: origin,
-    });
-    expect(result.code).toBe(0);
-    expect(result.stderr).toBe("");
-    const urls = urlsOf(result.stdout);
-    expect(urls).toHaveLength(2);
-    expect(result.stdout).not.toMatch(/token|secret|credential|bearer|password/i);
-
+  async function startServer(): Promise<{ base: string; dbPath: string; stop: () => Promise<void> }> {
+    const dir = await tempDir();
+    const dbPath = path.join(dir, "room.sqlite");
     const db = openDatabase(dbPath);
     const app = buildApp({ db });
-    try {
-      const details = db.prepare("SELECT detail_json FROM audit_log").all() as { detail_json: string }[];
-      expect(details.length).toBeGreaterThan(0);
-      for (const row of details) {
-        expect(row.detail_json).not.toMatch(/token|secret|credential|bearer|password/i);
-      }
-      const storedTitle = db.prepare("SELECT title FROM room_titles").get() as { title: string };
-      expect(storedTitle.title).toBe(title);
-      const host = db.prepare("SELECT display_name FROM owners").get() as { display_name: string };
-      expect(host.display_name).toBe(hostName);
-      const members = db.prepare("SELECT COUNT(*) AS n FROM memberships").get() as { n: number };
-      expect(members.n).toBe(1);
-      const room = db.prepare("SELECT id FROM rooms").get() as { id: string };
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    if (address === null || typeof address === "string") throw new Error("room server did not bind");
+    return {
+      base: `http://127.0.0.1:${address.port}`,
+      dbPath,
+      stop: async () => {
+        await app.close();
+        if (db.open) db.close();
+      },
+    };
+  }
 
-      await app.listen({ host: "127.0.0.1", port: 0 });
-      const address = app.server.address();
-      if (address === null || typeof address === "string") throw new Error("room server did not bind");
-      const base = `http://127.0.0.1:${address.port}`;
-      for (const url of urls) {
-        const page = await fetch(`${base}${new URL(url).pathname}`, { headers: { accept: "text/html" } });
-        expect(page.status).toBe(200);
-        expect(page.headers.get("content-type") ?? "").toContain("text/html");
-        const html = await page.text();
-        expect(html).toContain(`${hostName} invited you to ${title}.`);
-        expect(html).toContain("<button type=\"submit\">Join</button>");
-        expect(html).not.toContain(room.id);
-        expect(html).not.toContain("can't be used");
+  it("joins through an invite and the host credential file can post", async () => {
+    process.env.COMMONA_PUBLIC_ORIGIN = origin;
+    const server = await startServer();
+    const dir = path.dirname(server.dbPath);
+    const credentialPath = path.join(dir, "host-credential");
+    try {
+      const result = await run([title, hostName, "2"], {
+        COMMONA_URL: server.base,
+        COMMONA_HOST_CREDENTIAL: credentialPath,
+      });
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe("");
+      const urls = urlsOf(result.stdout);
+      expect(urls).toHaveLength(2);
+      const credential = await readFile(credentialPath, "utf8");
+      expect(credential.length).toBeGreaterThan(20);
+      expect(result.stdout).not.toContain(credential);
+      expect(result.stderr).not.toContain(credential);
+      const mode = (await stat(credentialPath)).mode & 0o777;
+      expect(mode).toBe(0o600);
+
+      const db = openDatabase(server.dbPath);
+      try {
+        const details = db.prepare("SELECT detail_json FROM audit_log").all() as { detail_json: string }[];
+        for (const row of details) expect(row.detail_json).not.toContain(credential);
+        const storedTitle = db.prepare("SELECT title FROM room_titles").get() as { title: string };
+        expect(storedTitle.title).toBe(title);
+        const room = db.prepare("SELECT id FROM rooms").get() as { id: string };
+
+        const invitePath = new URL(urls[0] ?? "").pathname;
+        const jar = new Map<string, string>();
+        const welcome = await call(server.base, "GET", invitePath, { accept: "text/html" });
+        expect(welcome.status).toBe(200);
+        expect(welcome.body).toContain(`${hostName} invited you to ${title}.`);
+        expect(welcome.body).toContain("<button type=\"submit\">Join</button>");
+        absorb(jar, welcome.setCookies);
+        expect(jar.get("commona_invite") ?? "").not.toBe("");
+
+        const named = await call(server.base, "POST", `${invitePath}/continue`, {
+          cookie: cookieHeader(jar),
+          form: { nonce: nonceOf(welcome.body), firstName: "Demo" },
+        });
+        expect(named.status).toBe(303);
+        const sharing = await call(server.base, "GET", `${invitePath}/sharing`, {
+          accept: "text/html",
+          cookie: cookieHeader(jar),
+        });
+        expect(sharing.status).toBe(200);
+        absorb(jar, sharing.setCookies);
+        const finished = await call(server.base, "POST", `${invitePath}/finish`, {
+          cookie: cookieHeader(jar),
+          form: { nonce: nonceOf(sharing.body), seeing: "Messages" },
+        });
+        expect(finished.status).toBe(303);
+        expect(finished.location).toBe(`${invitePath}/done`);
+        absorb(jar, finished.setCookies);
+        const done = await call(server.base, "GET", `${invitePath}/done`, {
+          accept: "text/html",
+          cookie: cookieHeader(jar),
+        });
+        expect(done.status).toBe(200);
+        expect(done.body).toContain("You're in.");
+        const members = db.prepare("SELECT COUNT(*) AS n FROM memberships").get() as { n: number };
+        expect(members.n).toBe(2);
+
+        const posted = await call(server.base, "POST", `/rooms/${room.id}/posts`, {
+          token: credential,
+          json: { text: "host says hello" },
+        });
+        expect(posted.status).toBe(201);
+        expect((JSON.parse(posted.body) as { outcome?: string }).outcome).toBe("accepted");
+        expect(posted.body).not.toContain(credential);
+      } finally {
+        if (db.open) db.close();
       }
     } finally {
-      await app.close();
-      if (db.open) db.close();
+      await server.stop();
     }
   });
 
   it("defaults to two invite URLs", async () => {
-    const dbPath = await tempDb();
-    const result = await run([title, hostName], {
-      COMMONA_DB: dbPath,
-      COMMONA_PUBLIC_ORIGIN: origin,
-    });
-    expect(result.code).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(urlsOf(result.stdout)).toHaveLength(2);
+    process.env.COMMONA_PUBLIC_ORIGIN = origin;
+    const server = await startServer();
+    const credentialPath = path.join(path.dirname(server.dbPath), "host-credential");
+    try {
+      const result = await run([title, hostName], {
+        COMMONA_URL: server.base,
+        COMMONA_HOST_CREDENTIAL: credentialPath,
+      });
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(urlsOf(result.stdout)).toHaveLength(2);
+    } finally {
+      await server.stop();
+    }
   });
 
   it("stops when the origin is not https and prints no link", async () => {
-    const dbPath = await tempDb();
-    const result = await run([title, hostName], {
-      COMMONA_DB: dbPath,
-      COMMONA_PUBLIC_ORIGIN: "http://join.example.test",
-    });
-    expect(result.code).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("COMMONA_PUBLIC_ORIGIN must be an https origin\n");
-    expect(result.stderr).not.toContain("http://join.example.test");
+    process.env.COMMONA_PUBLIC_ORIGIN = "http://join.example.test";
+    const server = await startServer();
+    const credentialPath = path.join(path.dirname(server.dbPath), "host-credential");
+    try {
+      const result = await run([title, hostName], {
+        COMMONA_URL: server.base,
+        COMMONA_HOST_CREDENTIAL: credentialPath,
+      });
+      expect(result.code).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("COMMONA_PUBLIC_ORIGIN must be an https origin\n");
+      expect(result.stderr).not.toContain("http://join.example.test");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("refuses a non-local socket even when a header says loopback", async () => {
+    process.env.COMMONA_PUBLIC_ORIGIN = origin;
+    const dir = await tempDir();
+    const db = openDatabase(path.join(dir, "room.sqlite"));
+    const app = buildApp({ db });
+    try {
+      const refused = await app.inject({
+        method: "POST",
+        url: "/host/room",
+        remoteAddress: "203.0.113.9",
+        headers: { "x-forwarded-for": "127.0.0.1", "content-type": "application/json" },
+        payload: { title, hostName, inviteCount: 1 },
+      });
+      expect(refused.statusCode).toBe(403);
+      expect(refused.body).not.toContain("inv_");
+    } finally {
+      await app.close();
+      if (db.open) db.close();
+    }
   });
 });
