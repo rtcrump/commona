@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+// `npm run build` copies web/onboarding to dist/web/onboarding, which is this path from dist/src/onboarding.
 const templateDir = fileURLToPath(new URL("../../web/onboarding/", import.meta.url));
 
 function readTemplate(name: string): string {
