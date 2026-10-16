@@ -109,7 +109,7 @@ The server reads these settings only from the window where it was started. If yo
 npm run demo:lunch
 ```
 
-A pass prints only these lines. No line starts with `fail`. The number after `time` is how many milliseconds the run took. It changes every run. One earlier rehearsal printed `time 304`. That run was not repeated for this page. **(unverified)**
+A pass prints only these lines. No line starts with `fail`. The number after `time` is how many milliseconds the run took. It changes every run. This checkout printed `time 408`. An earlier rehearsal printed `time 304`. Either number is a pass when the other lines match.
 
 ```
 pass create-room
@@ -126,7 +126,7 @@ pass deliver
 members 3
 messages 4
 rounds 3
-time 304
+time 408
 ```
 
 The command does not print the lunch text. If you see `Missing script: "demo:lunch"`, this folder does not have the rehearsal. Stop.
@@ -256,6 +256,8 @@ The whole run passes when you also see:
 19 ran. 19 passed. 0 failed. 0 failed because a module is not built. 0 failed an assertion.
 M1 is done when all 19 pass in one clean run. This run passed.
 ```
+
+A later `audit.verify()` line is extra output. This step passes on the P3 line and on those two lines.
 
 ## 9. Shut down
 
