@@ -15,6 +15,7 @@ import {
 import { createAuditLog, registerLogRoute } from "./audit/index.js";
 import { createTokenStore } from "./auth/index.js";
 import { guard } from "./guard/index.js";
+import { publicOriginSetting, trustProxySetting } from "./join/origin.js";
 import { registerInviteRoutes } from "./join/routes.js";
 import { createOwnerNotifier, registerNoticeRoute } from "./notices/index.js";
 import type { RoomDeps } from "./room/deps.js";
@@ -41,6 +42,10 @@ export interface BuildAppOptions {
   deliverWake?: (wakeId: string) => Promise<void>;
   /** `null` leaves email unconfigured. Omit it to read COMMONA_SMTP_HOST and COMMONA_SMTP_PORT. */
   smtp?: SmtpEndpoint | null;
+  /** Invite links use this origin. Omit it to read COMMONA_PUBLIC_ORIGIN. */
+  publicOrigin?: string;
+  /** Who may set X-Forwarded-Proto. Omit it to read COMMONA_TRUST_PROXY. */
+  trustProxy?: boolean | string;
 }
 
 /**
@@ -49,6 +54,8 @@ export interface BuildAppOptions {
  * to the webhook URLs stored on the agents.
  */
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
+  const publicOrigin = publicOriginSetting(options.publicOrigin, process.env.COMMONA_PUBLIC_ORIGIN);
+  const trustProxy = trustProxySetting(options.trustProxy, process.env.COMMONA_TRUST_PROXY);
   const shared = options.db === undefined ? defaultRuntime() : undefined;
   const db = options.db ?? shared!.db;
   const clock = options.clock ?? shared?.clock ?? systemClock;
@@ -72,6 +79,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   };
   const app = Fastify({
     logger: false,
+    // A loopback TLS terminator may set X-Forwarded-Proto. A remote client may not.
+    trustProxy,
     // Base64 expands a file by 4/3. Leave room for a just-over-limit body so the route can answer 400.
     bodyLimit: Math.ceil((MAX_FILE_BYTES + 1) * (4 / 3)) + 65_536,
   });
@@ -88,7 +97,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   });
   app.get("/health", async (): Promise<HealthResponse> => ({ ok: true, service: "commona" }));
   registerRoomRoutes(app, deps);
-  registerInviteRoutes(app, deps);
+  registerInviteRoutes(app, deps, { publicOrigin });
   registerLogRoute(app, { db, audit, clock });
   registerNoticeRoute(app, { db, tokens, audit, clock });
   if (shared) {

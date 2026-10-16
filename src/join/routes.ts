@@ -3,6 +3,7 @@ import { hashToken, HTTP_STATUS, readBearerToken, type AuthPrincipal } from "../
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { inviteLog } from "./log.js";
+import { inviteOrigin } from "./origin.js";
 import { ensureInviteSchema } from "./schema.js";
 import { createInvite, isInviteId, redeemInvite, revokeInvite, secretForCookie } from "./service.js";
 
@@ -18,11 +19,10 @@ function requirePrincipal(deps: RoomDeps, authorization: string | string[] | und
   return principal;
 }
 
-function originOf(request: FastifyRequest): string {
-  const host = request.headers.host ?? "localhost";
-  if (!/^[A-Za-z0-9.-]+(?::\d+)?$/.test(host)) return "http://localhost";
-  const protocol = request.protocol === "https" ? "https" : "http";
-  return `${protocol}://${host}`;
+function originOf(request: FastifyRequest, configured: string | undefined): string {
+  const header = request.headers.host;
+  const host = Array.isArray(header) ? header[0] : header;
+  return inviteOrigin({ configured, host, protocol: request.protocol });
 }
 
 function serializeCookie(name: string, value: string, path: string, maxAge?: number): string {
@@ -60,8 +60,13 @@ function assertPublic(body: unknown, forbidden: readonly string[]): void {
   }
 }
 
-export function registerInviteRoutes(app: FastifyInstance, deps: RoomDeps): void {
+export function registerInviteRoutes(
+  app: FastifyInstance,
+  deps: RoomDeps,
+  options: { publicOrigin?: string } = {},
+): void {
   ensureInviteSchema(deps.db);
+  const publicOrigin = options.publicOrigin;
 
   app.post<{ Params: { room: string } }>("/rooms/:room/invites", async (request, reply) => {
     const principal = requirePrincipal(deps, request.headers.authorization);
@@ -69,7 +74,7 @@ export function registerInviteRoutes(app: FastifyInstance, deps: RoomDeps): void
     const body = {
       invite: {
         id: created.id,
-        link: `${originOf(request)}/j/${created.id}`,
+        link: `${originOf(request, publicOrigin)}/j/${created.id}`,
         expiresAt: created.expiresAt,
       },
     };

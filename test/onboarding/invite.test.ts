@@ -126,7 +126,7 @@ function assertAbsent(blobs: string[], secrets: string[]): void {
   }
 }
 
-async function openHarness(clock: Clock & { advance(ms: number): void }) {
+async function openHarness(clock: Clock & { advance(ms: number): void }, options: { publicOrigin?: string } = {}) {
   const db = openDatabase(":memory:");
   seedFixtures(db, loadFixtures());
   const inner = createTokenStore(db);
@@ -148,7 +148,14 @@ async function openHarness(clock: Clock & { advance(ms: number): void }) {
   const sharing = createSharingDirectory(db);
   const logs: string[] = [];
   setInviteLog((line) => logs.push(line));
-  const app = buildApp({ db, clock, tokens, audit, sharing });
+  const app = buildApp({
+    db,
+    clock,
+    tokens,
+    audit,
+    sharing,
+    ...(options.publicOrigin === undefined ? {} : { publicOrigin: options.publicOrigin }),
+  });
   await app.listen({ host: "127.0.0.1", port: 0 });
   const address = app.server.address();
   if (address === null || typeof address === "string") throw new Error("invite server did not bind");
@@ -171,6 +178,7 @@ async function openHarness(clock: Clock & { advance(ms: number): void }) {
     tokens,
     audit,
     sharing,
+    app,
     logs,
     issued,
     baseUrl: `http://127.0.0.1:${address.port}`,
@@ -517,6 +525,64 @@ describe.sequential("invite links", () => {
       expect(loser.bodyText).not.toContain(secret);
     } finally {
       await room.stop();
+    }
+  });
+
+  it("publishes an https invite link for a non-local host", async () => {
+    const clock = manualClock();
+    const room = await openHarness(clock);
+    try {
+      const created = await room.app.inject({
+        method: "POST",
+        url: `/rooms/${room.roomId}/invites`,
+        headers: {
+          authorization: `Bearer ${room.owner}`,
+          host: "room.example.test",
+          "x-forwarded-host": "evil.example",
+          "x-forwarded-proto": "http",
+        },
+        remoteAddress: "203.0.113.10",
+        payload: {},
+      });
+      expect(created.statusCode).toBe(201);
+      const body = created.json() as { invite: { id: string; link: string } };
+      expect(body.invite.link).toBe(`https://room.example.test/j/${body.invite.id}`);
+      expect(new URL(body.invite.link).search).toBe("");
+    } finally {
+      await room.stop();
+    }
+  });
+
+  it("uses a configured https origin and honors https from a loopback proxy", async () => {
+    const clock = manualClock();
+    const configured = await openHarness(clock, { publicOrigin: "https://join.example.test" });
+    const proxied = await openHarness(clock);
+    try {
+      const created = await call(configured.baseUrl, "POST", `/rooms/${configured.roomId}/invites`, {
+        token: configured.owner,
+        body: {},
+      });
+      expect(created.status).toBe(201);
+      const body = json(created) as { invite: { id: string; link: string } };
+      expect(body.invite.link).toBe(`https://join.example.test/j/${body.invite.id}`);
+
+      const viaProxy = await proxied.app.inject({
+        method: "POST",
+        url: `/rooms/${proxied.roomId}/invites`,
+        headers: {
+          authorization: `Bearer ${proxied.owner}`,
+          host: "127.0.0.1:9",
+          "x-forwarded-proto": "https",
+        },
+        remoteAddress: "127.0.0.1",
+        payload: {},
+      });
+      expect(viaProxy.statusCode).toBe(201);
+      const proxyBody = viaProxy.json() as { invite: { link: string } };
+      expect(proxyBody.invite.link.startsWith("https://127.0.0.1:9/j/")).toBe(true);
+    } finally {
+      await configured.stop();
+      await proxied.stop();
     }
   });
 });

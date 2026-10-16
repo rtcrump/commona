@@ -13,6 +13,8 @@
 
 The link is `https://<host>/j/<invite-id>`. It has no query string. The invite id is a public id (`inv_` plus a UUID). It is not the secret.
 
+The process listens on plain HTTP. A browser stores the `Secure` cookie for a non-local host only on HTTPS, so a non-local link is always `https`, including when the socket itself is HTTP. Loopback (`localhost`, `127.0.0.1`, `::1`) stays `http` when the request is HTTP, which is what `npm start` and the tests use. `COMMONA_PUBLIC_ORIGIN` replaces the request host. It is an origin with no path and no credentials: `https` for any host, or `http` on loopback only. Fastify trusts `X-Forwarded-Proto` from a loopback peer by default (`COMMONA_TRUST_PROXY` can name other proxy addresses, `false`, or `true`). The link is built from the `Host` header, not from `X-Forwarded-Host`.
+
 `POST /j/:id/accept` may send `{ roomId }`. When `roomId` is present and is not the invite's room, the call is refused and the invite stays unused. Omitting `roomId` joins the invite's room.
 
 Default lifetime is 24 hours. `{ expiresInSeconds }` sets it, from 1 second through 30 days. A member who sends a bad lifetime gets `400`. That is a malformed request, not one of the invite refusals.
