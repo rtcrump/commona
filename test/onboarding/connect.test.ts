@@ -394,9 +394,10 @@ describe("guided connect", () => {
     });
     const arrived = await call(room.baseUrl, "POST", "/connect/arrive", { token: credential });
     expect(arrived.status).toBe(200);
+    const auditDb = room.db;
     const arrivalRows = () =>
       (
-        room.db
+        auditDb
           .prepare(
             "SELECT COUNT(*) AS n FROM audit_log WHERE action = 'setting_change' AND instr(detail_json, 'authorAgentId') > 0",
           )
