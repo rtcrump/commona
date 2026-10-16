@@ -317,16 +317,16 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
   });
   const live: LiveAgent[] = [];
   const spools: string[] = [];
+  const listeners: WakeListener[] = [];
+  const mcps: McpHttpServer[] = [];
   let stopped = false;
 
   const stop = async () => {
     if (stopped) return;
     stopped = true;
     setInviteLog(() => {});
-    for (const agent of live) {
-      await agent.mcp.close().catch(() => undefined);
-      await agent.listener.close().catch(() => undefined);
-    }
+    for (const mcp of mcps) await mcp.close().catch(() => undefined);
+    for (const listener of listeners) await listener.close().catch(() => undefined);
     await app.close().catch(() => undefined);
     if (db.open) db.close();
     await Promise.all(spools.map((dir) => rm(dir, { recursive: true, force: true }).catch(() => undefined)));
@@ -496,7 +496,9 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
       const spool = await mkdtemp(path.join(tmpdir(), "commona-lunch-"));
       spools.push(spool);
       const listener = await startWakeListener({ handoff: spoolHandoff(spool) });
+      listeners.push(listener);
       const mcp = await startMcpHttp({ config: { baseUrl, wakePollMs: 20, wakeSpool: spool } });
+      mcps.push(mcp);
       let handoffUrl = "";
       if (key === "trafford") {
         const issued = issueConnectLink(
