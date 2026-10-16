@@ -28,6 +28,8 @@ class Commits(unittest.TestCase):
     def test_pass_qa_fail_on_branch(self): self.ok(msg("fix(nameblock): p5", AG, "QA: chatgpt round 1 fail"))
     def test_merge_commit_skipped(self): self.ok("Merge pull request #3 from x/y\n\nwhatever")
     def test_pass_grok_agent(self): self.ok(msg("feat(room): x", "Authored-by-agent: grok/grok-build\nModel: grok-build"))
+    def test_pass_cursor_commona_build(self):
+        self.ok(msg("ci(ci): check the build", "Authored-by-agent: cursor/commona-build\nModel: cursor"))
     def test_pass_split_trailer_block(self):
         # Exact message of 70da75f: a blank line splits the two trailers.
         self.ok("fix(ci): quote claude review json schema\n\nAuthored-by-agent: cursor/commona-cos\n\nModel: grok-bot")
@@ -52,6 +54,8 @@ class Commits(unittest.TestCase):
     def test_fail_long_subject(self): self.bad(msg("feat(room): " + "x" * 70, AG), "longer than 72")
     def test_fail_agent_no_model(self): self.bad(msg("feat(room): x", "Authored-by-agent: cursor/bc-1"), "requires a Model")
     def test_fail_bad_agent_value(self): self.bad(msg("feat(room): x", "Authored-by-agent: me\nModel: m"), "bad Authored-by-agent")
+    def test_fail_unknown_agent(self):
+        self.bad(msg("ci(ci): check the build", "Authored-by-agent: unknown/not-a-build\nModel: unknown"), "bad Authored-by-agent")
     def test_fail_both(self): self.bad(msg("feat(room): x", AG, "Authored-by: human/trafford"), "both")
     def test_fail_human_bad_value(self): self.bad(msg("feat(room): x", "Authored-by: trafford"), "want human/", email="t@example.test")
     def test_fail_bot_as_human(self): self.bad(msg("feat(room): x", "Authored-by: human/trafford"), "bot identity")
