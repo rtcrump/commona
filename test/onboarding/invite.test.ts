@@ -171,6 +171,7 @@ async function openHarness(clock: Clock & { advance(ms: number): void }) {
     tokens,
     audit,
     sharing,
+    app,
     logs,
     issued,
     baseUrl: `http://127.0.0.1:${address.port}`,
@@ -516,6 +517,35 @@ describe.sequential("invite links", () => {
       expect(json(loser)).toEqual(GENERIC);
       expect(loser.bodyText).not.toContain(secret);
     } finally {
+      await room.stop();
+    }
+  });
+
+  it("publishes an https invite link outside loopback", async () => {
+    const clock = manualClock();
+    const room = await openHarness(clock);
+    const previous = process.env.COMMONA_PUBLIC_ORIGIN;
+    try {
+      const created = await room.app.inject({
+        method: "POST",
+        url: `/rooms/${room.roomId}/invites`,
+        headers: { authorization: `Bearer ${room.owner}`, host: "room.example.test" },
+        payload: {},
+      });
+      expect(created.statusCode).toBe(201);
+      const body = created.json() as { invite: { id: string; link: string } };
+      expect(body.invite.link).toBe(`https://room.example.test/j/${body.invite.id}`);
+
+      process.env.COMMONA_PUBLIC_ORIGIN = "https://join.example.test";
+      const overridden = await call(room.baseUrl, "POST", `/rooms/${room.roomId}/invites`, {
+        token: room.owner,
+        body: {},
+      });
+      const overriddenBody = json(overridden) as { invite: { id: string; link: string } };
+      expect(overriddenBody.invite.link).toBe(`https://join.example.test/j/${overriddenBody.invite.id}`);
+    } finally {
+      if (previous === undefined) delete process.env.COMMONA_PUBLIC_ORIGIN;
+      else process.env.COMMONA_PUBLIC_ORIGIN = previous;
       await room.stop();
     }
   });

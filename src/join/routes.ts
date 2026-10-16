@@ -19,10 +19,23 @@ function requirePrincipal(deps: RoomDeps, authorization: string | string[] | und
 }
 
 function originOf(request: FastifyRequest): string {
+  const configured = configuredPublicOrigin();
+  if (configured) return configured;
   const host = request.headers.host ?? "localhost";
   if (!/^[A-Za-z0-9.-]+(?::\d+)?$/.test(host)) return "http://localhost";
+  const name = host.replace(/:\d+$/, "").toLowerCase();
+  // A non-local http link cannot store the Secure invite cookie.
+  if (name !== "localhost" && name !== "127.0.0.1") return `https://${host}`;
   const protocol = request.protocol === "https" ? "https" : "http";
   return `${protocol}://${host}`;
+}
+
+function configuredPublicOrigin(): string | undefined {
+  const raw = process.env.COMMONA_PUBLIC_ORIGIN?.trim();
+  if (!raw) return undefined;
+  if (/^https:\/\/[A-Za-z0-9.-]+(?::\d+)?$/.test(raw)) return raw;
+  if (/^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(raw)) return raw;
+  throw new Error("COMMONA_PUBLIC_ORIGIN must be an https origin");
 }
 
 function readRoomHint(body: unknown): string | undefined {
