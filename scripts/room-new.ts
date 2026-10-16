@@ -60,6 +60,7 @@ export function createRoomInvites(input: RoomNewInput): string[] {
   try {
     const deps = services(db);
     const write = db.transaction(() => {
+      ensureInviteSchema(db);
       const opened = openAccount(db, deps.tokens);
       const ownerId = opened.ownerId;
       const agentId = opened.agentId;
@@ -67,7 +68,6 @@ export function createRoomInvites(input: RoomNewInput): string[] {
       const principal = { kind: "owner" as const, ownerId };
       const room = createRoom(deps, principal);
       const added = addMember(deps, principal, room.id, agentId);
-      ensureInviteSchema(db);
       db.prepare("INSERT INTO room_titles (room_id, title) VALUES (?, ?)").run(room.id, title);
       const urls: string[] = [];
       for (let index = 0; index < inviteCount; index += 1) {
