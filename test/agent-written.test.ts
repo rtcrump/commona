@@ -64,6 +64,40 @@ describe("agent-written stats", () => {
     expect(renderBadge(stats)).toBe("Written by agents: 75% of lines, 50% of commits\nHuman edits: 1\nQA trailers: 1");
   });
 
+  it("counts cursor/commona-build as agent-written", () => {
+    expect(
+      classifyTrailers("ci(ci): check\n\nAuthored-by-agent: cursor/commona-build\nModel: cursor\n").kind,
+    ).toBe("agent");
+  });
+
+  it("counts grok/grok-build as agent-written", () => {
+    expect(
+      classifyTrailers("ci(ci): check\n\nAuthored-by-agent: grok/grok-build\nModel: grok-build\n").kind,
+    ).toBe("agent");
+  });
+
+  it("counts a split trailer block as agent-written", () => {
+    const split = classifyTrailers(
+      "fix(ci): quote claude review json schema\n\nAuthored-by-agent: cursor/commona-cos\n\nModel: grok-bot\n",
+    );
+    expect(split.kind).toBe("agent");
+    const splitQa = classifyTrailers(
+      "ci(ci): check\n\nAuthored-by-agent: cursor/commona-build\nModel: cursor\n\nQA: chatgpt round 1 pass\n",
+    );
+    expect(splitQa.kind).toBe("agent");
+    expect(splitQa.qa).toBe("chatgpt round 1 pass");
+    expect(
+      classifyTrailers(
+        "ci(ci): check\n\nAuthored-by-agent: grok/grok-build\nModel: grok-build\n\nCo-authored-by: Trafford Crump <rtcrump@users.noreply.github.com>\n",
+      ).kind,
+    ).toBe("agent");
+    expect(
+      classifyTrailers(
+        "feat(room): x\n\nAuthored-by-agent: cursor/commona-build\n\nA body paragraph sits between the trailers.\n\nModel: cursor\n",
+      ).kind,
+    ).toBe("unattributed");
+  });
+
   it("reads a throwaway repository the same way", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "commona-stats-"));
     try {

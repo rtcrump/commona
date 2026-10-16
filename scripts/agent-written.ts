@@ -4,8 +4,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 /**
  * Written by agents: NN% of lines, NN% of commits.
  * Lines are insertions from `git log --numstat`. Commits are classified only
- * from Authored-by-agent and Authored-by trailers. A commit with neither, or
- * with both, is unattributed. Merge commits are skipped.
+ * from Authored-by-agent and Authored-by trailers. A blank line between
+ * trailer paragraphs still counts as one block, the same way
+ * scripts/check_conventions.py does. A commit with neither trailer, or with
+ * both, is unattributed. Merge commits are skipped.
  */
 
 const START = "<!-- agent-written-badge:start -->";
@@ -47,23 +49,64 @@ export function classifyTrailers(message: string): { kind: CommitStat["kind"]; q
   return { kind: "unattributed", qa };
 }
 
-function trailerBlock(message: string): [string, string][] {
-  const lines = message.replaceAll("\r\n", "\n").replace(/\n$/, "").split("\n");
-  const block: string[] = [];
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i] ?? "";
-    if (line.trim() === "") break;
-    block.push(line);
+const TRAILER_RE = /^([A-Za-z][A-Za-z-]*): (.+)$/;
+const ALLOWED_TRAILERS = new Set([
+  "Authored-by-agent",
+  "Model",
+  "Authored-by",
+  "QA",
+  "Approved-by",
+  "Co-authored-by",
+  "Refs",
+]);
+
+function paragraphs(message: string): string[][] {
+  const paras: string[][] = [];
+  let current: string[] = [];
+  for (const line of message.replaceAll("\r\n", "\n").replace(/\n+$/, "").split("\n")) {
+    if (line.trim() === "") {
+      if (current.length > 0) {
+        paras.push(current);
+        current = [];
+      }
+    } else {
+      current.push(line);
+    }
   }
-  block.reverse();
-  if (block.length === lines.length) return [];
+  if (current.length > 0) paras.push(current);
+  return paras;
+}
+
+function parseTrailerLines(block: string[]): [string, string][] {
   const parsed: [string, string][] = [];
   for (const line of block) {
-    const match = /^([A-Za-z][A-Za-z-]*): (.+)$/.exec(line);
-    if (!match?.[1] || !match[2]) return [];
+    const match = TRAILER_RE.exec(line);
+    if (!match?.[1] || !match[2]) continue;
     parsed.push([match[1], match[2].trim()]);
   }
   return parsed;
+}
+
+function pureAllowed(block: string[]): boolean {
+  if (block.length === 0) return false;
+  return block.every((line) => {
+    const match = TRAILER_RE.exec(line);
+    return Boolean(match?.[1] && ALLOWED_TRAILERS.has(match[1]));
+  });
+}
+
+function trailerBlock(message: string): [string, string][] {
+  const paras = paragraphs(message);
+  if (paras.length <= 1) return [];
+  const parsed = parseTrailerLines(paras[paras.length - 1] ?? []);
+  if (parsed.length === 0) return [];
+  const earlier: [string, string][] = [];
+  for (let i = paras.length - 2; i >= 1; i -= 1) {
+    const para = paras[i] ?? [];
+    if (!pureAllowed(para)) break;
+    earlier.unshift(...parseTrailerLines(para));
+  }
+  return [...earlier, ...parsed];
 }
 
 export function parseLog(text: string): CommitStat[] {
