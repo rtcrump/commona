@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Self-tests for check_conventions.py: must-pass and must-fail cases, plus a real throwaway git repo."""
-import os, subprocess, sys, tempfile, unittest
+import json, os, subprocess, sys, tempfile, unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import check_conventions as cc
 
@@ -28,6 +28,14 @@ class Commits(unittest.TestCase):
     def test_pass_qa_fail_on_branch(self): self.ok(msg("fix(nameblock): p5", AG, "QA: chatgpt round 1 fail"))
     def test_merge_commit_skipped(self): self.ok("Merge pull request #3 from x/y\n\nwhatever")
     def test_pass_grok_agent(self): self.ok(msg("feat(room): x", "Authored-by-agent: grok/grok-build\nModel: grok-build"))
+    def test_trailer_block_spec(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trailer-block-spec.json")
+        with open(path) as f:
+            spec = json.load(f)
+        for case in spec["cases"]:
+            parsed, _bad = cc.trailers(case["message"])
+            self.assertEqual(parsed, [tuple(pair) for pair in case["trailers"]], case["name"])
+
     def test_pass_cursor_commona_build(self):
         self.ok(msg("ci(ci): check the build", "Authored-by-agent: cursor/commona-build\nModel: cursor"))
     def test_pass_split_trailer_block(self):

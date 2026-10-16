@@ -40,7 +40,7 @@ export function percent(part: number, whole: number): number {
 }
 
 export function classifyTrailers(message: string): { kind: CommitStat["kind"]; qa: string | null } {
-  const trailers = trailerBlock(message);
+  const trailers = parseTrailerBlock(message);
   const agent = trailers.filter(([key]) => key === "Authored-by-agent").length;
   const human = trailers.filter(([key]) => key === "Authored-by").length;
   const qa = trailers.find(([key]) => key === "QA")?.[1] ?? null;
@@ -95,7 +95,8 @@ function pureAllowed(block: string[]): boolean {
   });
 }
 
-function trailerBlock(message: string): [string, string][] {
+/** Same block as `trailers()` in scripts/check_conventions.py. Cases live in trailer-block-spec.json. */
+export function parseTrailerBlock(message: string): [string, string][] {
   const paras = paragraphs(message);
   if (paras.length <= 1) return [];
   const parsed = parseTrailerLines(paras[paras.length - 1] ?? []);
