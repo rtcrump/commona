@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { hashToken } from "../../contract/index.js";
 import { startMcpHttp } from "../../connectors/mcp-server/http.js";
 import { HANDOFF_TTL_MS } from "../../src/onboarding/handoff.js";
@@ -153,6 +155,7 @@ function ownerRecord(room: JoinHarness, name: string): { id: string; agentId: st
 describe("guided connect", () => {
   let room: JoinHarness | undefined;
   let connector: { url: string; close(): Promise<void> } | undefined;
+  let stateDir: string | undefined;
   const previousConnect = process.env.COMMONA_CONNECT_URL;
 
   afterEach(async () => {
@@ -160,6 +163,8 @@ describe("guided connect", () => {
     connector = undefined;
     await room?.stop();
     room = undefined;
+    if (stateDir) rmSync(stateDir, { recursive: true, force: true });
+    stateDir = undefined;
     setInviteLog(() => {});
     if (previousConnect === undefined) delete process.env.COMMONA_CONNECT_URL;
     else process.env.COMMONA_CONNECT_URL = previousConnect;
@@ -736,6 +741,209 @@ describe("guided connect", () => {
     expect(again.body).not.toContain("The connector link is dead.");
     expect(room.issued.length).toBe(issuedBefore + 1);
     expect(room.tokens.authenticate(credential)).toMatchObject({ kind: "agent" });
+  });
+
+  it("reconnects a bound link after the connector restarts", async () => {
+    room = await startJoinHarness();
+    stateDir = mkdtempSync(join(tmpdir(), "commona-mcp-"));
+    const statePath = join(stateDir, "links.json");
+    const logs: string[] = [];
+    setInviteLog((line) => logs.push(line));
+    connector = await startMcpHttp({
+      config: { baseUrl: room.baseUrl, wakePollMs: 20 },
+      statePath,
+    });
+    process.env.COMMONA_CONNECT_URL = connector.url;
+
+    const person = await joinPerson(room, room.roomId, "Alex");
+    const page = await openGuided(room, person);
+    const copied = await call(room.baseUrl, "POST", `/j/${person.id}/connect/link`, {
+      cookie: jar(person, page.form),
+      json: { nonce: page.nonce },
+    });
+    const link = new URL((JSON.parse(copied.body) as { url: string }).url);
+    const secret = link.searchParams.get("handoff") ?? "";
+    const issuedBefore = room.issued.length;
+    const opened = await initializeMcp(link.toString());
+    expect(opened.status).toBe(200);
+    expect(opened.body).toContain("2025-06-18");
+    expect(opened.body).not.toContain("The connector link is dead.");
+    const credential = room.issued.slice(issuedBefore).find((item) => item.kind === "agent")?.token ?? "";
+    expect(credential.length).toBeGreaterThan(20);
+    const boundHash = agentHash(room, "Alex");
+    const saved = readFileSync(statePath, "utf8");
+    expect(saved).toContain(hashToken(secret));
+    expect(saved).not.toContain(secret);
+    expect(saved).not.toContain(credential);
+    expect(statSync(statePath).mode & 0o777).toBe(0o600);
+
+    await connector.close();
+    connector = await startMcpHttp({
+      config: { baseUrl: room.baseUrl, wakePollMs: 20 },
+      statePath,
+    });
+    const replay = new URL(connector.url);
+    replay.search = link.search;
+    const again = await initializeMcp(replay.toString());
+    expect(again.status).toBe(200);
+    expect(again.body).toContain("2025-06-18");
+    expect(again.body).not.toContain("The connector link is dead.");
+    expect(again.body).not.toContain(secret);
+    expect(again.body).not.toContain(credential);
+    expect(room.issued.length).toBe(issuedBefore + 1);
+    expect(agentHash(room, "Alex")).toBe(boundHash);
+    expect(room.tokens.authenticate(credential)).toMatchObject({
+      kind: "agent",
+      ownerId: ownerRecord(room, "Alex").id,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const connected = await openGuided(room, person);
+    const online = await call(room.baseUrl, "POST", `/j/${person.id}/connect/check`, {
+      cookie: jar(person, connected.form),
+      form: { nonce: connected.nonce },
+    });
+    expect(online.status).toBe(200);
+    expect(statusText(online.body)).toBe("Connected");
+    expect(online.body).not.toContain(secret);
+    expect(online.body).not.toContain(credential);
+
+    const kept = readFileSync(statePath, "utf8");
+    expect(kept).toContain(hashToken(secret));
+    expect(kept).not.toContain(secret);
+    expect(kept).not.toContain(credential);
+    const audit = JSON.stringify(room.db.prepare("SELECT action, detail_json FROM audit_log").all());
+    assertAbsent(
+      [page.page.body, connected.page.body, online.body, opened.body, again.body, ...logs, audit],
+      [secret, credential, person.session],
+    );
+    const dump = dumpDatabase(room.db);
+    expect(dump).not.toContain(secret);
+    expect(dump).not.toContain(credential);
+    expect(dump).toContain(hashToken(secret));
+  });
+
+  it("expires an unused handoff ten minutes after a restart", async () => {
+    room = await startJoinHarness();
+    stateDir = mkdtempSync(join(tmpdir(), "commona-mcp-"));
+    const statePath = join(stateDir, "links.json");
+    const logs: string[] = [];
+    setInviteLog((line) => logs.push(line));
+    connector = await startMcpHttp({
+      config: { baseUrl: room.baseUrl, wakePollMs: 20 },
+      statePath,
+    });
+    process.env.COMMONA_CONNECT_URL = connector.url;
+
+    const person = await joinPerson(room, room.roomId, "Alex");
+    const page = await openGuided(room, person);
+    const copied = await call(room.baseUrl, "POST", `/j/${person.id}/connect/link`, {
+      cookie: jar(person, page.form),
+      json: { nonce: page.nonce },
+    });
+    const link = new URL((JSON.parse(copied.body) as { url: string }).url);
+    const secret = link.searchParams.get("handoff") ?? "";
+    const hashBefore = agentHash(room, "Alex");
+    const issuedBefore = room.issued.length;
+
+    await connector.close();
+    connector = undefined;
+    room.clock.advance(HANDOFF_TTL_MS);
+    connector = await startMcpHttp({
+      config: { baseUrl: room.baseUrl, wakePollMs: 20 },
+      statePath,
+    });
+    const replay = new URL(connector.url);
+    replay.search = link.search;
+    const refused = await initializeMcp(replay.toString());
+    expect(refused.status).toBe(200);
+    expect(refused.body).toContain("The connector link is dead.");
+    expect(refused.body).not.toContain(secret);
+    expect(room.issued.length).toBe(issuedBefore);
+    expect(agentHash(room, "Alex")).toBe(hashBefore);
+
+    const expiredPage = await openGuided(room, person);
+    expect(expiredPage.page.body).toContain("Get a new link");
+    expect(expiredPage.page.body).toContain("ran out of time");
+    expect(expiredPage.page.body).not.toContain(secret);
+    const audit = JSON.stringify(room.db.prepare("SELECT action, detail_json FROM audit_log").all());
+    assertAbsent([page.page.body, expiredPage.page.body, refused.body, ...logs, audit], [secret, person.session]);
+    const dump = dumpDatabase(room.db);
+    expect(dump).not.toContain(secret);
+    expect(dump).toContain(hashToken(secret));
+  });
+
+  it("keeps a replaced link dead after a restart", async () => {
+    room = await startJoinHarness();
+    stateDir = mkdtempSync(join(tmpdir(), "commona-mcp-"));
+    const statePath = join(stateDir, "links.json");
+    const logs: string[] = [];
+    setInviteLog((line) => logs.push(line));
+    connector = await startMcpHttp({
+      config: { baseUrl: room.baseUrl, wakePollMs: 20 },
+      statePath,
+    });
+    process.env.COMMONA_CONNECT_URL = connector.url;
+
+    const person = await joinPerson(room, room.roomId, "Alex");
+    const page = await openGuided(room, person);
+    const copied = await call(room.baseUrl, "POST", `/j/${person.id}/connect/link`, {
+      cookie: jar(person, page.form),
+      json: { nonce: page.nonce },
+    });
+    const link = new URL((JSON.parse(copied.body) as { url: string }).url);
+    const secret = link.searchParams.get("handoff") ?? "";
+    const issuedBefore = room.issued.length;
+    const opened = await initializeMcp(link.toString());
+    expect(opened.status).toBe(200);
+    expect(opened.body).toContain("2025-06-18");
+    const credential = room.issued.slice(issuedBefore).find((item) => item.kind === "agent")?.token ?? "";
+    const boundHash = agentHash(room, "Alex");
+    const issuedAfter = room.issued.length;
+
+    await connector.close();
+    connector = undefined;
+    const replacedPage = await openGuided(room, person);
+    const copiedAgain = await call(room.baseUrl, "POST", `/j/${person.id}/connect/link`, {
+      cookie: jar(person, replacedPage.form),
+      json: { nonce: replacedPage.nonce },
+    });
+    const replacement = new URL((JSON.parse(copiedAgain.body) as { url: string }).url);
+    const newSecret = replacement.searchParams.get("handoff") ?? "";
+    expect(newSecret).not.toBe(secret);
+
+    connector = await startMcpHttp({
+      config: { baseUrl: room.baseUrl, wakePollMs: 20 },
+      statePath,
+    });
+    const replay = new URL(connector.url);
+    replay.search = link.search;
+    const retired = await initializeMcp(replay.toString());
+    expect(retired.status).toBe(200);
+    expect(retired.body).toContain("The connector link is dead.");
+    expect(retired.body).not.toContain(secret);
+    expect(retired.body).not.toContain(newSecret);
+    expect(retired.body).not.toContain(credential);
+    expect(room.issued.length).toBe(issuedAfter);
+    expect(agentHash(room, "Alex")).toBe(boundHash);
+    expect(room.tokens.authenticate(credential)).toMatchObject({ kind: "agent" });
+
+    const saved = readFileSync(statePath, "utf8");
+    expect(saved).not.toContain(secret);
+    expect(saved).not.toContain(newSecret);
+    expect(saved).not.toContain(credential);
+    expect(saved).not.toContain(hashToken(secret));
+    const audit = JSON.stringify(room.db.prepare("SELECT action, detail_json FROM audit_log").all());
+    assertAbsent(
+      [page.page.body, replacedPage.page.body, opened.body, retired.body, ...logs, audit],
+      [secret, newSecret, credential, person.session],
+    );
+    const dump = dumpDatabase(room.db);
+    expect(dump).not.toContain(secret);
+    expect(dump).not.toContain(newSecret);
+    expect(dump).not.toContain(credential);
+    expect(dump).toContain(hashToken(secret));
+    expect(dump).toContain(hashToken(newSecret));
   });
 });
 

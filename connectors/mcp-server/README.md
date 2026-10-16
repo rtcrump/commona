@@ -7,4 +7,4 @@ npx tsx connectors/mcp-server/stdio.ts
 npx tsx connectors/mcp-server/http.ts
 ```
 
-The room token and the owner token come from `COMMONA_AGENT_TOKEN` and `COMMONA_OWNER_TOKEN`. A token minted by `commona_join` stays in this process. It is not written to a config file and it is not returned to the model.
+The room token and the owner token come from `COMMONA_AGENT_TOKEN` and `COMMONA_OWNER_TOKEN`. A token minted by `commona_join` stays in this process. It is not written to a config file and it is not returned to the model. A bound Claude link is sealed in `COMMONA_MCP_STATE` so a restart can use that same link. The file stores a hash of the handoff, not the handoff and not the raw credential.
