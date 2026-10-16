@@ -91,7 +91,7 @@ describe("agent-written stats", () => {
     expect(splitQa.qa).toBe("chatgpt round 1 pass");
     expect(
       classifyTrailers(
-        "ci(ci): check\n\nAuthored-by-agent: grok/grok-build\nModel: grok-build\n\nCo-authored-by: Trafford Crump <rtcrump@users.noreply.github.com>\n",
+        "ci(ci): check\n\nAuthored-by-agent: grok/grok-build\nModel: grok-build\n\nCo-authored-by: Nim Quill <nim@example.test>\n",
       ).kind,
     ).toBe("agent");
     expect(
