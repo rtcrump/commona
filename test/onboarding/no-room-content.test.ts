@@ -83,7 +83,9 @@ describe("join pages show no room content", () => {
     pages.push(used.body);
 
     const revokedId = await createInvite(room);
-    await call(room.baseUrl, "DELETE", `/rooms/${room.roomId}/invites/${revokedId}`, { token: room.owner });
+    await call(room.baseUrl, "DELETE", `/rooms/${room.roomId}/invites/${revokedId}`, {
+      token: room.tokens.issueAgentToken("A1"),
+    });
     const revoked = await call(room.baseUrl, "GET", `/j/${revokedId}`, { accept: "text/html" });
     expect(revoked.body).toContain("cancelled");
     expect(revoked.body).not.toContain("Sunday lunch");

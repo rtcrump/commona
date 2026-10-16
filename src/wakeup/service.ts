@@ -12,6 +12,8 @@ import {
   WAKE_RETRY_DELAYS_MS,
   WAKE_WEBHOOK_TIMEOUT_MS,
   WakeState,
+  WakeWebhookUrlError,
+  assertWakeWebhookUrl,
   formatTimestamp,
   isAgentId,
   isId,
@@ -20,6 +22,7 @@ import {
   systemClock,
   wakeDisclosure,
   wakeFailedNoticeMessage,
+  wakeTimestamp,
   type AuditDetail,
   type AuditLog,
   type Clock,
@@ -37,7 +40,9 @@ import {
 type Sqlite = BetterSqlite3.Database;
 import { decodeUtf8Text } from "../guard/index.js";
 import { buildWakeEmail, wireWakeEvent } from "./event.js";
+import { safeWakeLog, silentWakeLog, type WakeLog } from "./log.js";
 import { recordersFor } from "./record.js";
+import { signingSecretFor } from "./secret.js";
 import { sendSmtp, type SmtpEndpoint } from "./smtp.js";
 import { postWakeWebhook, type WebhookFailure } from "./webhook.js";
 
@@ -54,6 +59,13 @@ export interface WakeServiceOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Required for email to succeed. A missing endpoint fails the email step. */
   smtp?: SmtpEndpoint;
+  /**
+   * Off unless the caller sets it. http is then allowed only for localhost or 127.0.0.1.
+   * The no-argument server passes the process flag. Tests that use a loopback sink set this.
+   */
+  allowInsecureLocalhost?: boolean;
+  /** Defaults to a logger that writes nothing. Lines that contain the signing secret are dropped. */
+  log?: WakeLog;
 }
 
 export interface WakeDeliveryResult {
@@ -122,6 +134,8 @@ export function createWakeService(options: WakeServiceOptions): WakeService {
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? WAKE_WEBHOOK_TIMEOUT_MS;
   const sleep = options.sleep ?? delay;
+  const allowInsecureLocalhost = options.allowInsecureLocalhost === true;
+  const log = options.log ?? silentWakeLog;
   const recorders = recordersFor(db, clock, { audit: options.audit, notices: options.notices });
   const inflight = new Map<string, Promise<WakeDeliveryResult>>();
 
@@ -223,42 +237,67 @@ export function createWakeService(options: WakeServiceOptions): WakeService {
 
     const event = wireWakeEvent(parseEvent(row.payloadJson));
     const address = loadAddress(db, row.recipientAgentId);
+    // The recipient agent's secret signs the webhook. It is not written to the log or the audit row.
+    const signingSecret = signingSecretFor(db, "agent", row.recipientAgentId);
     let attempts = row.attempts;
     let lastWebhook: WebhookFailure | undefined;
 
     if (address.webhook) {
-      while (attempts < WAKE_ATTEMPT_LIMIT) {
-        const attempt = attempts + 1;
-        const result = await postWakeWebhook({
-          url: address.webhook,
-          event,
-          timeoutMs,
-          fetchImpl,
-        });
-        attempts = attempt;
-        if (result.ok) {
-          return commit(row, {
-            state: WakeState.WebhookSucceeded,
-            attempts,
-            action: AuditAction.Wake,
-            result: AuditResult.Ok,
-            detail: baseDetail(row, { attempt }),
+      try {
+        assertWakeWebhookUrl(address.webhook, { allowInsecureLocalhost });
+        while (attempts < WAKE_ATTEMPT_LIMIT) {
+          const attempt = attempts + 1;
+          const result = await postWakeWebhook({
+            url: address.webhook,
+            event,
+            secret: signingSecret,
+            timestamp: wakeTimestamp(clock.now().getTime()),
+            timeoutMs,
+            fetchImpl,
+            allowInsecureLocalhost,
           });
+          attempts = attempt;
+          if (result.ok) {
+            safeWakeLog(
+              log,
+              signingSecret,
+              "info",
+              `wake webhook sent wakeId=${row.id} attempt=${attempt} status=${result.httpStatus}`,
+            );
+            return commit(row, {
+              state: WakeState.WebhookSucceeded,
+              attempts,
+              action: AuditAction.Wake,
+              result: AuditResult.Ok,
+              detail: baseDetail(row, { attempt }),
+            });
+          }
+          lastWebhook = result;
+          safeWakeLog(
+            log,
+            signingSecret,
+            "error",
+            `wake webhook failed wakeId=${row.id} attempt=${attempt} reason=${result.reasonCode}`,
+          );
+          if (attempt < WAKE_ATTEMPT_LIMIT) {
+            const delayMs = WAKE_RETRY_DELAYS_MS[attempt - 1];
+            if (delayMs === undefined) throw new ContractError("wake retry delay is missing");
+            commitAttempt(row, attempts, {
+              action: AuditAction.WakeRetry,
+              result: AuditResult.Retried,
+              detail: baseDetail(row, webhookDetail(result, attempt)),
+              ts: now(),
+            });
+            await sleep(delayMs);
+            const fresh = loadWake(db, wakeId);
+            if (fresh && fresh.state !== WakeState.Pending) return snapshot(fresh);
+          }
         }
-        lastWebhook = result;
-        if (attempt < WAKE_ATTEMPT_LIMIT) {
-          const delayMs = WAKE_RETRY_DELAYS_MS[attempt - 1];
-          if (delayMs === undefined) throw new ContractError("wake retry delay is missing");
-          commitAttempt(row, attempts, {
-            action: AuditAction.WakeRetry,
-            result: AuditResult.Retried,
-            detail: baseDetail(row, webhookDetail(result, attempt)),
-            ts: now(),
-          });
-          await sleep(delayMs);
-          const fresh = loadWake(db, wakeId);
-          if (fresh && fresh.state !== WakeState.Pending) return snapshot(fresh);
-        }
+      } catch (error) {
+        // A refused URL is not a transient failure. Do not POST and do not retry it.
+        // Email still runs so the wake is not dropped. The mail body has no message text.
+        if (!(error instanceof WakeWebhookUrlError)) throw error;
+        safeWakeLog(log, signingSecret, "error", error.message);
       }
     }
 
@@ -268,6 +307,7 @@ export function createWakeService(options: WakeServiceOptions): WakeService {
       if (!isMailbox(address.email)) throw new Error("recipient email is invalid");
       const email = buildWakeEmail(event, address.email);
       await sendSmtp(options.smtp, email);
+      safeWakeLog(log, signingSecret, "info", `wake email sent wakeId=${row.id} roomId=${row.roomId}`);
       return commit(row, {
         state: WakeState.EmailSent,
         attempts,
@@ -276,6 +316,7 @@ export function createWakeService(options: WakeServiceOptions): WakeService {
         detail: emailDetail,
       });
     } catch {
+      safeWakeLog(log, signingSecret, "error", `wake email failed wakeId=${row.id}`);
       return commit(row, {
         state: WakeState.Failed,
         attempts,

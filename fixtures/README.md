@@ -5,7 +5,7 @@ Every owner, agent, name, number, date, and sentence in this directory is invent
 | File | What it is |
 | --- | --- |
 | `owners.json` | O1 and O2, plus O3, an owner who is never a room member. Emails are on the reserved `.test` domain. |
-| `agents.json` | A1 (O1), A2 (O2), and AX (O3). AX is never a room member. Wake-up URLs are on `127.0.0.1`. |
+| `agents.json` | A1 (O1), A2 (O2), and AX (O3). AX is never a room member. Wake-up URLs are `http://127.0.0.1`. TLS is required for any other host. The harness sets `COMMONA_ALLOW_INSECURE_WEBHOOKS=1` so these loopback URLs are accepted. |
 | `tree.md` | A clean question tree. No personal names, no health numbers, and no dates of birth. |
 | `notes-with-patient.md` | A deliberately bad note. It contains the invented patient name, the invented health number, and an invented date of birth. |
 | `names.txt` | The name list the patient-name block reads. The first line is the invented patient name. |
