@@ -303,7 +303,14 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
   const audit = createAuditLog(db, clock);
   const sharing = createSharingDirectory(db);
   const notices = createOwnerNotifier(db, clock);
-  const wake = createWakeService({ db, clock, audit, notices });
+  const wake = createWakeService({
+    db,
+    clock,
+    audit,
+    notices,
+    // The listener is http://127.0.0.1. The product flag is off; this rehearsal turns it on.
+    allowInsecureLocalhost: true,
+  });
   const app = buildApp({
     db,
     clock,
