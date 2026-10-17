@@ -257,7 +257,7 @@ The copied link must be the public https address from the tunnel to port 3001, e
 
 A pass is the page saying **Connected**. **Not connected** means it did not answer. The page does not show the room, and it does not send a message. If this fails, write down what you saw and continue. It is a finding, not a reason to stop.
 
-If the link with its query string fails, keep that full copied link and set `COMMONA_MCP_BEARER` on the connector. Do not retry with the query string removed. Stop the connector window with Ctrl+C. In that same window, set a value you make up, then start the connector again. The earlier settings in that window stay. Replace `value-you-make-up` below. Do not use those words as the value. Never write a real value.
+If the link with its query string fails, keep that full copied link and set `COMMONA_MCP_BEARER` on the connector. Do not retry with the query string removed. Stop the connector window with Ctrl+C. In that same window, set a value you make up, then start the connector again. The earlier settings in that window stay. Replace `value-you-make-up` below. Do not use those words as the value. Type the real value only into the connector server's terminal or environment, where `COMMONA_MCP_BEARER` is set, and into Grok Bot's header field. Never type it into the room, a chat message, or a doc.
 
 macOS Terminal:
 
