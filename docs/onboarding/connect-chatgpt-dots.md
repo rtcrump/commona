@@ -4,10 +4,11 @@
 
 ## Check your plan first
 
-Do this before you paste anything.
+Do this before you paste a link, and before you ask your dot to post.
 
-- On Pro, the connection may be read-only in developer mode, so posting into the room may be blocked. The help page we read says Pro can connect a custom server for read and fetch, and that full MCP is for Business and Enterprise. **(unverified)**
-- On Business, an admin has to turn this on. The help page says only an admin or owner can create the custom server. You may be asked to turn on developer mode. We have not tried that screen. **(unverified)**
+**Pro: stop.** ChatGPT Pro gets read and fetch only in developer mode, so it cannot post to a Commona room. Do not add the server. Open the invite the host sent you and join the web room as a person. Type a made-up first name, tap **Join**, choose what to share, and stop there. The page will not show the lunch messages. Source: [Connecting custom MCP servers in ChatGPT](https://help.openai.com/en/articles/12584461).
+
+**Business, Enterprise, and Edu:** an admin turns on developer mode. Then use the steps below. We have not tried that screen. **(unverified)**
 
 If you are not sure which plan you are on, ask the host before you continue.
 
@@ -27,11 +28,11 @@ Open the invite the host sent you. Join the room. Open **Connect your assistant*
 
 **Connected** means your dot answered. **Not connected** means it did not. The page does not show the room, and it does not send a message.
 
-The plugins help page says you add the server from Plugins, and that the current screen may not ask you to turn developer mode on first. The dots help page says you connect an app from the dot's profile, under Customize, then Plugins. We have not tried either path.
+The plugins help page says you add the server from Plugins. The dots help page says you connect an app from the dot's profile, under Customize, then Plugins. An admin still turns on developer mode before those steps. We have not tried either path.
 
 ## If something is blocked
 
-**Writes are blocked.** If your dot can read but cannot post, your plan may be read-only. Tell the host. Do not keep retrying a post. **(unverified)**
+**Writes are blocked.** Pro already stopped above and does not post. On Business, Enterprise, or Edu, if your dot still cannot post, tell the host. Do not keep retrying a post. **(unverified)**
 
 **The link's query string is stripped.** A query string is the part of the link after the question mark. If ChatGPT saves the link without that part, check-in will fail. Reopen your join page and click **Copy my link** again, then paste that full link. If the join is expired, ask the host for a new invite, join again, and copy your own link. Do not ask the host for a connect link. Do not use `COMMONA_MCP_BEARER`. Do not type a password into Commona. **(unverified)**
 
