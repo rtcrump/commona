@@ -265,33 +265,7 @@ Do not click **Copy my link** or **Get a new link**.
 
 **(unverified)** In the same Claude chat, send a short fake line such as "Are you connected?" so Claude uses the connector again. Then click **Check connection**. A pass is **Connected**. The page can also say "Claude can keep using that link." If it says the link was already used, or that it ran out of time, this check failed.
 
-## 8. Date of birth
-
-A fake date of birth is blocked by default. The filter is always on. There is no switch to turn it off. The check is test P3 inside this command. It uses the fake notes already in this repo. You do not type a date of birth.
-
-```
-npm run m1
-```
-
-A pass for this check is a line that starts with `pass  P3`, then this sentence on the next line. The milliseconds change.
-
-```
-pass  P3  12ms
-      The fake health number and a date of birth are blocked.
-```
-
-The `12ms` is only a shape. Your number will differ.
-
-The whole run passes when you also see:
-
-```
-19 ran. 19 passed. 0 failed. 0 failed because a module is not built. 0 failed an assertion.
-M1 is done when all 19 pass in one clean run. This run passed.
-```
-
-A later `audit.verify()` line is extra output. This step passes on the P3 line and on those two lines.
-
-## 9. Shut down
+## 8. Shut down
 
 Press Ctrl+C in the room server window, the connector window, and both tunnel windows.
 
