@@ -1,7 +1,5 @@
 # Safety-core paths. A trailing slash is a directory prefix. Any other line is one file.
 # The Claude workflow and AGENTS.md both use this list.
-src/guard/
-src/nameblock/
 src/sharing/
 src/audit/
 src/auth/

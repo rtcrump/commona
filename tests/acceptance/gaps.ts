@@ -4,7 +4,7 @@
  */
 export const CONTRACT_GAPS = [
   "The contract does not name the database file the process opens. The harness sets COMMONA_DB to a fresh file and seeds the fixtures there. A server that opens a different file cannot satisfy the tests.",
-  "The contract does not name an SMTP host or port. The harness sets COMMONA_SMTP_HOST and COMMONA_SMTP_PORT to an in-process sink. W2's email fallback and P1's mail to the owner have no contract field that points at that sink.",
+  "The contract does not name an SMTP host or port. The harness sets COMMONA_SMTP_HOST and COMMONA_SMTP_PORT to an in-process sink. W2's email fallback has no contract field that points at that sink.",
   "buildApp() takes no database, token store, clock, or mailer. The harness starts that app and calls the src/auth and src/audit entry points. It cannot inject those dependencies through a contract type.",
   "There is no route to change an agent's webhook. The harness listens on the URLs in fixtures/agents.json. Wakes arrive only if the server posts to those stored URLs.",
   "There is no GET for sharing rows. S5 reads the sharing table from SCHEMA_SQL and checks that A2's feed is empty.",
@@ -19,7 +19,7 @@ export const CONTRACT_GAPS = [
 /** Readings the contract can express. Recorded so they are not mistaken for wording changes. */
 export const HARNESS_NOTES = [
   "R1's sentence does not mention sharing, and the default level is None, which hides the post. The harness follows the T2 procedure and sets both directions to messages_files with PUT /rooms/:roomId/sharing before A2 reads. The contract has no separate test-only sharing helper.",
-  "An accepted post or upload wakes every other member. Those wake/ok rows are part of L1 for R1, R3, S1, S2, S3, and S5. Blocked items add no wake. P4 keeps A2 out of the room, so that test expects no wake.",
+  "An accepted post or upload wakes every other member. Those wake/ok rows are part of L1 for R1, R3, S1, S2, S3, S5, P1, P2, P3, and P5. P4 keeps A2 out of the room, so that test expects no wake.",
   "W3's line that A1's webhook receives nothing would pass if the server sent no webhooks. The harness also requires A2 to receive that wake.",
   "L3 filters on ownerId, so rows filed as owner:O2 are visible to O2. The harness asserts ownerId O2, which is what GET /log returns.",
   "S4 logs O2's refusal as agent id owner:O2. The T3 line says the attempt is logged with A2/O2.",

@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   assertWakeWebhookUrl,
-  HEALTH_NUMBER_PATTERN,
   type AgentFixture,
   type FixturePack,
   type OwnerFixture,
@@ -33,13 +32,8 @@ export function loadFixtures(dir = path.resolve("fixtures")): FixturePack {
   const owners = parseOwners(readJson(path.join(dir, "owners.json")));
   const agents = parseAgents(readJson(path.join(dir, "agents.json")));
   const tree = readFileSync(path.join(dir, "tree.md"), "utf8");
-  const notesWithPatient = readFileSync(path.join(dir, "notes-with-patient.md"), "utf8");
-  const names = readFileSync(path.join(dir, "names.txt"), "utf8")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("#"));
   const normalMessages = parseMessages(readJson(path.join(dir, "normal-messages.json")));
-  const pack = { owners, agents, tree, notesWithPatient, names, normalMessages };
+  const pack = { owners, agents, tree, normalMessages };
   assertPack(pack);
   return pack;
 }
@@ -106,17 +100,7 @@ function assertPack(pack: FixturePack): void {
     if (url.hostname !== "127.0.0.1") throw new Error("fixture webhooks must stay on 127.0.0.1");
     if (!agent.wake.email.endsWith("@example.test")) throw new Error("agent emails must use example.test");
   }
-  if (pack.names.length === 0) throw new Error("names.txt is empty");
   if (/\d/.test(pack.tree)) throw new Error("tree.md must not contain digits");
-  if (!pack.notesWithPatient.includes(pack.names[0] ?? "")) {
-    throw new Error("notes-with-patient.md must contain the first name-list entry");
-  }
-  if (!new RegExp(HEALTH_NUMBER_PATTERN).test(pack.notesWithPatient)) {
-    throw new Error("notes-with-patient.md must contain an invented health number");
-  }
-  if (!/DOB|date of birth|born/i.test(pack.notesWithPatient)) {
-    throw new Error("notes-with-patient.md must contain a date-of-birth cue");
-  }
   if (pack.normalMessages.length !== 20) throw new Error("normal-messages.json must have 20 messages");
   for (const phrase of ["Meet at 10:30.", "Version v2.1 is the one to review.", "Room 12 is free this afternoon."]) {
     if (!pack.normalMessages.includes(phrase)) throw new Error(`missing ordinary message: ${phrase}`);

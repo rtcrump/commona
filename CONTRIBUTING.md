@@ -6,4 +6,4 @@ The bot commit identity is `commona-bot <commona-bot@users.noreply.github.com>`.
 
 Use only the synthetic fixtures in `fixtures/`. Do not add real names, real contact details, or real health data.
 
-The interface shared by the room, wake-up service, sharing, name block, audit log, and acceptance harness is in [contract/README.md](contract/README.md).
+The interface shared by the room, wake-up service, sharing, audit log, and acceptance harness is in [contract/README.md](contract/README.md).

@@ -9,8 +9,6 @@ import {
   AuditResult,
   DEFAULT_SHARING_LEVEL,
   GENESIS_PREV_HASH,
-  DOB_DATE_SHAPES,
-  NAME_BLOCK_KNOWN_LIMIT,
   SharingLevel,
   activityOnlyText,
   assertAuditAppend,
@@ -221,14 +219,8 @@ describe("schema", () => {
 });
 
 describe("acceptance catalogue", () => {
-  it("lists the 19 tests and states the name-block limit", () => {
+  it("lists the 19 tests", () => {
     expect(ACCEPTANCE_TESTS).toHaveLength(19);
     expect(new Set(ACCEPTANCE_TESTS.map((test) => test.id)).size).toBe(19);
-    expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/Misspellings/);
-    expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/zero-width characters/);
-    expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/decode encodings/);
-    expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/fold homoglyphs/);
-    expect(NAME_BLOCK_KNOWN_LIMIT).toMatch(/known limit, not a new finding/);
-    expect(DOB_DATE_SHAPES).toContain("D/M/YYYY");
   });
 });

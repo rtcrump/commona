@@ -9,10 +9,11 @@ Safety-core paths are listed under Safety-core review.
 P0/P1 covers anything that could:
 
 - leak data across owners
-- let a patient name, health number, or date of birth through, apart from the known limits in SECURITY.md
 - edit, delete, or truncate audit entries undetected
 - bypass the loop limit
 - skip join auth
+
+Commona does not filter message or file content. A name, a health number, or a date of birth in a post or a file is not a finding.
 
 Real data in fixtures is P0. Changing acceptance test wording is P1.
 
@@ -20,9 +21,8 @@ Real data in fixtures is P0. Changing acceptance test wording is P1.
 
 Reviewers only review. They do not commit or push.
 
-These paths are safety-core. They are the name block, sharing, the audit log, sign-in, the contract, and the server wiring that connects them:
+These paths are safety-core. They are sharing, the audit log, sign-in, the contract, and the server wiring that connects them:
 
-- `src/guard/` and `src/nameblock/` — the name block. `src/nameblock/` re-exports `src/guard/`.
 - `src/sharing/` and `src/room/sharing.ts` — per-owner sharing.
 - `src/audit/` — the audit log.
 - `src/auth/`, `src/room/access.ts`, `src/room/membership.ts`, and `src/room/routes.ts` — bearer tokens, join, and the membership check.

@@ -137,8 +137,9 @@ function matchingInviteHash(
   return timingSafeEqual(got, expected) ? row.secret_hash : null;
 }
 
-function displayNameAllowed(deps: RoomDeps, name: string): boolean {
-  return deps.guard.check({ kind: "message", text: name }).outcome === "allow";
+/** Display names are stored as entered. Commona does not filter the text. */
+function displayNameAllowed(_deps: RoomDeps, _name: string): boolean {
+  return true;
 }
 
 function welcomeAgain(

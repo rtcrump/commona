@@ -1,15 +1,9 @@
-import type { ContentGuard, WakeQueue } from "../../contract/index.js";
+import type { WakeQueue } from "../../contract/index.js";
 import { buildApp, type BuildAppOptions } from "../../src/app.js";
 import { createTokenStore } from "../../src/auth/index.js";
 import { openDatabase } from "../../src/db.js";
 import { loadFixtures, seedFixtures } from "../helpers/fixtures.js";
 import { createTestAudit, createTestSharing, steppingClock, type TestAuditLog } from "./fakes.js";
-
-const allowGuard: ContentGuard = {
-  check() {
-    return { outcome: "allow", hits: [] };
-  },
-};
 
 export interface RoomHarness {
   baseUrl: string;
@@ -28,7 +22,6 @@ export async function startRoom(overrides: BuildAppOptions = {}): Promise<RoomHa
   const tokens = overrides.tokens ?? createTokenStore(db);
   const audit = (overrides.audit as TestAuditLog | undefined) ?? createTestAudit(db, clock);
   const sharing = overrides.sharing ?? createTestSharing(db);
-  const guard = overrides.guard ?? allowGuard;
   const calls: Parameters<WakeQueue["enqueue"]>[0][] = [];
   const wakes: RoomHarness["wakes"] = {
     calls,
@@ -38,7 +31,7 @@ export async function startRoom(overrides: BuildAppOptions = {}): Promise<RoomHa
     },
   };
   const wakeQueue = overrides.wakeQueue ?? (wakes as WakeQueue);
-  const app = buildApp({ db, clock, tokens, audit, sharing, guard, wakeQueue });
+  const app = buildApp({ db, clock, tokens, audit, sharing, wakeQueue });
   await app.listen({ host: "127.0.0.1", port: 0 });
   const address = app.server.address();
   if (address === null || typeof address === "string") throw new Error("room server did not bind");

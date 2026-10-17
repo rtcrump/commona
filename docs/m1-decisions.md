@@ -12,9 +12,9 @@ The file is opened in WAL mode with a 5 second busy timeout, so the harness can 
 
 ## SMTP and buildApp injection
 
-`buildApp()` still accepts the dependencies the unit tests inject: database, clock, tokens, audit, sharing, guard, notices, wake queue, and SMTP. The harness calls `buildApp()` with no arguments. That path reads the environment.
+`buildApp()` still accepts the dependencies the unit tests inject: database, clock, tokens, audit, sharing, notices, wake queue, and SMTP. The harness calls `buildApp()` with no arguments. That path reads the environment.
 
-SMTP is `COMMONA_SMTP_HOST` and `COMMONA_SMTP_PORT`, and only when both are set. The harness points them at its in-process sink. A missing pair means mail is not sent. Wake delivery then ends as `wake_failed`. A block notice is still stored.
+SMTP is `COMMONA_SMTP_HOST` and `COMMONA_SMTP_PORT`, and only when both are set. The harness points them at its in-process sink. A missing pair means mail is not sent. Wake delivery then ends as `wake_failed`.
 
 Injecting `db` does not read the SMTP environment. A test that wants mail passes `smtp`.
 
@@ -48,7 +48,7 @@ A failed webhook attempt that will be retried is one `wake_retry` / `retried`. T
 
 Activity-only wake mail uses the contract sentence `New activity in room <roomId>.` A content message uses `New message in <roomId>, open your agent`. A content file uses `New file in <roomId>, open your agent`. The message text, file name, and file bytes are not in the body. Subjects use `wakeEmailSubject`. The sender is `commona@localhost`.
 
-A block mail uses the same sender and the same text as the owner notice: `A <message|file> was held in room <roomId> (<category> in <location>).` The matched text is not in the subject or the body. A loop stop stores a notice and does not send mail. The contract asks for mail on a block, and for a notice on a loop stop.
+A loop stop stores a notice and does not send mail.
 
 ## Who is told that a wake failed
 
@@ -65,7 +65,3 @@ An agent is not woken for their own post or file. Other agents of the same owner
 ## Audit chain tip
 
 `verify()` used to accept any prefix of the chain, so deleting the tail was invisible. `audit_chain_tip` stores the latest sequence number and hash. `verify()` checks the rows, then checks that tip. Cutting off the end fails the check. The tip cannot rewind or be deleted.
-
-## Name block and labelled bytes
-
-A file body is scanned when it decodes as UTF-8, including a text file labelled `image/png`. A real PNG does not decode, so it is still not byte-scanned. The file name and metadata are scanned either way.

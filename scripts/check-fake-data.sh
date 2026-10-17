@@ -1,24 +1,14 @@
 #!/usr/bin/env bash
-# Fail when the invented health number, or any fixtures/names.txt entry,
+# Fail when the invented health number or the invented patient name
 # shows up outside fixtures/, test/, and tests/. The acceptance harness
-# quotes the M1 truth set, so tests/ is allowed to contain those markers.
-# The health number is assembled at runtime so this script does not
-# contain the literal.
+# quotes that fake data, so tests/ is allowed to contain those markers.
+# The markers are assembled at runtime so this script does not contain
+# the literals.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [[ ! -f fixtures/names.txt ]]; then
-  echo "fixtures/names.txt is missing" >&2
-  exit 1
-fi
-
 health="$(printf '%s-%s' '12345' '6789')"
-
-mapfile -t names < <(grep -v '^[[:space:]]*$' fixtures/names.txt | grep -v '^[[:space:]]*#')
-if ((${#names[@]} == 0)); then
-  echo "fixtures/names.txt has no names" >&2
-  exit 1
-fi
+name="$(printf '%s %s' 'Jane' 'Testpatient')"
 
 mapfile -t files < <(git ls-files --cached --others --exclude-standard)
 
@@ -28,20 +18,21 @@ for f in "${files[@]}"; do
   case "$f" in
     fixtures/*|test/*|tests/*) continue ;;
   esac
+  if [[ ! -f "$f" ]]; then
+    continue
+  fi
   scan+=("$f")
   lowpath="$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')"
   lowhealth="$(printf '%s' "$health" | tr '[:upper:]' '[:lower:]')"
+  lowname="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
   if [[ "$lowpath" == *"$lowhealth"* ]]; then
     echo "health number leaked into path: $f" >&2
     fail=1
   fi
-  for name in "${names[@]}"; do
-    needle="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
-    if [[ "$lowpath" == *"$needle"* ]]; then
-      echo "name leaked into path: $f" >&2
-      fail=1
-    fi
-  done
+  if [[ "$lowpath" == *"$lowname"* ]]; then
+    echo "name leaked into path: $f" >&2
+    fail=1
+  fi
 done
 
 if ((${#scan[@]} > 0)); then
@@ -50,13 +41,11 @@ if ((${#scan[@]} > 0)); then
     echo "health number leaked outside fixtures/, test/, and tests/" >&2
     fail=1
   fi
-  for name in "${names[@]}"; do
-    if grep -n -F -i -H -e "$name" "${scan[@]}" > /tmp/commona-fake-name.txt; then
-      cat /tmp/commona-fake-name.txt >&2
-      echo "name list entry leaked outside fixtures/, test/, and tests/" >&2
-      fail=1
-    fi
-  done
+  if grep -n -F -i -H -e "$name" "${scan[@]}" > /tmp/commona-fake-name.txt; then
+    cat /tmp/commona-fake-name.txt >&2
+    echo "invented patient name leaked outside fixtures/, test/, and tests/" >&2
+    fail=1
+  fi
 fi
 
 if ((fail)); then

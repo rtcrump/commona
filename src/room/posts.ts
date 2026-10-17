@@ -24,8 +24,7 @@ import {
   type RoomFile,
   type UploadFileResponse,
 } from "../../contract/index.js";
-import { decodeUtf8Text } from "../guard/index.js";
-import { recordBlock, recordLoopStop } from "../notices/events.js";
+import { recordLoopStop } from "../notices/events.js";
 import { nowStamp, refuse, requireMember, requireRoom } from "./access.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
@@ -75,9 +74,6 @@ export function createPost(
   const round = roundAfterOtherAgent(deps, roomId, principal.agentId);
   const threadId = parent?.threadId ?? id;
   const createdAt = nowStamp(deps);
-  const decision = deps.guard.check({ kind: "message", text: request.text });
-  const held = decision.outcome === "block";
-  const block = held ? decision.hits[0] : undefined;
   deps.db
     .prepare(
       `INSERT INTO posts (
@@ -94,9 +90,9 @@ export function createPost(
       request.replyToId,
       threadId,
       round,
-      held ? 1 : 0,
-      block?.category ?? null,
-      block?.location ?? null,
+      0,
+      null,
+      null,
       createdAt,
     );
   const post: Post = {
@@ -108,36 +104,9 @@ export function createPost(
     replyToId: request.replyToId,
     threadId,
     round,
-    held,
+    held: false,
     createdAt,
   };
-  if (held) {
-    deps.audit.append({
-      ts: nowStamp(deps),
-      room: roomId,
-      agentId: principal.agentId,
-      ownerId: principal.ownerId,
-      action: AuditAction.Block,
-      result: AuditResult.Blocked,
-      detail: {
-        ...(block ? { category: block.category, location: block.location } : {}),
-        itemKind: "message",
-        itemId: id,
-        round,
-      },
-    });
-    if (block) {
-      recordBlock(deps, {
-        roomId,
-        ownerId: principal.ownerId,
-        kind: "message",
-        category: block.category,
-        location: block.location,
-        itemId: id,
-      });
-    }
-    return block ? { outcome: "held", post, block } : { outcome: "held", post };
-  }
   deps.audit.append({
     ts: nowStamp(deps),
     room: roomId,
@@ -169,15 +138,6 @@ export function uploadFile(
   if (principal.kind !== "agent") throw RoomHttpError.forbidden();
   const bytes = decodeBase64(request.contentBase64);
   const metadata = request.metadata;
-  const text = decodeUtf8Text(bytes);
-  const decision = deps.guard.check({
-    kind: "file",
-    fileName: request.filename,
-    metadata,
-    ...(text !== undefined ? { text } : {}),
-  });
-  const held = decision.outcome === "block";
-  const block = held ? decision.hits[0] : undefined;
   const id = newId("file");
   const createdAt = nowStamp(deps);
   const round = roundAfterOtherAgent(deps, roomId, principal.agentId);
@@ -199,9 +159,9 @@ export function uploadFile(
       JSON.stringify(metadata),
       bytes.length,
       round,
-      held ? 1 : 0,
-      block?.category ?? null,
-      block?.location ?? null,
+      0,
+      null,
+      null,
       createdAt,
     );
   const file: RoomFile = {
@@ -213,35 +173,9 @@ export function uploadFile(
     mediaType: request.mediaType,
     byteLength: bytes.length,
     metadata,
-    held,
+    held: false,
     createdAt,
   };
-  if (held) {
-    deps.audit.append({
-      ts: nowStamp(deps),
-      room: roomId,
-      agentId: principal.agentId,
-      ownerId: principal.ownerId,
-      action: AuditAction.Block,
-      result: AuditResult.Blocked,
-      detail: {
-        ...(block ? { category: block.category, location: block.location } : {}),
-        itemKind: "file",
-        itemId: id,
-      },
-    });
-    if (block) {
-      recordBlock(deps, {
-        roomId,
-        ownerId: principal.ownerId,
-        kind: "file",
-        category: block.category,
-        location: block.location,
-        itemId: id,
-      });
-    }
-    return block ? { outcome: "held", file, block } : { outcome: "held", file };
-  }
   deps.audit.append({
     ts: nowStamp(deps),
     room: roomId,

@@ -5,7 +5,6 @@ import {
   type AuditLog,
   type AuthPrincipal,
   type Clock,
-  type ContentGuard,
   type OwnerNotifier,
   type SharingDirectory,
   type TokenStore,
@@ -13,7 +12,6 @@ import {
 import { createAuditLog } from "./audit/log.js";
 import { createTokenStore } from "./auth/store.js";
 import { openDatabase } from "./db.js";
-import { guard } from "./guard/index.js";
 import { createOwnerNotifier } from "./notices/store.js";
 import { createSharingDirectory } from "./sharing/index.js";
 import { createWakeService, type WakeService } from "./wakeup/index.js";
@@ -31,7 +29,6 @@ export interface Runtime {
   tokens: TokenStore;
   audit: AuditLog;
   sharing: SharingDirectory;
-  guard: ContentGuard;
   notices: OwnerNotifier;
   smtp?: SmtpEndpoint;
   wake: WakeService;
@@ -64,7 +61,6 @@ export function defaultRuntime(): Runtime {
     tokens,
     audit,
     sharing: createSharingDirectory(db),
-    guard,
     notices,
     ...(smtp ? { smtp } : {}),
     wake,

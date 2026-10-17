@@ -10,7 +10,7 @@ Exit 0 = pass, 1 = violations (printed), 2 = usage error.
 import argparse, re, subprocess, sys
 
 TYPES = "feat|fix|test|docs|chore|ci|refactor"
-COMPONENTS = "room|wake|sharing|nameblock|audit|loop|data|ci|docs|tracking|m1|release|readme|demo"
+COMPONENTS = "room|wake|sharing|audit|loop|data|ci|docs|tracking|m1|release|readme|demo"
 SUBJECT_RE = re.compile(rf"^({TYPES})\(({COMPONENTS})\): \S.*$")
 TRAILER_RE = re.compile(r"^([A-Za-z][A-Za-z-]*): (.+)$")
 ALLOWED = {"Authored-by-agent", "Model", "Authored-by", "QA", "Approved-by", "Co-authored-by", "Refs"}
@@ -20,7 +20,7 @@ AGENT_RE = re.compile(
 HUMAN_RE = re.compile(r"^human/[A-Za-z0-9._-]+$")
 QA_RE = re.compile(r"^chatgpt round [123] (pass|fail)$")
 BOT_EMAILS = {"commona-bot@users.noreply.github.com"}  # [Assumed] real bot identity set at G2
-CRITICAL = ("src/sharing/", "src/guard/", "src/audit/", "src/auth/", "src/room/membership")
+CRITICAL = ("src/sharing/", "src/audit/", "src/auth/", "src/room/membership")
 AUTHOR_LABELS = {"agent:cursor", "agent:community", "agent:grok-build", "human-edit"}
 QA_LABELS = {"qa-round-1", "qa-round-2", "qa-round-3"}
 KNOWN_LABELS = AUTHOR_LABELS | QA_LABELS | {"agent:chatgpt-qa", "critical-core"}
