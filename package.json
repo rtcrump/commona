@@ -15,6 +15,7 @@
     "test": "vitest run",
     "m1": "tsx scripts/m1.ts",
     "demo:lunch": "tsx scripts/demo-lunch.ts",
+    "room:new": "tsx scripts/room-new.ts",
     "stats": "tsx scripts/agent-written.ts --write",
     "stats:check": "tsx scripts/agent-written.ts --check",
     "check:fake-data": "bash scripts/check-fake-data.sh",
