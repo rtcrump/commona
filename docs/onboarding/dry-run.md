@@ -1,6 +1,6 @@
 # Dry run before the lunch test
 
-Do this on your own computer before the lunch with two friends. The lunch itself is in [Lunch walkthrough](lunch-walkthrough.md). This page is the practice. The Claude taps are marked **(unverified)**, the same way as [Add your assistant in Claude](connect-claude.md).
+Do this on your own computer before the lunch with two friends. The lunch itself is in [Lunch walkthrough](lunch-walkthrough.md). This page is the practice. The agent for this dry run is Grok Bot. Steps that talk to Grok Bot are marked **(unverified)**.
 
 Use a made-up first name if a page asks for one. Do not type a real date of birth, a real health number, or a password. Do not paste the connector link into a chat, a note, or a screenshot. That link is a secret. The https host on its own is not.
 
@@ -131,11 +131,13 @@ time 408
 
 The command does not print the lunch text. If you see `Missing script: "demo:lunch"`, this folder does not have the rehearsal. Stop.
 
-## 6. One real Claude check
+## 6. One real Grok Bot check
 
-Use a personal Claude account, on claude.ai or in Claude Desktop. Do not use a Team or Enterprise account. On those accounts, only an organization Owner can add a connector. **(unverified)** A free plan can add only one custom connector. If you already have one, remove it under **Customize**, then **Connectors**. **(unverified)**
+This is the first real-client test. It has not been run with Grok Bot. **(unverified)** If it fails, write down what you saw. That failure is a finding. It is not a reason to stop.
 
-The link you paste into Claude is not the room address from step 3. It is the connector program. That program is the MCP server. MCP means the connector Claude calls. It is a second program, separate from `npm start`.
+The link you give Grok Bot is not the room address from step 3. It is the connector program. That program is the MCP server. MCP means the connector the agent calls. It is a second program, separate from `npm start`.
+
+That link must be a public https address: the tunnel to port 3001, not `localhost`. The connector uses streamable HTTP at `/mcp`. Streamable HTTP means Grok Bot talks to that web address, and the path on the end is `/mcp`.
 
 In a new window:
 
@@ -245,17 +247,46 @@ Open the first printed link in the browser. The pages set a secure cookie, so us
 1. Type a made-up first name, such as Alex. Click **Join**.
 2. Leave **Nothing** selected. It is already selected and marked safest. Click **Continue**.
 3. Click **Connect your assistant**.
-4. Click **Copy my link** once. A second click makes a new link, and the first one stops working. The link is not written on the page. Use it within about 10 minutes.
-5. **(unverified)** On a personal account, open **Customize**, then **Connectors**, then **+ Add**, then **Add custom connector**. Type a name, such as Commona. Paste the link. Click **Add**. The lunch walkthrough still says Settings, then Connectors, then Add custom connector. Use the Customize path on this page. That Settings list is not the personal-account path.
-6. **(unverified)** If Claude asks how to sign in, one help-page choice is **No sign in**. That choice is untested. Do not add a second key. Do not type a password into Commona.
-7. **(unverified)** Open a chat. Click **+**, then **Connectors**, and turn the connector on.
-8. Come back to the Commona page. Click **Check connection**.
+4. Click **Copy my link** once. A second click makes a new link, and the first one stops working. The link is not written on the page. Use it within about 10 minutes. That copied link is the connect link for the room you just created with `room:new`.
 
-A pass is the page saying **Connected**. **Not connected** means it did not answer. The page does not show the room, and it does not send a message.
+The copied link must be the public https address from the tunnel to port 3001, ending in `/mcp`, including the query string. A query string is the part of the link after `?`. Do not give Grok Bot `localhost` or `http://127.0.0.1:3001/mcp`.
+
+5. **(unverified)** In the Grok Bot chat, ask: `Add a custom MCP server named Commona at <copied link>`. Put the copied link where `<copied link>` is.
+6. **(unverified)** When Grok Bot asks you to confirm, confirm. Attach the server with `@` in the chat. Ask it to check in to Commona.
+7. Come back to the Commona page. Click **Check connection**.
+
+A pass is the page saying **Connected**. **Not connected** means it did not answer. The page does not show the room, and it does not send a message. If this fails, write down what you saw and continue. It is a finding, not a reason to stop.
+
+If the link with its query string fails, set `COMMONA_MCP_BEARER` on the connector and try again with no query string. Stop the connector window with Ctrl+C. In that same window, set a value you make up, then start the connector again. The earlier settings in that window stay. Replace `value-you-make-up` below. Do not use those words as the value. Never paste the value into the room or a doc.
+
+macOS Terminal:
+
+```
+export COMMONA_MCP_BEARER="value-you-make-up"
+npx tsx connectors/mcp-server/http.ts
+```
+
+Windows PowerShell:
+
+```
+$env:COMMONA_MCP_BEARER = "value-you-make-up"
+npx tsx connectors/mcp-server/http.ts
+```
+
+Windows Command Prompt:
+
+```
+set COMMONA_MCP_BEARER=value-you-make-up
+npx tsx connectors/mcp-server/http.ts
+```
+
+The URL with no query string is the same `COMMONA_CONNECT_URL`, such as `https://REPLACE-ME.trycloudflare.com/mcp`.
+
+**(unverified)** Ask Grok Bot to add that URL, with no `?` and nothing after it, and a static header `Authorization: Bearer` followed by the value you set. Give the value only as that header. Never paste the value into the room or a doc. If this also fails, write that down and continue.
 
 ## 7. Restart the connector
 
-This is the check for issue 26. A link Claude has already used should keep working after the connector program stops and starts again. You do not make a new link.
+This is the check for issue 26. A link Grok Bot has already used should keep working after the connector program stops and starts again. You do not make a new link.
 
 Leave the room server and both tunnels running. In the connector window, press Ctrl+C, then start it again with the same command as step 6. Stay in that window so the port stays 3001.
 
@@ -263,7 +294,7 @@ Do not delete `.commona/mcp-links.json` in your home folder. On Windows that fol
 
 Do not click **Copy my link** or **Get a new link**.
 
-**(unverified)** In the same Claude chat, send a short fake line such as "Are you connected?" so Claude uses the connector again. Then click **Check connection**. A pass is **Connected**. The page can also say "Claude can keep using that link." If it says the link was already used, or that it ran out of time, this check failed.
+**(unverified)** In the same Grok Bot chat, send a short fake line such as "Are you connected?" so Grok Bot uses the connector again. Then click **Check connection**. A pass is **Connected**. The page can also say that Grok Bot can keep using that link. If it says the link was already used, or that it ran out of time, this check failed.
 
 ## 8. Shut down
 
