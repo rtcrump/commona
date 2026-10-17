@@ -20,10 +20,6 @@ export interface FixturePack {
   agents: AgentFixture[];
   /** Clean question tree. */
   tree: string;
-  /** Invented note that the name block must hold. */
-  notesWithPatient: string;
-  /** Name list. The first non-empty line is the primary invented patient name. */
-  names: string[];
   /** Exactly 20 ordinary messages. */
   normalMessages: string[];
 }

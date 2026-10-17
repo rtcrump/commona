@@ -1,14 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { AuditAction, AuditResult, BlockCategory, BlockLocation, NoticeKind, ReasonCode, blockNoticeMessage, type ContentGuard } from "../../contract/index.js";
-import { guard } from "../../src/guard/index.js";
+import { AuditAction, AuditResult, NoticeKind, ReasonCode } from "../../contract/index.js";
 import { loadFixtures } from "../helpers/fixtures.js";
 import { send, startRoom } from "./server.js";
-
-const blockAll: ContentGuard = {
-  check() {
-    return { outcome: "block", hits: [{ category: BlockCategory.Name, location: BlockLocation.Text }] };
-  },
-};
 
 describe("posts and files", () => {
   it("keeps another owner's message hidden until sharing is opened", async () => {
@@ -55,85 +48,23 @@ describe("posts and files", () => {
     }
   });
 
-  it("holds a blocked post out of every feed and logs block instead of post", async () => {
-    const room = await startRoom({ guard: blockAll });
+  it("accepts a message that names the invented patient", async () => {
+    const room = await startRoom();
     try {
-      const text = loadFixtures().normalMessages[7] ?? "";
+      const text = "Please see Jane Testpatient today.";
       const { roomId, a1 } = await twoMembers(room);
-      const owner = room.tokens.issueOwnerToken("O1");
       const posted = await send(room.baseUrl, "POST", `/rooms/${roomId}/posts`, a1, { text });
-      expect(posted.status).toBe(200);
-      expect(posted.body).toMatchObject({
-        outcome: "held",
-        block: { category: "name", location: "text" },
-      });
+      expect(posted.status).toBe(201);
+      expect(posted.body).toMatchObject({ outcome: "accepted", post: { text, held: false } });
       const feed = await send(room.baseUrl, "GET", `/rooms/${roomId}/feed?as=A1`, a1);
-      expect((feed.body as { items: unknown[] }).items).toEqual([]);
-      const refused = await send(room.baseUrl, "GET", `/rooms/${roomId}/held`, owner);
-      expect(refused.status).toBe(403);
-      expect(JSON.stringify(refused.body)).not.toContain(text);
+      expect(feed.body).toMatchObject({ items: [{ kind: "message", text }] });
       const held = await send(room.baseUrl, "GET", `/rooms/${roomId}/held`, a1);
       expect(held.status).toBe(200);
-      expect(held.body).toMatchObject({ items: [{ kind: "message", text }] });
+      expect(held.body).toEqual({ items: [] });
       const actions = room.audit.all().map((row) => row.action);
-      expect(actions).toContain("block");
-      expect(actions).not.toContain("post");
-      expect(room.wakes.calls).toEqual([]);
-      const notices = room.db
-        .prepare("SELECT owner_id, kind, category, location, message FROM notices")
-        .all() as { owner_id: string; kind: string; category: string; location: string; message: string }[];
-      const told = blockNoticeMessage({
-        roomId,
-        kind: "message",
-        category: BlockCategory.Name,
-        location: BlockLocation.Text,
-      });
-      expect(notices).toEqual([{ owner_id: "O1", kind: "block", category: "name", location: "text", message: told }]);
-      expect(told).not.toContain(text);
-    } finally {
-      await room.stop();
-    }
-  });
-
-  it("shows held items only to the agent that authored them", async () => {
-    const room = await startRoom({ guard: blockAll });
-    try {
-      const text = loadFixtures().normalMessages[8] ?? "";
-      const { roomId, a1 } = await twoMembers(room);
-      const owner = room.tokens.issueOwnerToken("O1");
-      room.db
-        .prepare(
-          `INSERT INTO agents (id, owner_id, display_name, email, webhook_url, event_target)
-           VALUES ('A1b', 'O1', 'Agent One B', 'a1b@example.test', NULL, NULL)`,
-        )
-        .run();
-      const added = await send(room.baseUrl, "POST", `/rooms/${roomId}/members`, owner, { agentId: "A1b" });
-      expect(added.status).toBe(201);
-      const sibling = (added.body as { token: string }).token;
-      const posted = await send(room.baseUrl, "POST", `/rooms/${roomId}/posts`, a1, { text });
-      expect(posted.status).toBe(200);
-      const uploaded = await send(room.baseUrl, "POST", `/rooms/${roomId}/files`, a1, {
-        filename: "note.txt",
-        mediaType: "text/plain",
-        contentBase64: Buffer.from("only-a1").toString("base64"),
-      });
-      expect(uploaded.status).toBe(200);
-
-      const other = await send(room.baseUrl, "GET", `/rooms/${roomId}/held`, sibling);
-      expect(other.status).toBe(200);
-      expect(other.body).toEqual({ items: [] });
-      expect(JSON.stringify(other.body)).not.toContain(text);
-      expect(JSON.stringify(other.body)).not.toContain("only-a1");
-      expect(JSON.stringify(other.body)).not.toContain("note.txt");
-
-      const held = await send(room.baseUrl, "GET", `/rooms/${roomId}/held`, a1);
-      expect(held.status).toBe(200);
-      expect(held.body).toMatchObject({
-        items: [
-          { kind: "message", text },
-          { kind: "file", name: "note.txt" },
-        ],
-      });
+      expect(actions).toContain("post");
+      expect(actions).not.toContain("block");
+      expect(room.wakes.calls).toEqual([expect.objectContaining({ itemKind: "message", round: 1 })]);
     } finally {
       await room.stop();
     }
@@ -300,8 +231,8 @@ describe("posts and files", () => {
     }
   });
 
-  it("holds a text file labelled as an image when the bytes name a listed person", async () => {
-    const room = await startRoom({ guard });
+  it("accepts a text file labelled as an image and a binary image", async () => {
+    const room = await startRoom();
     try {
       const { roomId, a1 } = await twoMembers(room);
       const named = Buffer.from("Jane Testpatient", "utf8").toString("base64");
@@ -310,11 +241,8 @@ describe("posts and files", () => {
         mediaType: "image/png",
         contentBase64: named,
       });
-      expect(labelled.status).toBe(200);
-      expect(labelled.body).toMatchObject({
-        outcome: "held",
-        block: { category: "name", location: "file_body" },
-      });
+      expect(labelled.status).toBe(201);
+      expect(labelled.body).toMatchObject({ outcome: "accepted", file: { held: false } });
       const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
       const binary = await send(room.baseUrl, "POST", `/rooms/${roomId}/files`, a1, {
         filename: "photo.png",

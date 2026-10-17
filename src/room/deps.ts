@@ -2,7 +2,6 @@ import type Database from "better-sqlite3";
 import type {
   AuditLog,
   Clock,
-  ContentGuard,
   OwnerNotifier,
   SharingDirectory,
   TokenStore,
@@ -16,7 +15,6 @@ export interface RoomDeps {
   tokens: TokenStore;
   audit: AuditLog;
   sharing: SharingDirectory;
-  guard: ContentGuard;
   notices: OwnerNotifier;
   /**
    * Called after an accepted post or file when the round still sends wakes.

@@ -24,8 +24,6 @@ def run_gate(files, labels):
     return out.stdout.strip()
 
 hits = [
-    "src/guard/index.ts",
-    "src/nameblock/index.ts",
     "src/sharing/index.ts",
     "src/audit/log.ts",
     "src/auth/store.ts",

@@ -5,7 +5,6 @@ import {
   systemClock,
   type AuditLog,
   type Clock,
-  type ContentGuard,
   type HealthResponse,
   type OwnerNotifier,
   type SharingDirectory,
@@ -14,7 +13,6 @@ import {
 } from "../contract/index.js";
 import { createAuditLog, registerLogRoute } from "./audit/index.js";
 import { createTokenStore } from "./auth/index.js";
-import { guard } from "./guard/index.js";
 import { registerInviteRoutes } from "./join/routes.js";
 import { createOwnerNotifier, registerNoticeRoute } from "./notices/index.js";
 import type { RoomDeps } from "./room/deps.js";
@@ -30,7 +28,6 @@ export interface BuildAppOptions {
   tokens?: TokenStore;
   audit?: AuditLog;
   sharing?: SharingDirectory;
-  guard?: ContentGuard;
   notices?: OwnerNotifier;
   /**
    * Pass a queue to enqueue wakes after an accepted post or file.
@@ -45,7 +42,7 @@ export interface BuildAppOptions {
 
 /**
  * The no-argument app is what the harness starts. It opens COMMONA_DB (or memory),
- * wires auth, audit, sharing, the name block, notices, and wake-up, and delivers
+ * wires auth, audit, sharing, notices, and wake-up, and delivers
  * to the webhook URLs stored on the agents.
  */
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
@@ -64,7 +61,6 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     tokens,
     audit,
     sharing: options.sharing ?? shared?.sharing ?? createSharingDirectory(db),
-    guard: options.guard ?? shared?.guard ?? guard,
     notices,
     ...(wakeQueue ? { wakeQueue } : {}),
     ...(deliverWake ? { deliverWake } : {}),

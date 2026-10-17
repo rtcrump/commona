@@ -1,16 +1,5 @@
-import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { call, cookieValue, createInvite, startJoinHarness, type JoinHarness } from "./harness.js";
-
-function listedName(): string {
-  const text = readFileSync(new URL("../../fixtures/names.txt", import.meta.url), "utf8");
-  const name = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.length > 0 && !line.startsWith("#"));
-  if (!name) throw new Error("fixtures/names.txt has no name");
-  return name;
-}
 
 function displayNames(room: JoinHarness): string[] {
   return (room.db.prepare("SELECT display_name FROM owners").all() as { display_name: string }[]).map(
@@ -69,25 +58,16 @@ describe("join name guards", () => {
     expect(displayNames(room)).not.toContain("Pat");
   });
 
-  it("rejects a protected name before it is stored as a display name", async () => {
+  it("stores a display name that includes the invented patient name", async () => {
     room = await startJoinHarness();
-    const blocked = listedName();
+    const name = "Jane Testpatient";
     const id = await createInvite(room);
     const welcome = await call(room.baseUrl, "GET", `/j/${id}`, { accept: "text/html" });
     const invite = cookieValue(welcome.setCookies, "commona_invite");
     const welcomeNonce = cookieValue(welcome.setCookies, "commona_form");
-    const rejected = await call(room.baseUrl, "POST", `/j/${id}/continue`, {
-      cookie: `commona_invite=${invite}; commona_form=${welcomeNonce}`,
-      form: { nonce: welcomeNonce, firstName: blocked },
-    });
-    expect(rejected.status).toBe(400);
-    expect(rejected.body).not.toContain(blocked);
-    expect(displayNames(room)).not.toContain(blocked);
-
-    const retryNonce = cookieValue(rejected.setCookies, "commona_form");
     const continued = await call(room.baseUrl, "POST", `/j/${id}/continue`, {
-      cookie: `commona_invite=${invite}; commona_form=${retryNonce}`,
-      form: { nonce: retryNonce, firstName: "Alex" },
+      cookie: `commona_invite=${invite}; commona_form=${welcomeNonce}`,
+      form: { nonce: welcomeNonce, firstName: name },
     });
     expect(continued.status).toBe(303);
     const sharing = await call(room.baseUrl, "GET", `/j/${id}/sharing`, {
@@ -100,11 +80,6 @@ describe("join name guards", () => {
       form: { nonce: shareNonce, seeing: "Nothing" },
     });
     expect(finished.status).toBe(303);
-    expect(displayNames(room)).toContain("Alex");
-    expect(displayNames(room)).not.toContain(blocked);
-
-    const laterId = await createInvite(room);
-    const later = await call(room.baseUrl, "GET", `/j/${laterId}`, { accept: "text/html" });
-    expect(later.body).not.toContain(blocked);
+    expect(displayNames(room)).toContain(name);
   });
 });

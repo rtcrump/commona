@@ -14,12 +14,6 @@ export function fixtureAgent(ctx: Ctx, agentId: string): AgentFixture {
   return found;
 }
 
-export function ownerEmail(ctx: Ctx, ownerId: string): string {
-  const found = ctx.pack.owners.find((owner) => owner.id === ownerId);
-  if (!found) fail(`fixture has no owner ${ownerId}`);
-  return found.email;
-}
-
 export function joined(ctx: Ctx, agentId: string): ExpectedLogRow {
   return {
     action: AuditAction.Join,
@@ -89,15 +83,6 @@ export function wakeFailed(ctx: Ctx, recipientAgentId: string): ExpectedLogRow {
     agentId: recipientAgentId,
     ownerId: fixtureAgent(ctx, recipientAgentId).ownerId,
     result: AuditResult.Failed,
-  };
-}
-
-export function blocked(ctx: Ctx, agentId: string): ExpectedLogRow {
-  return {
-    action: AuditAction.Block,
-    agentId,
-    ownerId: fixtureAgent(ctx, agentId).ownerId,
-    result: AuditResult.Blocked,
   };
 }
 

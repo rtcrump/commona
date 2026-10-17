@@ -24,7 +24,7 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       # `npm test` does not run tests/acceptance. Those 19 tests are `npm run m1`.
-      # They fail until the room, wake-up, sharing, name block, and audit modules
+      # They fail until the room, wake-up, sharing, and audit modules
       # exist, and that failure is reported by the harness rather than by this job.
       - run: npm test
       - run: npm run check:fake-data

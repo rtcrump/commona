@@ -25,7 +25,7 @@ class Commits(unittest.TestCase):
     def test_pass_community(self): self.ok(msg("fix(wake): retry jitter", "Authored-by-agent: community/some-user/cursor\nModel: m"))
     def test_pass_human(self): self.ok(msg("fix(ci): emergency pin", "Authored-by: human/trafford"), email="t@example.test")
     def test_pass_main(self): self.ok(msg("feat(room): join auth", AG, MAIN), mode="main")
-    def test_pass_qa_fail_on_branch(self): self.ok(msg("fix(nameblock): p5", AG, "QA: chatgpt round 1 fail"))
+    def test_pass_qa_fail_on_branch(self): self.ok(msg("fix(room): p5", AG, "QA: chatgpt round 1 fail"))
     def test_merge_commit_skipped(self): self.ok("Merge pull request #3 from x/y\n\nwhatever")
     def test_pass_grok_agent(self): self.ok(msg("feat(room): x", "Authored-by-agent: grok/grok-build\nModel: grok-build"))
     def test_docs_components_match_checker(self):
@@ -109,7 +109,7 @@ class Labels(unittest.TestCase):
     def test_fail_missing_human_edit(self): self.assertTrue(self.errs("agent:cursor", human=1))
     def test_fail_spurious_human_edit(self): self.assertTrue(self.errs("agent:cursor,human-edit", human=0))
     def test_fail_missing_critical(self):
-        for f in ("src/sharing/x.ts", "src/guard/name.ts", "src/audit/a.ts", "src/auth/t.ts", "src/room/membership.ts"):
+        for f in ("src/sharing/x.ts", "src/audit/a.ts", "src/auth/t.ts", "src/room/membership.ts"):
             self.assertTrue(self.errs("agent:cursor", [f]), f)
     def test_noncritical_ok(self): self.assertEqual(self.errs("agent:cursor", ["src/wake/queue.ts", "src/room/feed.ts"]), [])
     def test_fail_two_rounds(self): self.assertTrue(self.errs("agent:cursor,qa-round-1,qa-round-2"))

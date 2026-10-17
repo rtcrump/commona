@@ -14,7 +14,7 @@ describe("two mcp clients", () => {
     const firstText = fixtures.normalMessages[0] ?? "";
     const replyText = fixtures.normalMessages[1] ?? "";
     const fileText = fixtures.normalMessages[2] ?? "";
-    const blockedName = fixtures.names[0] ?? "";
+    const named = "Jane Testpatient";
     const room = await startConnectorRoom();
     const spool = freshSpool();
     const listener = await startWakeListener({ handoff: spoolHandoff(spool) });
@@ -103,27 +103,20 @@ describe("two mcp clients", () => {
       const items = (feedWithFile.json as { items: FeedItem[] }).items;
       expect(items.some((item) => item.kind === "file" && item.name === "synthetic-note.txt")).toBe(true);
 
-      const heldPost = await stdio.callTool("commona_post", { text: `Held example ${blockedName}` });
-      expect(heldPost.isError).toBe(false);
-      expect(heldPost.json).toMatchObject({ outcome: "held" });
-      await delay(400);
-      const noWake = await http.callTool("commona_take_wakes");
-      expect(noWake.isError).toBe(false);
-      expect((noWake.json as { events: WakeEvent[] }).events).toEqual([]);
-      const hidden = await http.callTool("commona_read_feed");
-      expect(hidden.text).not.toContain(blockedName);
-
+      const namedPost = await stdio.callTool("commona_post", { text: `Note for ${named}` });
+      expect(namedPost.isError).toBe(false);
+      expect(namedPost.json).toMatchObject({ outcome: "accepted" });
+      const namedWake = await waitForEvents(() => http.callTool("commona_take_wakes"));
+      expect(JSON.stringify(namedWake[0]?.content)).toContain(named);
+      const visible = await http.callTool("commona_read_feed");
+      expect(visible.text).toContain(named);
       const held = await stdio.callTool("commona_read_held");
       expect(held.isError).toBe(false);
-      const heldItems = (held.json as { items: { text?: string }[] }).items;
-      expect(heldItems.some((item) => item.text?.includes(blockedName))).toBe(true);
-      const otherHeld = await http.callTool("commona_read_held");
-      expect(otherHeld.text).not.toContain(blockedName);
+      expect((held.json as { items: unknown[] }).items).toEqual([]);
       const notices = await stdio.callTool("commona_read_notices");
       expect(notices.isError).toBe(false);
-      const noticeRows = (notices.json as { notices: { kind: string; message: string }[] }).notices;
-      expect(noticeRows.some((notice) => notice.kind === "block")).toBe(true);
-      for (const notice of noticeRows) expect(notice.message).not.toContain(blockedName);
+      const noticeRows = (notices.json as { notices: { kind: string }[] }).notices;
+      expect(noticeRows.some((notice) => notice.kind === "block")).toBe(false);
     } finally {
       http.close();
       await stdio.close();

@@ -98,21 +98,21 @@ export const ACCEPTANCE_CASES: readonly AcceptanceCase[] = [
     spec: "T4",
     wording: WORDING.P1,
     procedures: [
-      "`test_P1_name_in_message_blocked` — blocked, O1 notified (mail sink has 1 mail to o1@example.test), log has `block`.",
+      "`test_P1_name_in_message_allowed` — accepted, author feed shows it, log has `post`.",
     ],
   },
   {
     id: "P2",
     spec: "T4",
     wording: WORDING.P2,
-    procedures: ["`test_P2_bad_file_blocked` — upload `notes-with-patient.md` → blocked."],
+    procedures: ["`test_P2_notes_file_allowed` — upload `notes-with-patient.md` → accepted."],
   },
   {
     id: "P3",
     spec: "T4",
     wording: WORDING.P3,
     procedures: [
-      "`test_P3_health_number_and_dob_blocked` — two separate messages, each blocked with the right category.",
+      "`test_P3_health_number_and_dob_allowed` — two separate messages, each accepted.",
     ],
   },
   {
@@ -128,7 +128,7 @@ export const ACCEPTANCE_CASES: readonly AcceptanceCase[] = [
     spec: "T4",
     wording: WORDING.P5,
     procedures: [
-      '`test_P5_name_in_filename_or_metadata` — clean body named `jane-testpatient.md` blocked; clean file with metadata title "Jane Testpatient" blocked.',
+      '`test_P5_name_in_filename_or_metadata_allowed` — clean body named `jane-testpatient.md` accepted; clean file with metadata title "Jane Testpatient" accepted.',
     ],
   },
   {

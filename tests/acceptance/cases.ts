@@ -1,11 +1,7 @@
 import {
   AuditAction,
   AuditResult,
-  BlockCategory,
-  BlockLocation,
-  DOB_CUES,
   GENESIS_PREV_HASH,
-  HEALTH_NUMBER_PATTERN,
   NoticeKind,
   ReasonCode,
   SharingLevel,
@@ -47,13 +43,11 @@ import {
 } from "./http.js";
 import { delay, poll, pollAsync } from "./poll.js";
 import {
-  blocked,
   fixtureAgent,
   joined,
   joinRefused,
   loopStopped,
   ordinary,
-  ownerEmail,
   posted,
   readRow,
   retriedAttempts,
@@ -68,13 +62,22 @@ import {
 /** Copied from the W1 sentence. The contract does not export this bound. */
 const W1_LIMIT_MS = 60_000;
 
-const BLOCK_NOTICE_BUDGET_MS = 10_000;
-
 const W2_BUDGET_MS =
   WAKE_RETRY_DELAYS_MS.reduce((sum, wait) => sum + wait, 0) + WAKE_WEBHOOK_TIMEOUT_MS * WAKE_ATTEMPT_LIMIT + 5_000;
 
 const TREE_FILE = "tree.md";
 const NOTES_FILE = "notes-with-patient.md";
+const FAKE_PATIENT_NAME = "Jane Testpatient";
+const FAKE_HEALTH_NUMBER = "12345-6789";
+const FAKE_DOB_LINE = "DOB: 1980-02-29";
+const FAKE_NOTES = `# Visit notes
+
+Patient: ${FAKE_PATIENT_NAME}
+Health number: ${FAKE_HEALTH_NUMBER}
+${FAKE_DOB_LINE}
+
+The follow-up is a routine check.
+`;
 
 async function roomWithBoth(ctx: Ctx): Promise<string> {
   const roomId = await createRoom(ctx, "O1");
@@ -487,67 +490,75 @@ export async function test_S5_new_room_defaults_none(ctx: Ctx): Promise<void> {
   if (items.length !== 0) fail(`A2 saw ${items.length} items with no sharing setup`);
 }
 
-export async function test_P1_name_in_message_blocked(ctx: Ctx): Promise<void> {
-  const name = ctx.pack.names[0];
-  if (!name) fail("name list is empty");
-  expectRows(ctx, [joined(ctx, "A1"), joined(ctx, "A2"), blocked(ctx, "A1"), readRow(ctx, "A1"), readRow(ctx, "A2")]);
+export async function test_P1_name_in_message_allowed(ctx: Ctx): Promise<void> {
+  const name = FAKE_PATIENT_NAME;
+  expectRows(ctx, [
+    joined(ctx, "A1"),
+    joined(ctx, "A2"),
+    posted(ctx, "A1"),
+    woke(ctx, "A2"),
+    readRow(ctx, "A1"),
+    readRow(ctx, "A2"),
+  ]);
   const roomId = await roomWithBoth(ctx);
-  const email = ownerEmail(ctx, "O1");
-  const before = mailsTo(ctx, email);
   const created = await postMessage(ctx, roomId, "A1", name);
-  if (created.outcome !== "held") fail(`message outcome was ${created.outcome}`);
-  if (created.block?.category !== BlockCategory.Name || created.block.location !== BlockLocation.Text) {
-    fail(`block was ${created.block?.category ?? "missing"}/${created.block?.location ?? "missing"}`);
-  }
-  const told = await pollAsync(BLOCK_NOTICE_BUDGET_MS, async () => {
-    const mailed = mailsTo(ctx, email) > before;
-    const notices = await noticesFor(ctx, "O1");
-    return mailed && notices.some((notice) => notice.roomId === roomId && notice.kind === NoticeKind.Block);
-  });
-  if (!told) fail("O1 was not told");
+  if (created.outcome !== "accepted") fail(`message outcome was ${created.outcome}`);
+  if (created.block) fail("an accepted message carried a block");
+  if (created.post.held) fail("an accepted message was marked held");
   const entries = await logFor(ctx, "O1", ownerToken(ctx, "O1"));
-  const blocks = entries.filter((row) => row.room === roomId && row.action === AuditAction.Block && row.result === AuditResult.Blocked);
-  if (blocks.length !== 1) fail(`block rows: ${blocks.length}`);
-  if (blocks[0]?.detail.category !== BlockCategory.Name || blocks[0].detail.location !== BlockLocation.Text) {
-    fail("log block category or location was wrong");
-  }
-  if (entries.some((row) => row.room === roomId && row.action === AuditAction.Post)) {
-    fail("blocked message was also logged as post");
+  const posts = entries.filter(
+    (row) => row.room === roomId && row.action === AuditAction.Post && row.result === AuditResult.Ok,
+  );
+  if (posts.length !== 1) fail(`post rows: ${posts.length}`);
+  if (entries.some((row) => row.room === roomId && row.action === AuditAction.Block)) {
+    fail("an allowed message was logged as block");
   }
   const authorFeed = await feed(ctx, roomId, "A1");
   const otherFeed = await feed(ctx, roomId, "A2");
-  if (authorFeed.some((item) => item.kind === "message" && item.text === name)) fail("author feed showed the held message");
-  if (otherFeed.some((item) => item.kind === "message" && item.text === name)) fail("A2 saw the held message");
+  if (!authorFeed.some((item) => item.kind === "message" && item.text === name)) fail("author feed hid the message");
+  if (otherFeed.some((item) => item.kind === "message" && item.text === name)) {
+    fail("A2 saw the message at the default sharing level");
+  }
 }
 
-export async function test_P2_bad_file_blocked(ctx: Ctx): Promise<void> {
-  expectRows(ctx, [joined(ctx, "A1"), joined(ctx, "A2"), blocked(ctx, "A1"), readRow(ctx, "A2")]);
+export async function test_P2_notes_file_allowed(ctx: Ctx): Promise<void> {
+  expectRows(ctx, [
+    joined(ctx, "A1"),
+    joined(ctx, "A2"),
+    uploaded(ctx, "A1"),
+    woke(ctx, "A2"),
+    readRow(ctx, "A1"),
+    readRow(ctx, "A2"),
+  ]);
   const roomId = await roomWithBoth(ctx);
-  const created = await upload(ctx, roomId, "A1", fileBody(NOTES_FILE, ctx.pack.notesWithPatient));
-  if (created.outcome !== "held") fail(`${NOTES_FILE} outcome was ${created.outcome}`);
-  if (created.block?.category !== BlockCategory.Name || created.block.location !== BlockLocation.FileBody) {
-    fail(`block was ${created.block?.category ?? "missing"}/${created.block?.location ?? "missing"}`);
-  }
+  const created = await upload(ctx, roomId, "A1", fileBody(NOTES_FILE, FAKE_NOTES));
+  if (created.outcome !== "accepted") fail(`${NOTES_FILE} outcome was ${created.outcome}`);
+  if (created.block) fail("an accepted file carried a block");
+  const author = await feed(ctx, roomId, "A1");
+  if (!author.some((item) => item.kind === "file" && item.name === NOTES_FILE)) fail("author feed hid the file");
   const items = await feed(ctx, roomId, "A2");
-  if (items.some((item) => item.kind === "file" && item.name === NOTES_FILE)) fail("A2 saw the blocked file");
+  if (items.some((item) => item.kind === "file" && item.name === NOTES_FILE)) {
+    fail("A2 saw the file at the default sharing level");
+  }
 }
 
-export async function test_P3_health_number_and_dob_blocked(ctx: Ctx): Promise<void> {
-  const health = new RegExp(HEALTH_NUMBER_PATTERN).exec(ctx.pack.notesWithPatient)?.[0];
-  if (!health) fail("fixture notes have no health number");
-  const dobLine = ctx.pack.notesWithPatient
-    .split(/\r?\n/)
-    .find((line) => DOB_CUES.some((cue) => line.toLowerCase().includes(cue)));
-  if (!dobLine) fail("fixture notes have no date-of-birth cue");
-  expectRows(ctx, [joined(ctx, "A1"), joined(ctx, "A2"), blocked(ctx, "A1"), blocked(ctx, "A1")]);
+export async function test_P3_health_number_and_dob_allowed(ctx: Ctx): Promise<void> {
+  expectRows(ctx, [
+    joined(ctx, "A1"),
+    joined(ctx, "A2"),
+    posted(ctx, "A1"),
+    woke(ctx, "A2"),
+    posted(ctx, "A1"),
+    woke(ctx, "A2"),
+  ]);
   const roomId = await roomWithBoth(ctx);
-  const healthPost = await postMessage(ctx, roomId, "A1", health);
-  const dobPost = await postMessage(ctx, roomId, "A1", dobLine);
-  if (healthPost.outcome !== "held" || healthPost.block?.category !== BlockCategory.HealthNumber) {
-    fail(`health number outcome ${healthPost.outcome} category ${healthPost.block?.category ?? "missing"}`);
+  const healthPost = await postMessage(ctx, roomId, "A1", FAKE_HEALTH_NUMBER);
+  const dobPost = await postMessage(ctx, roomId, "A1", FAKE_DOB_LINE);
+  if (healthPost.outcome !== "accepted" || healthPost.block) {
+    fail(`health number outcome ${healthPost.outcome}`);
   }
-  if (dobPost.outcome !== "held" || dobPost.block?.category !== BlockCategory.Dob) {
-    fail(`date of birth outcome ${dobPost.outcome} category ${dobPost.block?.category ?? "missing"}`);
+  if (dobPost.outcome !== "accepted" || dobPost.block) {
+    fail(`date of birth outcome ${dobPost.outcome}`);
   }
 }
 
@@ -567,25 +578,31 @@ export async function test_P4_no_false_positives(ctx: Ctx): Promise<void> {
   if (blocks !== 0) fail(`block count ${blocks}`);
 }
 
-export async function test_P5_name_in_filename_or_metadata(ctx: Ctx): Promise<void> {
-  const name = ctx.pack.names[0];
-  if (!name) fail("name list is empty");
+export async function test_P5_name_in_filename_or_metadata_allowed(ctx: Ctx): Promise<void> {
+  const name = FAKE_PATIENT_NAME;
   const hiddenFile = `${name.toLowerCase().replaceAll(" ", "-")}.md`;
-  expectRows(ctx, [joined(ctx, "A1"), joined(ctx, "A2"), blocked(ctx, "A1"), blocked(ctx, "A1"), readRow(ctx, "A2")]);
+  expectRows(ctx, [
+    joined(ctx, "A1"),
+    joined(ctx, "A2"),
+    uploaded(ctx, "A1"),
+    woke(ctx, "A2"),
+    uploaded(ctx, "A1"),
+    woke(ctx, "A2"),
+    readRow(ctx, "A1"),
+    readRow(ctx, "A2"),
+  ]);
   const roomId = await roomWithBoth(ctx);
   const byName = await upload(ctx, roomId, "A1", fileBody(hiddenFile, ctx.pack.tree));
   const byMeta = await upload(ctx, roomId, "A1", fileBody("clean.md", ctx.pack.tree, { title: name }));
-  if (byName.outcome !== "held" || byName.block?.location !== BlockLocation.FileName) {
-    fail(`file name outcome ${byName.outcome} location ${byName.block?.location ?? "missing"}`);
-  }
-  if (byMeta.outcome !== "held" || byMeta.block?.location !== BlockLocation.FileMeta) {
-    fail(`file details outcome ${byMeta.outcome} location ${byMeta.block?.location ?? "missing"}`);
-  }
-  if (byName.block?.category !== BlockCategory.Name || byMeta.block?.category !== BlockCategory.Name) {
-    fail("a hidden name was not categorised as a name");
+  if (byName.outcome !== "accepted" || byName.block) fail(`file name outcome ${byName.outcome}`);
+  if (byMeta.outcome !== "accepted" || byMeta.block) fail(`file details outcome ${byMeta.outcome}`);
+  const author = await feed(ctx, roomId, "A1");
+  if (!author.some((item) => item.kind === "file" && item.name === hiddenFile)) fail("author feed hid the named file");
+  if (!author.some((item) => item.kind === "file" && item.name === "clean.md")) {
+    fail("author feed hid the file with a title");
   }
   const items = await feed(ctx, roomId, "A2");
-  if (items.length !== 0) fail("A2 saw a held file");
+  if (items.length !== 0) fail("A2 saw a file at the default sharing level");
 }
 
 export async function test_L1_every_action_logged(ctx: Ctx): Promise<void> {
@@ -792,11 +809,11 @@ export const CASES: Record<AcceptanceTestId, (ctx: Ctx) => Promise<void>> = {
   S3: test_S3_messages_files_both,
   S4: test_S4_a2_cannot_change_o1_setting,
   S5: test_S5_new_room_defaults_none,
-  P1: test_P1_name_in_message_blocked,
-  P2: test_P2_bad_file_blocked,
-  P3: test_P3_health_number_and_dob_blocked,
+  P1: test_P1_name_in_message_allowed,
+  P2: test_P2_notes_file_allowed,
+  P3: test_P3_health_number_and_dob_allowed,
   P4: test_P4_no_false_positives,
-  P5: test_P5_name_in_filename_or_metadata,
+  P5: test_P5_name_in_filename_or_metadata_allowed,
   L1: test_L1_every_action_logged,
   L2: test_L2_edit_or_delete_refused,
   L3: test_L3_owner_sees_only_own,

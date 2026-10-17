@@ -38,7 +38,6 @@ import {
 } from "../../contract/index.js";
 
 type Sqlite = BetterSqlite3.Database;
-import { decodeUtf8Text } from "../guard/index.js";
 import { buildWakeEmail, wireWakeEvent } from "./event.js";
 import { safeWakeLog, silentWakeLog, type WakeLog } from "./log.js";
 import { recordersFor } from "./record.js";
@@ -626,4 +625,13 @@ function parseEvent(payloadJson: string): WakeEvent {
 
 function isMailbox(value: string): boolean {
   return /^[^\s@]+@[^\s@]+$/.test(value) && !/[\r\n]/.test(value);
+}
+
+/** The file body when it is valid UTF-8. The declared media type is not consulted. */
+function decodeUtf8Text(bytes: Uint8Array): string | undefined {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return undefined;
+  }
 }

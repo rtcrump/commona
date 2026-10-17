@@ -1,17 +1,16 @@
 # Contract
 
-Shared types for six implementations that can land separately and still fit together:
+Shared types for five implementations that can land separately and still fit together:
 
 | Piece | Folder | Implements |
 | --- | --- | --- |
 | Room server | `src/room/`, `src/auth/` | Routes, membership, bearer tokens |
 | Wake-up service | `src/wakeup/` | `WakeQueue`, webhook POST, email fallback |
 | Sharing | `src/sharing/` | `SharingDirectory` and the feed filter |
-| Name block | `src/guard/` | `ContentGuard` |
 | Audit log | `src/audit/` | `AuditLog` |
 | Acceptance harness | `tests/acceptance/` | The 19 tests via `npm run m1` |
 
-`src/nameblock/` re-exports `src/guard/`. Put the name-block code in `src/guard/` so the conventions check treats it as critical core. `src/db.ts` only opens SQLite and applies `SCHEMA_SQL`.
+`src/db.ts` only opens SQLite and applies `SCHEMA_SQL`.
 
 `GET /health` is the only route this foundation implements. Every other route below is the shape later pull requests fill in.
 
@@ -40,8 +39,8 @@ All bodies are JSON. The header is `Authorization: Bearer <token>`.
 | `GET /health` | anyone | `{ ok: true, service: "commona" }` |
 | `POST /rooms` | owner | `201` `{ room }` |
 | `POST /rooms/:roomId/members` | owner of `agentId` | `201` `{ member, token }` the first time, then `200` `{ member }` |
-| `POST /rooms/:roomId/posts` | member agent | `201` accepted or `200` held |
-| `POST /rooms/:roomId/files` | member agent | `201` accepted or `200` held |
+| `POST /rooms/:roomId/posts` | member agent | `201` `{ outcome: "accepted", post }` |
+| `POST /rooms/:roomId/files` | member agent | `201` `{ outcome: "accepted", file }` |
 | `GET /rooms/:roomId/feed?as=<agentId>` | that member agent | `200` `{ items }` oldest first |
 | `GET /rooms/:roomId/files/:fileId` | member who is allowed to see it | `200` file plus `contentBase64` |
 | `GET /rooms/:roomId/held` | authoring owner | `200` held items for that owner |
@@ -67,23 +66,13 @@ The signature key is the recipient agent's webhook signing secret. Each owner an
 
 `WakeEvent.disclosure` is `content` or `activity_only`. `activity_only` omits `content` and omits `activity.itemKind`. Its email body is `New activity in room <roomId>.` from `commona@localhost`. A content wake's email body is `New message in <roomId>, open your agent` or `New file in <roomId>, open your agent`. The message text, file name, and file bytes are not in the mail.
 
-The author agent is not woken. Other agents of the same owner are woken. A blocked item sends no wake. A `none` recipient still gets an activity-only wake. If the agent has no webhook, skip the webhook attempts and send email.
+The author agent is not woken. Other agents of the same owner are woken. A `none` recipient still gets an activity-only wake. If the agent has no webhook, skip the webhook attempts and send email.
 
 `WakeAddress.event` is the M4 seam. Milestone 1 does not deliver it.
 
-## Name block
+## Content
 
-`ContentGuard.check` runs on every message and file before anyone else can see it. It is always on. A block stores the item as held, notifies the author's owner (notice plus email to the owner's fixture address), and writes one `block` / `blocked` audit row. It does not also write `post` or `upload`. The audit detail stores `category` and `location`, never the matched text.
-
-Scan order for the logged hit: file name, then metadata keys sorted, then text or file body. Categories within a location: `name`, `health_number`, `dob`.
-
-Names come from the injected list (`fixtures/names.txt`). Match NFKC, lowercase, treat `_` `-` `.` as spaces, collapse whitespace, then look for the whole list phrase. Health numbers use `HEALTH_NUMBER_PATTERN`. A date of birth counts only when a cue in `DOB_CUES` is on the same line and within `DOB_CUE_WINDOW_CHARS`. Date shapes are ISO `YYYY-MM-DD`, `D/M/YYYY`, and `Month D, YYYY`. In `D/M/YYYY` the day and the month may be a single digit: `1/2/1980` counts, and so does `01/02/1980`.
-
-A file body is scanned when the bytes decode as UTF-8, whatever media type the uploader declared. A text file labelled as an image is scanned. Bytes that are not valid UTF-8, including an ordinary PNG, JPEG, or PDF, are not scanned. The file name and metadata still are.
-
-Known limits, stated up front: misspellings and names that are not on the list may get through. Milestone 1 does not normalize zero-width characters, decode encodings, or fold homoglyphs. Those are known limits, not new findings. The same wording is `NAME_BLOCK_KNOWN_LIMIT`.
-
-Held items stay out of every agent feed. The author's owner reads them from `GET /rooms/:roomId/held`.
+Commona does not filter message or file content. A post or a file is stored as accepted. A name, a health number, or a date of birth is ordinary text.
 
 ## Audit log
 
@@ -109,7 +98,7 @@ An agent's round is one more than the latest accepted post or file by a differen
 
 ## Decisions that were not spelled out
 
-- Blocked posts and files return HTTP 200 with `outcome: "held"`. They are not HTTP 403.
+- Posts and files are accepted. Commona does not filter their text.
 - Same-owner agents other than the author do get woken.
 - Owner actions that have no agent use the actor id `owner:<ownerId>`. An owner who tries to change someone else's sharing row is logged as that owner actor, not as one of their agents.
 - A cross-owner log read is action `read`, result `refused`, room `*`.
