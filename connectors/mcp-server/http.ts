@@ -1,7 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { loadConfig, type ConnectorConfig } from "./config.js";
-import { adoptHandoff } from "./handoff.js";
+import { openLinkStore, type LinkStore } from "./bound-link.js";
+import { claimHandoff, resumeHandoff } from "./handoff.js";
 import { createMcpServer, type JsonRpcNotification, type McpServer } from "./server.js";
 import { isDirectRun } from "../../src/listener/run.js";
 
@@ -28,6 +31,7 @@ interface AdoptedLink {
 /**
  * Streamable HTTP MCP endpoint at `/mcp`.
  * One process serves one agent. Bind stays on loopback unless COMMONA_MCP_BEARER is set.
+ * statePath keeps a bound Claude link usable after this process exits.
  */
 export function startMcpHttp(options: {
   config: ConnectorConfig;
@@ -36,6 +40,7 @@ export function startMcpHttp(options: {
   bearer?: string;
   allowedOrigins?: string[];
   fetchImpl?: typeof fetch;
+  statePath?: string;
 }): Promise<McpHttpServer> {
   const host = options.host ?? "127.0.0.1";
   if (!isLoopback(host) && !options.bearer) {
@@ -44,6 +49,7 @@ export function startMcpHttp(options: {
   const sessions = new Map<string, Session>();
   const adopted = new Map<string, AdoptedLink>();
   const adopting = new Map<string, Promise<AdoptedLink>>();
+  const store = options.statePath ? openLinkStore(options.statePath) : undefined;
   const server = createServer((request, response) => {
     void handle(request, response, {
       config: options.config,
@@ -53,6 +59,7 @@ export function startMcpHttp(options: {
       sessions,
       adopted,
       adopting,
+      store,
     });
   });
   return new Promise((resolve, reject) => {
@@ -94,6 +101,7 @@ async function handle(
     sessions: Map<string, Session>;
     adopted: Map<string, AdoptedLink>;
     adopting: Map<string, Promise<AdoptedLink>>;
+    store?: LinkStore;
   },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -234,6 +242,7 @@ function adoptionKey(handoff: string, roomId: string): string {
 
 /**
  * The first initialize claims the handoff. Later sessions in this process reuse that credential.
+ * A saved link is restored after a restart and is not claimed again.
  * A second claim would replace the only stored credential and sign the first session out.
  */
 async function adoptedLink(
@@ -242,6 +251,7 @@ async function adoptedLink(
     fetchImpl?: typeof fetch;
     adopted: Map<string, AdoptedLink>;
     adopting: Map<string, Promise<AdoptedLink>>;
+    store?: LinkStore;
   },
   handoff: string,
   roomId: string,
@@ -257,8 +267,31 @@ async function adoptedLink(
       wakePollMs: ctx.config.wakePollMs,
       wakeSpool: ctx.config.wakeSpool,
     };
+    const fetchImpl = ctx.fetchImpl ?? fetch;
     try {
-      const stop = await adoptHandoff(config, handoff, roomId, ctx.fetchImpl ?? fetch);
+      const saved = ctx.store?.find(handoff, roomId);
+      if (saved) {
+        const still = await boundHandoff(ctx, handoff, roomId);
+        if (still === "yes") {
+          const stop = await resumeHandoff(config, saved.credential, saved.agentId, saved.roomId, fetchImpl);
+          const link = { config, stop };
+          ctx.adopted.set(key, link);
+          return link;
+        }
+        if (still === "no") ctx.store?.forget(handoff, roomId);
+        throw new Error("connector link is dead");
+      }
+      const claimed = await claimHandoff(config, handoff, roomId, fetchImpl);
+      if (claimed.roomId !== roomId) throw new Error("connector link is dead");
+      // Save before arrival. A crash or a hung arrive must leave the bound link on disk.
+      if (ctx.store) {
+        try {
+          ctx.store.remember(handoff, roomId, claimed.agentId, claimed.credential);
+        } catch {
+          // This process still holds the credential. A failed write must not sign it out.
+        }
+      }
+      const stop = await resumeHandoff(config, claimed.credential, claimed.agentId, claimed.roomId, fetchImpl);
       const link = { config, stop };
       ctx.adopted.set(key, link);
       return link;
@@ -269,6 +302,33 @@ async function adoptedLink(
   })();
   ctx.adopting.set(key, flight);
   return flight;
+}
+
+/**
+ * Ask the room whether this handoff is still a live link.
+ * A refusal drops a saved credential. A network miss keeps it for the next try.
+ */
+async function boundHandoff(
+  ctx: {
+    config: ConnectorConfig;
+    fetchImpl?: typeof fetch;
+  },
+  handoff: string,
+  roomId: string,
+): Promise<"yes" | "no" | "unsure"> {
+  if (!handoff || !roomId || !ctx.config.baseUrl) return "no";
+  try {
+    const response = await (ctx.fetchImpl ?? fetch)(`${ctx.config.baseUrl}/connect/handoff`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ handoff, roomId }),
+    });
+    if (response.ok) return "yes";
+    if (response.status === 403) return "no";
+    return "unsure";
+  } catch {
+    return "unsure";
+  }
 }
 
 function openSse(request: IncomingMessage, response: ServerResponse, sessions: Map<string, Session>): void {
@@ -392,7 +452,8 @@ async function main(): Promise<void> {
     .split(",")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
-  const http = await startMcpHttp({ config, host, port, bearer, allowedOrigins: allowed });
+  const statePath = process.env.COMMONA_MCP_STATE?.trim() || join(homedir(), ".commona", "mcp-links.json");
+  const http = await startMcpHttp({ config, host, port, bearer, allowedOrigins: allowed, statePath });
   process.stderr.write(`commona mcp ${http.url}\n`);
   await new Promise<void>((resolve) => {
     const stop = () => {
