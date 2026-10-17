@@ -20,7 +20,12 @@ CREATE TABLE IF NOT EXISTS owners (
   email TEXT NOT NULL,
   display_name TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('participant', 'outsider')),
-  token_hash TEXT
+  token_hash TEXT,
+  -- HMAC-SHA256 needs the raw key. A hash of the secret cannot sign, so this column
+  -- stores the secret itself. Do not copy it into a log, an audit row, or a response.
+  webhook_signing_secret TEXT,
+  -- 0 until the one-time reveal. Later reveals return null. The secret stays for signing.
+  webhook_secret_revealed INTEGER NOT NULL DEFAULT 0 CHECK (webhook_secret_revealed IN (0, 1))
 );
 
 CREATE TABLE IF NOT EXISTS agents (
@@ -30,7 +35,12 @@ CREATE TABLE IF NOT EXISTS agents (
   email TEXT NOT NULL,
   webhook_url TEXT,
   event_target TEXT,
-  token_hash TEXT
+  token_hash TEXT,
+  -- HMAC-SHA256 needs the raw key. A hash of the secret cannot sign, so this column
+  -- stores the secret itself. Do not copy it into a log, an audit row, or a response.
+  webhook_signing_secret TEXT,
+  -- 0 until the one-time reveal. Later reveals return null. The secret stays for signing.
+  webhook_secret_revealed INTEGER NOT NULL DEFAULT 0 CHECK (webhook_secret_revealed IN (0, 1))
 );
 
 CREATE TABLE IF NOT EXISTS rooms (
@@ -72,6 +82,7 @@ CREATE TABLE IF NOT EXISTS files (
   content BLOB NOT NULL,
   metadata_json TEXT NOT NULL,
   byte_length INTEGER NOT NULL CHECK (byte_length >= 0),
+  round INTEGER NOT NULL DEFAULT 1 CHECK (round >= 1),
   held INTEGER NOT NULL CHECK (held IN (0, 1)),
   block_category TEXT CHECK (block_category IS NULL OR block_category IN (${quote(BLOCK_CATEGORIES)})),
   block_location TEXT CHECK (block_location IS NULL OR block_location IN (${quote(BLOCK_LOCATIONS)})),
@@ -115,6 +126,25 @@ BEGIN
   SELECT RAISE(ABORT, 'audit log is append-only');
 END;
 
+CREATE TABLE IF NOT EXISTS audit_chain_tip (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  seq INTEGER NOT NULL CHECK (seq >= 1),
+  hash TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS audit_chain_tip_no_delete
+BEFORE DELETE ON audit_chain_tip
+BEGIN
+  SELECT RAISE(ABORT, 'audit chain tip is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_chain_tip_forward_only
+BEFORE UPDATE ON audit_chain_tip
+WHEN NEW.id <> OLD.id OR NEW.seq <> OLD.seq + 1
+BEGIN
+  SELECT RAISE(ABORT, 'audit chain tip cannot rewind');
+END;
+
 CREATE TABLE IF NOT EXISTS wakes (
   id TEXT PRIMARY KEY,
   room_id TEXT NOT NULL REFERENCES rooms(id),
@@ -145,6 +175,34 @@ CREATE TABLE IF NOT EXISTS notices (
   created_at TEXT NOT NULL
 );
 `;
+
+/**
+ * Columns added after the first M1 database file.
+ * `openDatabase` runs each statement when that column is missing.
+ * A row that already exists gets a null secret and `webhook_secret_revealed` 0.
+ */
+export const SIGNING_SECRET_MIGRATIONS = [
+  {
+    table: "owners",
+    column: "webhook_signing_secret",
+    sql: "ALTER TABLE owners ADD COLUMN webhook_signing_secret TEXT",
+  },
+  {
+    table: "owners",
+    column: "webhook_secret_revealed",
+    sql: "ALTER TABLE owners ADD COLUMN webhook_secret_revealed INTEGER NOT NULL DEFAULT 0 CHECK (webhook_secret_revealed IN (0, 1))",
+  },
+  {
+    table: "agents",
+    column: "webhook_signing_secret",
+    sql: "ALTER TABLE agents ADD COLUMN webhook_signing_secret TEXT",
+  },
+  {
+    table: "agents",
+    column: "webhook_secret_revealed",
+    sql: "ALTER TABLE agents ADD COLUMN webhook_secret_revealed INTEGER NOT NULL DEFAULT 0 CHECK (webhook_secret_revealed IN (0, 1))",
+  },
+] as const;
 
 /** Reason codes live in audit detail JSON. Exported so a drift test can see them next to the schema. */
 export const SCHEMA_REASON_CODES = REASON_CODES;

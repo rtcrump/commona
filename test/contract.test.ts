@@ -1,3 +1,7 @@
+import Database from "better-sqlite3";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ACCEPTANCE_TESTS,
@@ -22,6 +26,7 @@ import {
   wakeSuppressed,
 } from "../contract/index.js";
 import { openDatabase } from "../src/db.js";
+import { signingSecretFor } from "../src/wakeup/secret.js";
 
 const base = {
   id: "log_1",
@@ -149,6 +154,69 @@ describe("schema", () => {
     expect(() => db.prepare("UPDATE audit_log SET result = 'refused' WHERE seq = 1").run()).toThrow(/append-only/);
     expect(() => db.prepare("DELETE FROM audit_log WHERE seq = 1").run()).toThrow(/append-only/);
     db.close();
+  });
+
+  it("adds signing-secret columns to a database created before them", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "commona-schema-"));
+    const file = path.join(dir, "old.sqlite");
+    const created = new Database(file);
+    created.exec(`
+      CREATE TABLE owners (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('participant', 'outsider')),
+        token_hash TEXT
+      );
+      CREATE TABLE agents (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL REFERENCES owners(id),
+        display_name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        webhook_url TEXT,
+        event_target TEXT,
+        token_hash TEXT
+      );
+      INSERT INTO owners (id, email, display_name, role)
+        VALUES ('O1', 'o1@example.test', 'Owner One', 'participant');
+      INSERT INTO agents (id, owner_id, display_name, email)
+        VALUES ('A1', 'O1', 'Agent One', 'a1@example.test');
+    `);
+    created.close();
+
+    const db = openDatabase(file);
+    try {
+      const owner = db
+        .prepare(
+          "SELECT webhook_signing_secret AS secret, webhook_secret_revealed AS revealed FROM owners WHERE id = 'O1'",
+        )
+        .get() as { secret: string | null; revealed: number };
+      const agent = db
+        .prepare(
+          "SELECT webhook_signing_secret AS secret, webhook_secret_revealed AS revealed FROM agents WHERE id = 'A1'",
+        )
+        .get() as { secret: string | null; revealed: number };
+      expect(owner).toEqual({ secret: null, revealed: 0 });
+      expect(agent).toEqual({ secret: null, revealed: 0 });
+
+      const secret = signingSecretFor(db, "agent", "A1");
+      expect(secret).toMatch(/^[0-9a-f]{64}$/);
+      expect(() => db.prepare("UPDATE agents SET webhook_secret_revealed = 2 WHERE id = 'A1'").run()).toThrow(/CHECK/);
+      db.close();
+
+      const again = openDatabase(file);
+      try {
+        const stored = again.prepare("SELECT webhook_signing_secret AS secret FROM agents WHERE id = 'A1'").get() as {
+          secret: string;
+        };
+        expect(stored.secret).toMatch(/^[0-9a-f]{64}$/);
+      } finally {
+        again.close();
+      }
+    } finally {
+      if (db.open) db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

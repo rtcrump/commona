@@ -1,9 +1,9 @@
 import { ACCEPTANCE_TESTS } from "../../contract/index.js";
 
 /**
- * T7 replaces `npm run m1` and fills this folder with the 19 acceptance tests.
- * Do not add skipped tests here. A test that cannot run is a failure, reported as a failure.
+ * `npm run m1` runs every id below and records pass or fail.
+ * A test whose module is still a TODO is a failure. Nothing in this folder is skipped.
  */
-export const acceptanceHarnessStatus = "todo" as const;
+export const acceptanceHarnessStatus = "reporting" as const;
 
 export const acceptanceTestIds = ACCEPTANCE_TESTS.map((test) => test.id);

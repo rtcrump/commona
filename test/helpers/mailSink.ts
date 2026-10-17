@@ -16,11 +16,17 @@ export async function startMailSink(): Promise<{
   host: string;
   port: number;
   messages: CapturedMail[];
+  setFailing: (failing: boolean) => void;
   stop: () => Promise<void>;
 }> {
   const messages: CapturedMail[] = [];
   const sockets = new Set<Socket>();
+  let failing = false;
   const server: Server = createServer((socket) => {
+    if (failing) {
+      socket.destroy();
+      return;
+    }
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     let buffer = "";
@@ -107,6 +113,12 @@ export async function startMailSink(): Promise<{
     host: "127.0.0.1",
     port: address.port,
     messages,
+    setFailing(next: boolean) {
+      failing = next;
+      if (next) {
+        for (const socket of sockets) socket.destroy();
+      }
+    },
     stop() {
       for (const socket of sockets) socket.destroy();
       return new Promise((resolve, reject) => {

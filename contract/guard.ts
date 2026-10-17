@@ -72,9 +72,10 @@ export const DOB_MONTH_NAMES = [
 ] as const;
 
 /**
- * Media types whose decoded bytes are scanned as text.
- * Anything else, including images and PDFs, is not byte-scanned in M1.
- * The file name and metadata are still scanned.
+ * Declared media types that are text.
+ * A file body is scanned whenever the bytes decode as UTF-8, including a
+ * text file labelled as an image or a PDF. Bytes that are not valid UTF-8
+ * are not scanned. The file name and metadata always are.
  */
 export const TEXT_MEDIA_TYPE_PREFIX = "text/";
 
