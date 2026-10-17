@@ -39,6 +39,20 @@ function tableCount(db: JoinHarness["db"], table: "posts" | "files"): number {
   return row.n;
 }
 
+async function waitUntilSaved(filePath: string, needle: string): Promise<string> {
+  const deadline = Date.now() + 2000;
+  for (;;) {
+    try {
+      const text = readFileSync(filePath, "utf8");
+      if (text.includes(needle)) return text;
+    } catch {
+      // The claim has not been saved yet.
+    }
+    if (Date.now() >= deadline) throw new Error("bound link was not saved before arrival");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 function dumpDatabase(db: JoinHarness["db"]): string {
   const tables = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
@@ -957,6 +971,91 @@ describe("guided connect", () => {
     expect(dump).not.toContain(credential);
     expect(dump).toContain(hashToken(secret));
     expect(dump).toContain(hashToken(newSecret));
+  });
+
+  it("saves the bound link before arrival reporting finishes", async () => {
+    room = await startJoinHarness();
+    stateDir = mkdtempSync(join(tmpdir(), "commona-mcp-"));
+    const statePath = join(stateDir, "links.json");
+    const logs: string[] = [];
+    setInviteLog((line) => logs.push(line));
+    let arriveFinished = false;
+    let releaseArrive: () => void = () => {};
+    const arriveGate = new Promise<void>((resolve) => {
+      releaseArrive = resolve;
+    });
+    connector = await startMcpHttp({
+      config: { baseUrl: room.baseUrl, wakePollMs: 20 },
+      statePath,
+      fetchImpl: async (input, init) => {
+        const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (new URL(raw).pathname === "/connect/arrive") {
+          await arriveGate;
+          arriveFinished = true;
+          return new Response("unavailable", { status: 503 });
+        }
+        return fetch(input, init);
+      },
+    });
+    process.env.COMMONA_CONNECT_URL = connector.url;
+
+    const person = await joinPerson(room, room.roomId, "Alex");
+    const page = await openGuided(room, person);
+    const copied = await call(room.baseUrl, "POST", `/j/${person.id}/connect/link`, {
+      cookie: jar(person, page.form),
+      json: { nonce: page.nonce },
+    });
+    const link = new URL((JSON.parse(copied.body) as { url: string }).url);
+    const secret = link.searchParams.get("handoff") ?? "";
+    const issuedBefore = room.issued.length;
+    const opening = initializeMcp(link.toString());
+    const saved = await waitUntilSaved(statePath, hashToken(secret));
+    expect(arriveFinished).toBe(false);
+    const credential = room.issued.slice(issuedBefore).find((item) => item.kind === "agent")?.token ?? "";
+    expect(credential.length).toBeGreaterThan(20);
+    expect(saved).not.toContain(secret);
+    expect(saved).not.toContain(credential);
+    const boundHash = agentHash(room, "Alex");
+
+    releaseArrive();
+    const opened = await opening;
+    expect(opened.status).toBe(200);
+    expect(opened.body).toContain("2025-06-18");
+    expect(opened.body).not.toContain("The connector link is dead.");
+    expect(opened.body).not.toContain(secret);
+    expect(opened.body).not.toContain(credential);
+    expect(room.issued.length).toBe(issuedBefore + 1);
+
+    await connector.close();
+    connector = await startMcpHttp({
+      config: { baseUrl: room.baseUrl, wakePollMs: 20 },
+      statePath,
+    });
+    const replay = new URL(connector.url);
+    replay.search = link.search;
+    const again = await initializeMcp(replay.toString());
+    expect(again.status).toBe(200);
+    expect(again.body).toContain("2025-06-18");
+    expect(again.body).not.toContain("The connector link is dead.");
+    expect(again.body).not.toContain(secret);
+    expect(again.body).not.toContain(credential);
+    expect(room.issued.length).toBe(issuedBefore + 1);
+    expect(agentHash(room, "Alex")).toBe(boundHash);
+    expect(room.tokens.authenticate(credential)).toMatchObject({
+      kind: "agent",
+      ownerId: ownerRecord(room, "Alex").id,
+    });
+
+    const kept = readFileSync(statePath, "utf8");
+    expect(kept).toContain(hashToken(secret));
+    expect(kept).not.toContain(secret);
+    expect(kept).not.toContain(credential);
+    const audit = JSON.stringify(room.db.prepare("SELECT action, detail_json FROM audit_log").all());
+    assertAbsent([page.page.body, opened.body, again.body, ...logs, audit], [secret, credential, person.session]);
+    const dump = dumpDatabase(room.db);
+    expect(dump).not.toContain(secret);
+    expect(dump).not.toContain(credential);
+    expect(dump).toContain(hashToken(secret));
   });
 });
 

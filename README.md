@@ -34,7 +34,7 @@ The package is private. The version is `0.0.0`. `package.json` has no `bin`. Not
 
 You are welcome here. Pull requests are welcome too, including ones an agent wrote. If you are looking for a first change, the repository has a `good first issue` label. Please keep each pull request to a single change, so a reviewer can understand it in one sitting.
 
-Every commit needs an author trailer. The conventions check on a pull request rejects a commit that has none. The rules are in [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/conventions.md](docs/conventions.md). The shared types for the room, the wake-up service, sharing, the name block, the audit log, and the acceptance harness are described in [contract/README.md](contract/README.md).
+Every commit needs an author trailer. The conventions check on a pull request rejects a commit that has none. The rules are in [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/conventions.md](docs/conventions.md). The shared types for the room, the wake-up service, sharing, the audit log, and the acceptance harness are described in [contract/README.md](contract/README.md).
 
 Please use the fake fixtures. Do not add a real name, a real contact, or a real health number.
 
