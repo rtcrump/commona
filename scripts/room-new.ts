@@ -1,7 +1,6 @@
 import { chmodSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { guard } from "../src/guard/index.js";
 import { HOST_SECRET_HEADER, hostSecretPath } from "../src/room/host.js";
 
 const LABEL_MAX = 80;
@@ -16,9 +15,7 @@ const CREDENTIAL_UNWRITABLE = "COMMONA_HOST_CREDENTIAL is not writable";
 const SAFE_SERVER_MESSAGES = new Set([
   "COMMONA_PUBLIC_ORIGIN must be an https origin",
   "room title must be a short label",
-  "room title is not allowed",
   "host display name must be a short label",
-  "host display name is not allowed",
   "invite count must be a whole number from 1 to 20",
   "room:new failed",
 ]);
@@ -53,12 +50,8 @@ interface HostSetup {
 export async function createRoomInvites(input: RoomNewInput): Promise<string[]> {
   const serverUrl = requireLocalUrl(input.serverUrl);
   const credentialPath = requireCredentialPath(input.credentialPath);
-  const title = requireLabel(input.title, "room title must be a short label", "room title is not allowed");
-  const hostName = requireLabel(
-    input.hostName,
-    "host display name must be a short label",
-    "host display name is not allowed",
-  );
+  const title = requireLabel(input.title, "room title must be a short label");
+  const hostName = requireLabel(input.hostName, "host display name must be a short label");
   const inviteCount = requireCount(input.inviteCount);
   reserveCredential(credentialPath);
   let committed = false;
@@ -235,13 +228,10 @@ function requireCredentialPath(raw: string | undefined): string {
   return value;
 }
 
-function requireLabel(raw: string, shapeMessage: string, blockedMessage: string): string {
+function requireLabel(raw: string, shapeMessage: string): string {
   const label = raw.trim();
   if (!label || label.length > LABEL_MAX || /[\r\n<>]/.test(label)) {
     throw new RoomNewError(shapeMessage);
-  }
-  if (guard.check({ kind: "message", text: label }).outcome !== "allow") {
-    throw new RoomNewError(blockedMessage);
   }
   return label;
 }

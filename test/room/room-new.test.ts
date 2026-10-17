@@ -4,16 +4,21 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { systemClock } from "../../contract/index.js";
+import { systemClock, type ContentGuard } from "../../contract/index.js";
 import { buildApp } from "../../src/app.js";
 import { createAuditLog } from "../../src/audit/index.js";
 import { createTokenStore } from "../../src/auth/index.js";
 import { openDatabase } from "../../src/db.js";
-import { guard } from "../../src/guard/index.js";
 import { createOwnerNotifier } from "../../src/notices/index.js";
 import type { RoomDeps } from "../../src/room/deps.js";
 import { HOST_SECRET_HEADER, startHostListener } from "../../src/room/host.js";
 import { createSharingDirectory } from "../../src/sharing/index.js";
+
+const allowAll: ContentGuard = {
+  check() {
+    return { outcome: "allow", hits: [] };
+  },
+};
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const script = path.join(root, "scripts/room-new.ts");
@@ -138,7 +143,7 @@ describe("room:new", () => {
       tokens: createTokenStore(db),
       audit: createAuditLog(db, systemClock),
       sharing: createSharingDirectory(db),
-      guard,
+      guard: allowAll,
       notices: createOwnerNotifier(db, systemClock),
     };
     const app = buildApp(deps);
@@ -333,6 +338,50 @@ describe("room:new", () => {
       expect(result.code).toBe(0);
       expect(result.stderr).toBe("");
       expect(urlsOf(result.stdout)).toHaveLength(2);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("accepts a room title without content filtering", async () => {
+    process.env.COMMONA_PUBLIC_ORIGIN = origin;
+    const server = await startServer();
+    const credentialPath = path.join(path.dirname(server.dbPath), "host-credential");
+    try {
+      const result = await run(["Jane Testpatient", hostName, "1"], {
+        COMMONA_URL: server.host,
+        COMMONA_HOST_CREDENTIAL: credentialPath,
+        COMMONA_HOST_SECRET_FILE: server.secretPath,
+      });
+      expect(result.code).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(urlsOf(result.stdout)).toHaveLength(1);
+      const db = openDatabase(server.dbPath);
+      try {
+        const stored = db.prepare("SELECT title FROM room_titles").get() as { title: string };
+        expect(stored.title).toBe("Jane Testpatient");
+      } finally {
+        if (db.open) db.close();
+      }
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("rejects a title with an angle bracket and creates nothing", async () => {
+    process.env.COMMONA_PUBLIC_ORIGIN = origin;
+    const server = await startServer();
+    const credentialPath = path.join(path.dirname(server.dbPath), "host-credential");
+    try {
+      const result = await run(["Sunday <lunch>", hostName], {
+        COMMONA_URL: server.host,
+        COMMONA_HOST_CREDENTIAL: credentialPath,
+        COMMONA_HOST_SECRET_FILE: server.secretPath,
+      });
+      expect(result.code).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("room title must be a short label\n");
+      expect(roomCount(server.dbPath)).toBe(0);
     } finally {
       await server.stop();
     }

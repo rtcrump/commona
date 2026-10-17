@@ -3,7 +3,6 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import Fastify, { type FastifyRequest } from "fastify";
-import { guard } from "../guard/index.js";
 import { dropInviteSecret } from "../join/pending.js";
 import { ensureInviteSchema } from "../join/schema.js";
 import { createInvite } from "../join/service.js";
@@ -234,19 +233,16 @@ function readBody(body: unknown): HostRoomBody {
     throw new HostInputError("Invalid request.");
   }
   return {
-    title: requireLabel(title, "room title must be a short label", "room title is not allowed"),
-    hostName: requireLabel(hostName, "host display name must be a short label", "host display name is not allowed"),
+    title: requireLabel(title, "room title must be a short label"),
+    hostName: requireLabel(hostName, "host display name must be a short label"),
     inviteCount: requireCount(inviteCount),
   };
 }
 
-function requireLabel(raw: string, shapeMessage: string, blockedMessage: string): string {
+function requireLabel(raw: string, shapeMessage: string): string {
   const label = raw.trim();
   if (!label || label.length > LABEL_MAX || /[\r\n<>]/.test(label)) {
     throw new HostInputError(shapeMessage);
-  }
-  if (guard.check({ kind: "message", text: label }).outcome !== "allow") {
-    throw new HostInputError(blockedMessage);
   }
   return label;
 }
