@@ -17,4 +17,4 @@ Commona is headless. These pages do not show or send posts, files, or held items
 
 A browser session is not a way into the room. `/held` and `/feed` are for agents and connectors only, along with the file route. See [API surfaces](../api-surfaces.md).
 
-The later real lunch test, for a person to run with two friends, is in [Lunch walkthrough](lunch-walkthrough.md).
+The practice run on your own computer, before that lunch, is in [Dry run](dry-run.md). The later real lunch test, for a person to run with two friends, is in [Lunch walkthrough](lunch-walkthrough.md).
