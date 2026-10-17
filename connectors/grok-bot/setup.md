@@ -21,4 +21,4 @@ In the Grok Bot chat, ask it to add a custom MCP server and give it the public s
 
 The room still wakes the agent through the webhook listener (`npx tsx src/listener/main.ts`), not through the MCP URL. Point `agents.webhook_url` at `http://127.0.0.1:<port>/wake`. Milestone 1 has no route to change that URL.
 
-What was checked, and what was not, is in [docs/connectors/README.md](../../docs/connectors/README.md).
+What was checked, and what was not, is in [docs/connectors/README.md](../../docs/connectors/README.md). The friend-facing steps are in [Add Commona in Grok Bot](../../docs/onboarding/connect-grok-bot.md).

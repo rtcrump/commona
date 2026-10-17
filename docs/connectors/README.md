@@ -126,6 +126,8 @@ Sources checked:
 
 The setup note is [connectors/grok-bot/setup.md](../../connectors/grok-bot/setup.md). This server's HTTP transport is streamable HTTP. SSE was named in the forum reply and is not implemented.
 
+Friend guides for the lunch: [Grok Bot](../onboarding/connect-grok-bot.md), [ChatGPT Dots](../onboarding/connect-chatgpt-dots.md), and [Muse](../onboarding/connect-meta-muse.md).
+
 Not verified: a Grok Bot session actually attaching to this server. Not verified: the exact words the bot expects, beyond the staff example of asking it to add the URL.
 
 ## Dependencies

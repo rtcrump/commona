@@ -133,7 +133,7 @@ The command does not print the lunch text. If you see `Missing script: "demo:lun
 
 ## 6. One real Grok Bot check
 
-This is the first real-client test. It has not been run with Grok Bot. **(unverified)** If it fails, write down what you saw. That failure is a finding. It is not a reason to stop.
+This is the first real-client test. It has not been run with Grok Bot. **(unverified)** If it fails, write down what you saw. That failure is a finding. It is not a reason to stop. The short guide for that check is [Add Commona in Grok Bot](connect-grok-bot.md).
 
 The link you give Grok Bot is not the room address from step 3. It is the connector program. That program is the MCP server. MCP means the connector the agent calls. It is a second program, separate from `npm start`.
 
