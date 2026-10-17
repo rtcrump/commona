@@ -21,6 +21,7 @@ Tokens are environment variables. The snippets under `connectors/` name the vari
 | `COMMONA_MCP_HOST` | HTTP MCP | Default `127.0.0.1`. |
 | `COMMONA_MCP_PORT` | HTTP MCP | Default `0` (ephemeral). |
 | `COMMONA_MCP_ALLOWED_ORIGINS` | HTTP MCP | Comma-separated `Origin` values, plus loopback. |
+| `COMMONA_MCP_STATE` | HTTP MCP | File that lets a bound Claude link work after a restart. Default `~/.commona/mcp-links.json`. The file stores a hash of the handoff, not the handoff or the raw credential. |
 
 ```bash
 npx tsx connectors/mcp-server/stdio.ts
@@ -47,7 +48,7 @@ Stdio is newline-delimited JSON-RPC. HTTP is one streamable HTTP endpoint at `/m
 
 Held items and notices use the owner token because the room API returns 403 for an agent token and writes a refusal. The connector does not send the agent token to those routes. The proposed change is [contract-proposals/stream-2.md](../../contract-proposals/stream-2.md).
 
-A minted agent token is kept in process memory. Tool results do not include it.
+A minted agent token is kept in process memory. Tool results do not include it. A bound Claude link is also sealed in `COMMONA_MCP_STATE`, so the same link works after the HTTP server restarts. That file does not contain the handoff or the raw credential.
 
 ## Wake path
 
