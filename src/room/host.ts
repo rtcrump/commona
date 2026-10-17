@@ -10,6 +10,7 @@ import { createInvite } from "../join/service.js";
 import { openAccount } from "../onboarding/account.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
+import { rememberHostGrant } from "./host-grant.js";
 import { addMember, createRoom } from "./membership.js";
 
 const LABEL_MAX = 80;
@@ -60,7 +61,6 @@ export async function startHostListener(
   const port = resolvePort(options.port);
   const secretPath = options.secretPath ?? hostSecretPath();
   const secret = randomBytes(32).toString("base64url");
-  writeHostSecret(secretPath, secret);
   const app = Fastify({ logger: false });
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof RoomHttpError) return reply.status(error.status).send(error.body());
@@ -85,6 +85,13 @@ export async function startHostListener(
   }
   const address = app.server.address();
   if (address === null || typeof address === "string") {
+    await app.close();
+    throw new Error("host command could not listen");
+  }
+  try {
+    // Write only after the port is bound, so a failed bind cannot replace a live secret.
+    writeHostSecret(secretPath, secret);
+  } catch {
     await app.close();
     throw new Error("host command could not listen");
   }
@@ -142,6 +149,8 @@ interface HostRoomBody {
 interface HostRoomResult {
   invites: string[];
   credential: string;
+  roomId: string;
+  agentId: string;
 }
 
 function createHostRoom(deps: RoomDeps, body: HostRoomBody, origin: string, hostSecret: string): HostRoomResult {
@@ -162,8 +171,12 @@ function createHostRoom(deps: RoomDeps, body: HostRoomBody, origin: string, host
         invites.push(`${origin}/j/${created.id}`);
       }
       const credential = deps.tokens.issueAgentToken(opened.agentId);
+      rememberHostGrant(deps.db, room.id, opened.ownerId);
       assertClean(deps, invites, credential, [credential, opened.sessionToken, hostSecret]);
-      return { invites, credential };
+      if (room.id.includes(credential) || opened.agentId.includes(credential)) {
+        throw new HostInputError("room:new failed");
+      }
+      return { invites, credential, roomId: room.id, agentId: opened.agentId };
     });
     return write();
   } catch (error) {

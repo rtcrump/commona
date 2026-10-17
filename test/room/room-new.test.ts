@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,7 @@ import { createTokenStore } from "../../src/auth/index.js";
 import { openDatabase } from "../../src/db.js";
 import { guard } from "../../src/guard/index.js";
 import { createOwnerNotifier } from "../../src/notices/index.js";
+import type { RoomDeps } from "../../src/room/deps.js";
 import { HOST_SECRET_HEADER, startHostListener } from "../../src/room/host.js";
 import { createSharingDirectory } from "../../src/sharing/index.js";
 
@@ -124,6 +125,7 @@ describe("room:new", () => {
     host: string;
     secretPath: string;
     dbPath: string;
+    deps: RoomDeps;
     stop: () => Promise<void>;
   }> {
     const dir = await tempDir();
@@ -160,6 +162,7 @@ describe("room:new", () => {
       host: host.url,
       secretPath,
       dbPath,
+      deps,
       stop: async () => {
         await host.close();
         await app.close();
@@ -189,7 +192,20 @@ describe("room:new", () => {
     return { status: response.status, body: await response.text() };
   }
 
-  it("joins through an invite and the host credential file can post", async () => {
+  function fieldsOf(text: string): { token: string; roomId: string; agentId: string } {
+    const fields = new Map<string, string>();
+    for (const line of text.trim().split("\n")) {
+      const eq = line.indexOf("=");
+      if (eq > 0) fields.set(line.slice(0, eq), line.slice(eq + 1));
+    }
+    return {
+      token: fields.get("COMMONA_AGENT_TOKEN") ?? "",
+      roomId: fields.get("COMMONA_ROOM_ID") ?? "",
+      agentId: fields.get("COMMONA_AGENT_ID") ?? "",
+    };
+  }
+
+  it("joins through an invite, the host can post, and the invitee can read it", async () => {
     process.env.COMMONA_PUBLIC_ORIGIN = origin;
     const server = await startServer();
     const dir = path.dirname(server.dbPath);
@@ -207,13 +223,16 @@ describe("room:new", () => {
       expect(result.stderr).toBe("");
       const urls = urlsOf(result.stdout);
       expect(urls).toHaveLength(2);
-      const credential = await readFile(credentialPath, "utf8");
-      expect(credential.length).toBeGreaterThan(20);
-      expect(credential).not.toContain(secret);
-      expect(result.stdout).not.toContain(credential);
-      expect(result.stderr).not.toContain(credential);
-      expect(result.stdout).not.toContain(secret);
-      expect(result.stderr).not.toContain(secret);
+      const credentialFile = await readFile(credentialPath, "utf8");
+      const fields = fieldsOf(credentialFile);
+      expect(fields.token.length).toBeGreaterThan(20);
+      expect(fields.roomId).toMatch(/^room_[0-9a-f-]{36}$/);
+      expect(fields.agentId).toMatch(/^agent_[0-9a-f-]{36}$/);
+      expect(credentialFile).not.toContain(secret);
+      for (const hidden of [fields.token, fields.roomId, fields.agentId, secret]) {
+        expect(result.stdout).not.toContain(hidden);
+        expect(result.stderr).not.toContain(hidden);
+      }
       const mode = (await stat(credentialPath)).mode & 0o777;
       expect(mode).toBe(0o600);
 
@@ -221,9 +240,10 @@ describe("room:new", () => {
       try {
         const details = db.prepare("SELECT detail_json FROM audit_log").all() as { detail_json: string }[];
         for (const row of details) {
-          expect(row.detail_json).not.toContain(credential);
+          expect(row.detail_json).not.toContain(fields.token);
           expect(row.detail_json).not.toContain(secret);
         }
+        expect(fields.roomId).toBe((db.prepare("SELECT id FROM rooms").get() as { id: string }).id);
         const storedTitle = db.prepare("SELECT title FROM room_titles").get() as { title: string };
         expect(storedTitle.title).toBe(title);
         const room = db.prepare("SELECT id FROM rooms").get() as { id: string };
@@ -265,12 +285,33 @@ describe("room:new", () => {
         expect(members.n).toBe(2);
 
         const posted = await call(server.base, "POST", `/rooms/${room.id}/posts`, {
-          token: credential,
+          token: fields.token,
           json: { text: "host says hello" },
         });
         expect(posted.status).toBe(201);
         expect((JSON.parse(posted.body) as { outcome?: string }).outcome).toBe("accepted");
-        expect(posted.body).not.toContain(credential);
+        expect(posted.body).not.toContain(fields.token);
+
+        const hostOwner = db
+          .prepare("SELECT owner_id AS ownerId FROM memberships WHERE room_id = ? AND agent_id = ?")
+          .get(room.id, fields.agentId) as { ownerId: string };
+        const invitee = db
+          .prepare(
+            "SELECT agent_id AS agentId, owner_id AS ownerId FROM memberships WHERE room_id = ? AND agent_id <> ?",
+          )
+          .get(room.id, fields.agentId) as { agentId: string; ownerId: string };
+        const granted = db
+          .prepare("SELECT level FROM sharing WHERE room_id = ? AND from_owner_id = ? AND to_owner_id = ?")
+          .get(room.id, hostOwner.ownerId, invitee.ownerId) as { level: string };
+        expect(granted.level).toBe("messages");
+        const inviteeToken = server.deps.tokens.issueAgentToken(invitee.agentId);
+        const feed = await call(server.base, "GET", `/rooms/${room.id}/feed`, { token: inviteeToken });
+        expect(feed.status).toBe(200);
+        const items = (JSON.parse(feed.body) as { items?: { text?: string }[] }).items ?? [];
+        expect(items.some((item) => item.text === "host says hello")).toBe(true);
+        expect(feed.body).not.toContain(fields.token);
+        expect(feed.body).not.toContain(secret);
+        expect(feed.body).not.toContain(inviteeToken);
       } finally {
         if (db.open) db.close();
       }
@@ -362,6 +403,57 @@ describe("room:new", () => {
       expect(wrong.body).not.toContain(secret);
       expect(wrong.body).not.toContain("inv_");
       expect(roomCount(server.dbPath)).toBe(0);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("creates nothing when the credential file cannot be written", async () => {
+    process.env.COMMONA_PUBLIC_ORIGIN = origin;
+    const server = await startServer();
+    const dir = path.dirname(server.dbPath);
+    try {
+      const missing = await run([title, hostName], {
+        COMMONA_URL: server.host,
+        COMMONA_HOST_CREDENTIAL: path.join(dir, "missing-dir", "host-credential"),
+        COMMONA_HOST_SECRET_FILE: server.secretPath,
+      });
+      expect(missing.code).toBe(1);
+      expect(missing.stdout).toBe("");
+      expect(missing.stderr).toBe("COMMONA_HOST_CREDENTIAL is not writable\n");
+
+      const existing = path.join(dir, "host-credential");
+      await writeFile(existing, "keep\n");
+      const blocked = await run([title, hostName], {
+        COMMONA_URL: server.host,
+        COMMONA_HOST_CREDENTIAL: existing,
+        COMMONA_HOST_SECRET_FILE: server.secretPath,
+      });
+      expect(blocked.code).toBe(1);
+      expect(blocked.stdout).toBe("");
+      expect(blocked.stderr).toBe("COMMONA_HOST_CREDENTIAL is not writable\n");
+      expect(await readFile(existing, "utf8")).toBe("keep\n");
+      expect(blocked.stderr).not.toContain(await readFile(server.secretPath, "utf8"));
+      expect(roomCount(server.dbPath)).toBe(0);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("writes the host secret only after the listener binds", async () => {
+    const server = await startServer();
+    try {
+      const port = Number(new URL(server.host).port);
+      const kept = await readFile(server.secretPath, "utf8");
+      const blocked = path.join(path.dirname(server.secretPath), "blocked-secret");
+      await expect(startHostListener(server.deps, { port, secretPath: blocked })).rejects.toThrow(
+        "host command could not listen",
+      );
+      await expect(stat(blocked)).rejects.toThrow();
+      await expect(startHostListener(server.deps, { port, secretPath: server.secretPath })).rejects.toThrow(
+        "host command could not listen",
+      );
+      expect(await readFile(server.secretPath, "utf8")).toBe(kept);
     } finally {
       await server.stop();
     }

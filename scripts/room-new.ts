@@ -1,4 +1,5 @@
-import { chmodSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { guard } from "../src/guard/index.js";
 import { HOST_SECRET_HEADER, hostSecretPath } from "../src/room/host.js";
@@ -8,6 +9,9 @@ const DEFAULT_INVITE_COUNT = 2;
 const MAX_INVITE_COUNT = 20;
 const INVITE_URL =
   /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?\/j\/inv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ROOM_ID = /^room_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const AGENT_ID = /^agent_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CREDENTIAL_UNWRITABLE = "COMMONA_HOST_CREDENTIAL is not writable";
 
 const SAFE_SERVER_MESSAGES = new Set([
   "COMMONA_PUBLIC_ORIGIN must be an https origin",
@@ -34,10 +38,17 @@ export interface RoomNewInput {
   inviteCount?: string;
 }
 
+interface HostSetup {
+  invites: string[];
+  credential: string;
+  roomId: string;
+  agentId: string;
+}
+
 /**
  * Ask the running server to create a room and invites.
  * Prints nothing. The caller prints the invite URLs and nothing else.
- * The host agent credential is written to a local file and is not returned.
+ * The host credential, room id, and agent id are written to a local file and are not returned.
  */
 export async function createRoomInvites(input: RoomNewInput): Promise<string[]> {
   const serverUrl = requireLocalUrl(input.serverUrl);
@@ -49,26 +60,33 @@ export async function createRoomInvites(input: RoomNewInput): Promise<string[]> 
     "host display name is not allowed",
   );
   const inviteCount = requireCount(input.inviteCount);
-  const hostSecret = readHostSecret(hostSecretPath());
-
-  let response: Response;
+  reserveCredential(credentialPath);
+  let committed = false;
   try {
-    response = await fetch(`${serverUrl}/host/room`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        [HOST_SECRET_HEADER]: hostSecret,
-      },
-      body: JSON.stringify({ title, hostName, inviteCount }),
-    });
-  } catch {
-    throw new RoomNewError("room:new failed");
+    const hostSecret = readHostSecret(hostSecretPath());
+    let response: Response;
+    try {
+      response = await fetch(`${serverUrl}/host/room`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [HOST_SECRET_HEADER]: hostSecret,
+        },
+        body: JSON.stringify({ title, hostName, inviteCount }),
+      });
+    } catch {
+      throw new RoomNewError("room:new failed");
+    }
+    const text = await response.text();
+    if (!response.ok) throw new RoomNewError(safeServerMessage(text));
+    const parsed = readResult(text, hostSecret);
+    writeCredential(credentialPath, credentialBody(parsed));
+    committed = true;
+    return parsed.invites;
+  } catch (error) {
+    if (!committed) releaseCredential(credentialPath);
+    throw error;
   }
-  const text = await response.text();
-  if (!response.ok) throw new RoomNewError(safeServerMessage(text));
-  const parsed = readResult(text, hostSecret);
-  writeCredential(credentialPath, parsed.credential);
-  return parsed.invites;
 }
 
 function readHostSecret(file: string): string {
@@ -82,23 +100,53 @@ function readHostSecret(file: string): string {
   return text;
 }
 
-function writeCredential(file: string, credential: string): void {
+function reserveCredential(file: string): void {
+  // Fail before the server creates a room. An existing file is left untouched.
+  // 0o600 is owner-only on Unix. Windows does not apply that mode.
+  let directory;
+  try {
+    directory = statSync(path.dirname(file));
+  } catch {
+    throw new RoomNewError(CREDENTIAL_UNWRITABLE);
+  }
+  if (!directory.isDirectory()) throw new RoomNewError(CREDENTIAL_UNWRITABLE);
+  try {
+    writeFileSync(file, "", { encoding: "utf8", mode: 0o600, flag: "wx" });
+  } catch {
+    throw new RoomNewError(CREDENTIAL_UNWRITABLE);
+  }
+}
+
+function releaseCredential(file: string): void {
+  try {
+    unlinkSync(file);
+  } catch {
+    // The reservation is already gone.
+  }
+}
+
+function writeCredential(file: string, body: string): void {
   // 0o600 is owner-only on Unix. Windows does not apply that mode.
   try {
-    writeFileSync(file, credential, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    writeFileSync(file, body, { encoding: "utf8", mode: 0o600, flag: "w" });
   } catch {
+    releaseCredential(file);
     throw new RoomNewError("room:new failed");
   }
   if (process.platform === "win32") return;
   try {
     chmodSync(file, 0o600);
   } catch {
-    unlinkSync(file);
+    releaseCredential(file);
     throw new RoomNewError("room:new failed");
   }
 }
 
-function readResult(text: string, hostSecret: string): { invites: string[]; credential: string } {
+function credentialBody(parsed: HostSetup): string {
+  return `COMMONA_AGENT_TOKEN=${parsed.credential}\nCOMMONA_ROOM_ID=${parsed.roomId}\nCOMMONA_AGENT_ID=${parsed.agentId}\n`;
+}
+
+function readResult(text: string, hostSecret: string): HostSetup {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
@@ -106,13 +154,24 @@ function readResult(text: string, hostSecret: string): { invites: string[]; cred
     throw new RoomNewError("room:new failed");
   }
   if (typeof parsed !== "object" || parsed === null) throw new RoomNewError("room:new failed");
-  const invites = (parsed as { invites?: unknown }).invites;
-  const credential = (parsed as { credential?: unknown }).credential;
+  const record = parsed as { invites?: unknown; credential?: unknown; roomId?: unknown; agentId?: unknown };
+  const invites = record.invites;
+  const credential = record.credential;
+  const roomId = record.roomId;
+  const agentId = record.agentId;
   if (
     !Array.isArray(invites) ||
     typeof credential !== "string" ||
     !/^[A-Za-z0-9_-]+$/.test(credential) ||
-    credential.includes(hostSecret)
+    credential.includes(hostSecret) ||
+    typeof roomId !== "string" ||
+    !ROOM_ID.test(roomId) ||
+    roomId.includes(hostSecret) ||
+    roomId.includes(credential) ||
+    typeof agentId !== "string" ||
+    !AGENT_ID.test(agentId) ||
+    agentId.includes(hostSecret) ||
+    agentId.includes(credential)
   ) {
     throw new RoomNewError("room:new failed");
   }
@@ -122,14 +181,16 @@ function readResult(text: string, hostSecret: string): { invites: string[]; cred
       typeof invite !== "string" ||
       !INVITE_URL.test(invite) ||
       invite.includes(credential) ||
-      invite.includes(hostSecret)
+      invite.includes(hostSecret) ||
+      invite.includes(roomId) ||
+      invite.includes(agentId)
     ) {
       throw new RoomNewError("room:new failed");
     }
     urls.push(invite);
   }
   if (urls.length === 0) throw new RoomNewError("room:new failed");
-  return { invites: urls, credential };
+  return { invites: urls, credential, roomId, agentId };
 }
 
 function safeServerMessage(text: string): string {

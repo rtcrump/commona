@@ -19,6 +19,7 @@ import {
 import { ensureInviteSchema } from "../join/schema.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import type { RoomDeps } from "../room/deps.js";
+import { grantHostMessages } from "../room/host-grant.js";
 import { RoomHttpError } from "../room/http.js";
 import {
   connectLinkState,
@@ -291,6 +292,7 @@ export function submitSharing(
   }
   deps.db.prepare("UPDATE owners SET display_name = ? WHERE id = ?").run(name, redeemed.owner.id);
   grantSeeing(deps, redeemed.member.roomId, redeemed.owner.id, seeingFromForm(fields.seeing));
+  grantHostMessages(deps, redeemed.member.roomId, redeemed.owner.id);
   firstNames.delete(pendingKey(inviteId, secretHash));
   if (!/^[A-Za-z0-9_-]+$/.test(redeemed.sessionToken)) throw new Error("refusing to send a secret");
   const marker = rememberJoined(inviteId, redeemed.owner.id);
