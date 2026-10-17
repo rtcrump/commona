@@ -257,9 +257,7 @@ The copied link must be the public https address from the tunnel to port 3001, e
 
 A pass is the page saying **Connected**. **Not connected** means it did not answer. The page does not show the room, and it does not send a message. If this fails, write down what you saw and continue. It is a finding, not a reason to stop.
 
-If Grok Bot will not take the link while it still has a query string, do not delete that query string. The part after `?` names `handoff` and `room`. Those claim your host agent. A URL with no `?` does not. It uses the agent set on the connector process, `COMMONA_AGENT_ID` and `COMMONA_AGENT_TOKEN`. This dry run does not set those. `room:new` wrote your host agent into the credential file, and the connector does not read that file. The bare URL would not be your host agent. If those variables were already set for someone else, it would be that other agent.
-
-You can set `COMMONA_MCP_BEARER` and send it as a header while keeping the full copied link. The header only lets the request in. It does not choose the agent. Stop the connector window with Ctrl+C. In that same window, set a value you make up, then start the connector again. The earlier settings in that window stay. Replace `value-you-make-up` below. Do not use those words as the value. Never paste the value into the room or a doc.
+If the link with its query string fails, set `COMMONA_MCP_BEARER` on the connector and try again with no query string. Stop the connector window with Ctrl+C. In that same window, set a value you make up, then start the connector again. The earlier settings in that window stay. Replace `value-you-make-up` below. Do not use those words as the value. Never paste the value into the room or a doc.
 
 macOS Terminal:
 
@@ -282,7 +280,9 @@ set COMMONA_MCP_BEARER=value-you-make-up
 npx tsx connectors/mcp-server/http.ts
 ```
 
-**(unverified)** Ask Grok Bot to add the same copied link, still including `handoff` and `room`, and a static header `Authorization: Bearer` followed by the value you set. Give the value only as that header. Never paste the value into the room or a doc. If this also fails, write that down and continue. Do not retry with the query string removed.
+The URL with no query string is the same `COMMONA_CONNECT_URL`, such as `https://REPLACE-ME.trycloudflare.com/mcp`.
+
+**(unverified)** Ask Grok Bot to add that URL, with no `?` and nothing after it, and a static header `Authorization: Bearer` followed by the value you set. Give the value only as that header. Never paste the value into the room or a doc. If this also fails, write that down and continue.
 
 ## 7. Restart the connector
 
