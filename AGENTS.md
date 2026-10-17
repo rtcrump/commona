@@ -13,6 +13,8 @@ P0/P1 covers anything that could:
 - bypass the loop limit
 - skip join auth
 
+Commona does not filter message or file content. A name, a health number, or a date of birth in a post or a file is not a finding.
+
 Real data in fixtures is P0. Changing acceptance test wording is P1.
 
 ## Safety-core review

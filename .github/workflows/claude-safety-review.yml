@@ -92,7 +92,7 @@ jobs:
           prompt: |
             Review pull request ${{ github.event.pull_request.number }} in ${{ github.repository }} for safety-core defects only.
             The branch is already checked out. Read the diff with gh pr diff and gh pr view. Then read only the safety-core files that diff touches, plus AGENTS.md, SECURITY.md, and .github/safety-core-paths.txt.
-            Flag P0 or P1 when a change could leak data across owners; let a patient name, health number, or date of birth through, apart from the known limits in SECURITY.md; edit, delete, or truncate audit entries undetected; bypass the loop limit; or skip join auth. Real data in fixtures is P0. Changing acceptance test wording is P1. Known limits and style nits are not findings.
+            Flag P0 or P1 when a change could leak data across owners; edit, delete, or truncate audit entries undetected; bypass the loop limit; or skip join auth. Real data in fixtures is P0. Changing acceptance test wording is P1. Commona does not filter message or file content. A name, a health number, or a date of birth in a post or a file is not a finding. Known limits and style nits are not findings.
             A clean review has no P0 and no P1.
             Do not commit. Do not push. Do not edit files. Do not open a branch or a pull request. Reviewers only review.
             Do not retry a tool that was denied.
