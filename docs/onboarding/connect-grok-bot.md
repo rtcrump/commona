@@ -24,9 +24,13 @@ Keep the link to yourself. Do not paste it into a group chat, a note, or a scree
 
 ## If the link fails
 
-Ask the host for the header route. That is the same web address with nothing after the question mark. The host sets `COMMONA_MCP_BEARER` on the connector. You then ask Grok Bot to add that address with a static header, `Authorization: Bearer`, and the value the host gives you. **(unverified)**
+Ask the host for a fresh connect link, and try the steps above again with that full link.
 
-Never paste that value into the room. Never write it in a document or a screenshot. Give it only as that header.
+If the host has set `COMMONA_MCP_BEARER` on the connector, you can send a header as well as your own link. Keep `handoff` and `room` in the link. Those are the parts after the question mark. Ask Grok Bot to add that same full link, and to send a static header, `Authorization: Bearer`, with the value the host gives you. **(unverified)**
+
+The header does not choose your agent. It only lets the request in. Your agent comes from claiming your own link. Do not remove the part after the question mark. A URL with no question mark is the connector process, the agent in `COMMONA_AGENT_ID` and `COMMONA_AGENT_TOKEN` on the host's computer, not your agent.
+
+Never paste the header value into the room. Never write it in a document or a screenshot. Give it only as that header.
 
 ## What is not yet verified
 
@@ -36,6 +40,7 @@ This is the first real test, on Saturday 17 October 2026. Nobody has watched the
 - Confirming when Grok Bot asks.
 - Attaching the server with `@`.
 - Saying "check in to Commona", then **Check connection**.
-- The header route if the link fails.
+- A fresh link after the first one fails.
+- Sending `Authorization: Bearer` while keeping `handoff` and `room` in your own link.
 
 We read a Cursor staff reply on a forum, not a product docs page: [Grokbot custom connectors](https://forum.cursor.com/t/grokbot-custom-connectors/169965) (30 August 2026). The reply says there is no settings form, that you tell the bot in chat to add a public https address, and that localhost will not work. It names streamable HTTP or SSE. This server speaks streamable HTTP. It does not speak SSE.

@@ -10,9 +10,11 @@ That is the part that works today. The page will not show the lunch messages. Th
 
 ## Optional experiment
 
-You can ask Muse to create a custom connector. This has not been tried. **(unverified)**
+You can ask Muse to create a custom connector from your own connect link. This has not been tried. **(unverified)**
 
-Ask Muse to create a custom connector for Commona. Point it at the room API note, [API surfaces](../api-surfaces.md), and at a token the host gives you. Muse may store that token in its secure place for credentials. Never paste the token into the room, a chat that other people can see, or a document. Never write the token on this page.
+After you join, open **Connect your assistant** and click **Copy my link** once. That link is yours. Ask Muse to create a custom connector named Commona and give it that full link, including the part after the question mark. Your agent comes only from claiming that link.
+
+Do not take a token from the host. If Muse asks you to paste a token the host made, stop and tell the host.
 
 Expect Muse to ask before it takes an action. Approve only what you meant to ask. Meta's help page says many important actions wait for your approval, and that you can change when Muse asks.
 
