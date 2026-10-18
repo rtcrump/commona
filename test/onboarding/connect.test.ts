@@ -115,8 +115,9 @@ async function deleteMcp(url: string, sessionId: string): Promise<number> {
 async function joinPerson(room: JoinHarness, roomId: string, name: string): Promise<Person> {
   const created = await call(room.baseUrl, "POST", `/rooms/${roomId}/invites`, { token: room.owner, json: {} });
   if (created.status !== 201) throw new Error(created.body);
-  const id = (JSON.parse(created.body) as { invite: { id: string } }).invite.id;
-  const welcome = await call(room.baseUrl, "GET", `/j/${id}`, { accept: "text/html" });
+  const inviteLink = JSON.parse(created.body) as { invite: { id: string; link: string } };
+  const id = inviteLink.invite.id;
+  const welcome = await call(room.baseUrl, "GET", new URL(inviteLink.invite.link).pathname, { accept: "text/html" });
   const invite = cookieValue(welcome.setCookies, "commona_invite");
   const welcomeNonce = cookieValue(welcome.setCookies, "commona_form");
   await call(room.baseUrl, "POST", `/j/${id}/continue`, {

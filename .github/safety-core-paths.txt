@@ -11,4 +11,5 @@ src/room/routes.ts
 src/room/sharing.ts
 src/app.ts
 src/runtime.ts
+src/host/host-room.ts
 contract/

@@ -11,7 +11,6 @@ import {
 import {
   FORM_COOKIE,
   INVITE_COOKIE,
-  JOINED_COOKIE,
   readCookie,
   serializeCookie,
   SESSION_COOKIE,
@@ -36,16 +35,6 @@ const NAME_NOTE = "Enter your first name.";
 const NAME_RE = /^[\p{L}][\p{L} '-]{0,39}$/u;
 const LOCATION_RE =
   /^\/j\/inv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/(sharing|done))?$/;
-
-/** Pending first name, keyed by invite id and the invite secret hash. */
-const firstNames = new Map<string, string>();
-
-interface JoinedMark {
-  inviteId: string;
-  ownerId: string;
-}
-
-const joined = new Map<string, JoinedMark>();
 
 export interface JoinResult {
   status: number;
@@ -116,10 +105,6 @@ function readFirstName(value: string | undefined): string | null {
   return name;
 }
 
-function pendingKey(inviteId: string, secretHash: string): string {
-  return `${inviteId}:${secretHash}`;
-}
-
 /** The invite secret hash when this browser still holds the one-time invite cookie. */
 function matchingInviteHash(
   deps: RoomDeps,
@@ -140,6 +125,32 @@ function matchingInviteHash(
 
 function displayNameAllowed(deps: RoomDeps, name: string): boolean {
   return deps.guard.check({ kind: "message", text: name }).outcome === "allow";
+}
+
+function savePendingName(deps: RoomDeps, inviteId: string, secretHash: string, name: string): void {
+  ensureInviteSchema(deps.db);
+  deps.db
+    .prepare(
+      `INSERT INTO invite_pending_names (invite_id, secret_hash, first_name)
+       VALUES (?, ?, ?)
+       ON CONFLICT(invite_id) DO UPDATE SET
+         secret_hash = excluded.secret_hash,
+         first_name = excluded.first_name`,
+    )
+    .run(inviteId, secretHash, name);
+}
+
+function loadPendingName(deps: RoomDeps, inviteId: string, secretHash: string): string | null {
+  ensureInviteSchema(deps.db);
+  const row = deps.db
+    .prepare("SELECT first_name FROM invite_pending_names WHERE invite_id = ? AND secret_hash = ?")
+    .get(inviteId, secretHash) as { first_name: string } | undefined;
+  return row?.first_name ?? null;
+}
+
+function dropPendingName(deps: RoomDeps, inviteId: string): void {
+  ensureInviteSchema(deps.db);
+  deps.db.prepare("DELETE FROM invite_pending_names WHERE invite_id = ?").run(inviteId);
 }
 
 function welcomeAgain(
@@ -166,17 +177,6 @@ function seeingFromForm(value: string | undefined): SharingLevelName {
   if (value === "Messages") return SharingLevel.Messages;
   if (value === "Messages and files") return SharingLevel.MessagesFiles;
   return SharingLevel.None;
-}
-
-function rememberJoined(inviteId: string, ownerId: string): string {
-  const token = randomBytes(32).toString("base64url");
-  joined.set(token, { inviteId, ownerId });
-  return token;
-}
-
-function joinedMark(token: string | null): JoinedMark | null {
-  if (!token) return null;
-  return joined.get(token) ?? null;
 }
 
 export function openWelcome(deps: RoomDeps, inviteId: string, secret: string | null): JoinResult {
@@ -217,7 +217,7 @@ export function submitName(
   if (!secretHash) return stalePage();
   const name = readFirstName(fields.firstName);
   if (!name || !displayNameAllowed(deps, name)) return welcomeAgain(deps, inviteId, view, NAME_NOTE);
-  firstNames.set(pendingKey(inviteId, secretHash), name);
+  savePendingName(deps, inviteId, secretHash, name);
   return redirect(pathFor(inviteId, "/sharing"), [], []);
 }
 
@@ -229,7 +229,7 @@ export function openSharing(
   const view = describeInvite(deps, inviteId);
   if (view.status !== "open") return errorPage(view);
   const secretHash = matchingInviteHash(deps, inviteId, cookieHeader);
-  if (!secretHash || !firstNames.has(pendingKey(inviteId, secretHash))) {
+  if (!secretHash || loadPendingName(deps, inviteId, secretHash) === null) {
     return redirect(pathFor(inviteId), [], []);
   }
   const { nonce, cookie } = issueNonce(cookieMaxAge(deps, inviteId));
@@ -272,12 +272,12 @@ export function submitSharing(
   const fields = formFields(body);
   if (!csrfOk(cookieHeader, fields.nonce)) return stalePage();
   const secretHash = matchingInviteHash(deps, inviteId, cookieHeader);
-  const name = secretHash ? firstNames.get(pendingKey(inviteId, secretHash)) : undefined;
+  const name = secretHash ? loadPendingName(deps, inviteId, secretHash) : null;
   if (!secretHash || !name) {
     return page(400, renderError(STALE));
   }
   if (!displayNameAllowed(deps, name)) {
-    firstNames.delete(pendingKey(inviteId, secretHash));
+    dropPendingName(deps, inviteId);
     return page(400, renderError(NAME_NOTE));
   }
   const secret = readCookie(cookieHeader, INVITE_COOKIE);
@@ -293,19 +293,15 @@ export function submitSharing(
   deps.db.prepare("UPDATE owners SET display_name = ? WHERE id = ?").run(name, redeemed.owner.id);
   grantSeeing(deps, redeemed.member.roomId, redeemed.owner.id, seeingFromForm(fields.seeing));
   grantHostMessages(deps, redeemed.member.roomId, redeemed.owner.id);
-  firstNames.delete(pendingKey(inviteId, secretHash));
+  dropPendingName(deps, inviteId);
   if (!/^[A-Za-z0-9_-]+$/.test(redeemed.sessionToken)) throw new Error("refusing to send a secret");
-  const marker = rememberJoined(inviteId, redeemed.owner.id);
   rememberInviteOwner(deps, inviteId, redeemed.owner.id, redeemed.member.roomId);
-  const secrets = [redeemed.sessionToken, hashToken(redeemed.sessionToken), marker, secret ?? ""].filter(
+  const secrets = [redeemed.sessionToken, hashToken(redeemed.sessionToken), secret ?? ""].filter(
     (value) => value.length > 0,
   );
   return redirect(
     pathFor(inviteId, "/done"),
-    [
-      serializeCookie(SESSION_COOKIE, redeemed.sessionToken, "/"),
-      serializeCookie(JOINED_COOKIE, marker, "/j", 10 * 60),
-    ],
+    [serializeCookie(SESSION_COOKIE, redeemed.sessionToken, "/")],
     secrets,
   );
 }
@@ -315,11 +311,11 @@ export function openDone(
   inviteId: string,
   cookieHeader: string | string[] | undefined,
 ): JoinResult {
-  const marker = readCookie(cookieHeader, JOINED_COOKIE);
-  if (joinedMark(marker)?.inviteId === inviteId) {
-    return page(200, renderDone(pathFor(inviteId, "/connect")), [], marker ? [marker] : []);
+  const finished = finishedJoin(deps, inviteId, cookieHeader);
+  if (!finished || !stillMember(deps, finished.roomId, finished.ownerId)) {
+    return errorPage(describeInvite(deps, inviteId));
   }
-  return errorPage(describeInvite(deps, inviteId));
+  return page(200, renderDone(pathFor(inviteId, "/connect")), [], [finished.session, hashToken(finished.session)]);
 }
 
 export function openConnect(): JoinResult {
@@ -327,6 +323,38 @@ export function openConnect(): JoinResult {
 }
 
 type ConnectAuth = { ownerId: string; roomId: string; hidden: string[] };
+
+interface FinishedJoin {
+  ownerId: string;
+  roomId: string;
+  session: string;
+}
+
+/** The owner session that finished this invite. The row and the session hash both live in SQLite. */
+function finishedJoin(
+  deps: RoomDeps,
+  inviteId: string,
+  cookieHeader: string | string[] | undefined,
+): FinishedJoin | null {
+  if (!isInviteId(inviteId)) return null;
+  ensureInviteSchema(deps.db);
+  const session = readCookie(cookieHeader, SESSION_COOKIE);
+  if (!session) return null;
+  const principal = deps.tokens.authenticate(session);
+  if (!principal || principal.kind !== "owner") return null;
+  const saved = deps.db
+    .prepare("SELECT owner_id, room_id FROM invite_owners WHERE invite_id = ?")
+    .get(inviteId) as { owner_id: string; room_id: string } | undefined;
+  if (!saved || saved.owner_id !== principal.ownerId) return null;
+  return { ownerId: saved.owner_id, roomId: saved.room_id, session };
+}
+
+function stillMember(deps: RoomDeps, roomId: string, ownerId: string): boolean {
+  const member = deps.db
+    .prepare("SELECT 1 AS ok FROM memberships WHERE room_id = ? AND owner_id = ?")
+    .get(roomId, ownerId) as { ok: number } | undefined;
+  return member !== undefined;
+}
 
 function rememberInviteOwner(deps: RoomDeps, inviteId: string, ownerId: string, roomId: string): void {
   ensureInviteSchema(deps.db);
@@ -344,34 +372,10 @@ function authorizeConnect(
   inviteId: string,
   cookieHeader: string | string[] | undefined,
 ): ConnectAuth | JoinResult {
-  if (!isInviteId(inviteId)) return errorPage(describeInvite(deps, inviteId));
-  ensureInviteSchema(deps.db);
-  const marker = readCookie(cookieHeader, JOINED_COOKIE);
-  const mark = joinedMark(marker);
-  const session = readCookie(cookieHeader, SESSION_COOKIE);
-  const principal = session ? deps.tokens.authenticate(session) : null;
-  const saved = deps.db.prepare("SELECT owner_id FROM invite_owners WHERE invite_id = ?").get(inviteId) as
-    | { owner_id: string }
-    | undefined;
-  let ownerId: string | null = null;
-  if (mark && mark.inviteId === inviteId) {
-    if (!principal || principal.kind !== "owner" || principal.ownerId !== mark.ownerId) return stalePage();
-    ownerId = mark.ownerId;
-  } else if (saved && principal && principal.kind === "owner" && principal.ownerId === saved.owner_id) {
-    ownerId = saved.owner_id;
-  } else {
-    return errorPage(describeInvite(deps, inviteId));
-  }
-  const invite = deps.db.prepare("SELECT room_id FROM invites WHERE id = ?").get(inviteId) as
-    | { room_id: string }
-    | undefined;
-  if (!invite) return errorPage(describeInvite(deps, inviteId));
-  const member = deps.db
-    .prepare("SELECT 1 AS ok FROM memberships WHERE room_id = ? AND owner_id = ?")
-    .get(invite.room_id, ownerId) as { ok: number } | undefined;
-  if (!member) return stalePage();
-  const hidden = [marker ?? "", session ?? ""].filter((value) => value.length > 0);
-  return { ownerId, roomId: invite.room_id, hidden };
+  const finished = finishedJoin(deps, inviteId, cookieHeader);
+  if (!finished) return errorPage(describeInvite(deps, inviteId));
+  if (!stillMember(deps, finished.roomId, finished.ownerId)) return stalePage();
+  return { ownerId: finished.ownerId, roomId: finished.roomId, hidden: [finished.session] };
 }
 
 function isAuth(value: ConnectAuth | JoinResult): value is ConnectAuth {

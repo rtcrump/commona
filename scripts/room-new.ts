@@ -1,13 +1,13 @@
-import { chmodSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { HOST_SECRET_HEADER, hostSecretPath } from "../src/room/host.js";
+import { HOST_SECRET_HEADER } from "../src/host/host-room.js";
 
 const LABEL_MAX = 80;
 const DEFAULT_INVITE_COUNT = 2;
 const MAX_INVITE_COUNT = 20;
 const INVITE_URL =
-  /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?\/j\/inv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?\/j\/inv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[A-Za-z0-9_-]+$/;
 const ROOM_ID = /^room_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const AGENT_ID = /^agent_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CREDENTIAL_UNWRITABLE = "COMMONA_HOST_CREDENTIAL is not writable";
@@ -56,7 +56,7 @@ export async function createRoomInvites(input: RoomNewInput): Promise<string[]> 
   reserveCredential(credentialPath);
   let committed = false;
   try {
-    const hostSecret = readHostSecret(hostSecretPath());
+    const hostSecret = readHostSecret();
     let response: Response;
     try {
       response = await fetch(`${serverUrl}/host/room`, {
@@ -82,15 +82,12 @@ export async function createRoomInvites(input: RoomNewInput): Promise<string[]> 
   }
 }
 
-function readHostSecret(file: string): string {
-  let text: string;
-  try {
-    text = readFileSync(file, "utf8").trim();
-  } catch {
-    throw new RoomNewError("room:new could not read the host secret");
-  }
-  if (!/^[A-Za-z0-9_-]{43}$/.test(text)) throw new RoomNewError("room:new could not read the host secret");
-  return text;
+function readHostSecret(): string {
+  const text = process.env.COMMONA_HOST_SECRET ?? "";
+  if (text.trim() === "") throw new RoomNewError("COMMONA_HOST_SECRET is not set");
+  const secret = text.trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(secret)) throw new RoomNewError("room:new failed");
+  return secret;
 }
 
 function reserveCredential(file: string): void {
@@ -208,15 +205,10 @@ function requireLocalUrl(raw: string | undefined): string {
   }
   const host = url.hostname;
   const local = host === "127.0.0.1" || host === "localhost" || host === "::1";
-  if (
-    url.protocol !== "http:" ||
-    !local ||
-    url.username ||
-    url.password ||
-    url.pathname !== "/" ||
-    url.search ||
-    url.hash
-  ) {
+  const https = url.protocol === "https:";
+  const httpLocal = url.protocol === "http:" && local;
+  if (!https && !httpLocal) throw new RoomNewError("room:new only talks to a local server");
+  if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
     throw new RoomNewError("room:new only talks to a local server");
   }
   return value.replace(/\/$/, "");

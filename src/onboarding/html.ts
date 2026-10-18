@@ -1,12 +1,27 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { CONNECT_OWNER_ACTIONS } from "./connect-steps.js";
 
-// `npm run build` copies web/onboarding to dist/web/onboarding, which is this path from dist/src/onboarding.
-const templateDir = fileURLToPath(new URL("../../web/onboarding/", import.meta.url));
+const templates = new Map<string, string>();
+
+/** Page files from Worker text modules. Node reads web/onboarding on first use. */
+export function installTemplates(files: Record<string, string>): void {
+  for (const [name, text] of Object.entries(files)) templates.set(name, text);
+}
 
 function readTemplate(name: string): string {
-  return readFileSync(`${templateDir}${name}`, "utf8");
+  const installed = templates.get(name);
+  if (installed !== undefined) return installed;
+  const fs = loadBuiltin("node:fs") as { readFileSync(path: string, encoding: "utf8"): string } | undefined;
+  const url = loadBuiltin("node:url") as { fileURLToPath(file: URL): string } | undefined;
+  if (!fs || !url || typeof fs.readFileSync !== "function" || typeof url.fileURLToPath !== "function") {
+    throw new Error("page templates are not installed");
+  }
+  const file = url.fileURLToPath(new URL(`../../web/onboarding/${name}`, import.meta.url));
+  return fs.readFileSync(file, "utf8");
+}
+
+function loadBuiltin(name: string): unknown {
+  const proc = (globalThis as { process?: { getBuiltinModule?: (id: string) => unknown } }).process;
+  return proc?.getBuiltinModule?.(name);
 }
 
 export function escapeHtml(value: string): string {

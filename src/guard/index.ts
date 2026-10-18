@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import {
   BlockCategory,
   BlockLocation,
@@ -126,15 +124,55 @@ export function createContentGuard(names: readonly string[]): ContentGuard {
   };
 }
 
-function readDefaultNames(): readonly string[] {
-  const file = fileURLToPath(new URL("../../fixtures/names.txt", import.meta.url));
-  return readFileSync(file, "utf8")
+let installedGuard: ContentGuard | undefined;
+
+/** Names from a Worker text module. Node reads fixtures/names.txt on first use. */
+export function installNameList(text: string): void {
+  installedGuard = createContentGuard(parseNameList(text));
+}
+
+export function parseNameList(text: string): string[] {
+  return text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !line.startsWith("#"));
 }
 
-export const guard: ContentGuard = createContentGuard(readDefaultNames());
+function readDefaultNames(): readonly string[] {
+  const fs = builtinFs();
+  const url = builtinUrl();
+  if (!fs || !url) throw new Error("name list is not installed");
+  const file = url.fileURLToPath(new URL("../../fixtures/names.txt", import.meta.url));
+  return parseNameList(fs.readFileSync(file, "utf8"));
+}
+
+function builtinFs(): { readFileSync(path: string, encoding: "utf8"): string } | undefined {
+  const loaded = loadBuiltin("node:fs");
+  if (!loaded || typeof loaded !== "object" || !("readFileSync" in loaded)) return undefined;
+  return loaded as { readFileSync(path: string, encoding: "utf8"): string };
+}
+
+function builtinUrl(): { fileURLToPath(url: URL): string } | undefined {
+  const loaded = loadBuiltin("node:url");
+  if (!loaded || typeof loaded !== "object" || !("fileURLToPath" in loaded)) return undefined;
+  return loaded as { fileURLToPath(url: URL): string };
+}
+
+function loadBuiltin(name: string): unknown {
+  const proc = (globalThis as { process?: { getBuiltinModule?: (id: string) => unknown } }).process;
+  return proc?.getBuiltinModule?.(name);
+}
+
+function activeGuard(): ContentGuard {
+  if (!installedGuard) installedGuard = createContentGuard(readDefaultNames());
+  return installedGuard;
+}
+
+export const guard: ContentGuard = {
+  check(target: GuardTarget): GuardDecision {
+    return activeGuard().check(target);
+  },
+};
 
 /**
  * True when the declared media type is text or JSON.

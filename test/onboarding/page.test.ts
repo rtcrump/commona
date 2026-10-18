@@ -15,8 +15,8 @@ function locationPath(location: string | null): string {
   return value.startsWith("http") ? new URL(value).pathname : value;
 }
 
-async function openWelcome(room: JoinHarness, id: string) {
-  return call(room.baseUrl, "GET", `/j/${id}`, { accept: "text/html" });
+async function openWelcome(room: JoinHarness, invite: { openPath: string }) {
+  return call(room.baseUrl, "GET", invite.openPath, { accept: "text/html" });
 }
 
 describe("join pages", () => {
@@ -30,9 +30,10 @@ describe("join pages", () => {
   it("snapshots the welcome, sharing, and done pages and stores None by default", async () => {
     room = await startJoinHarness();
     room.db.prepare("INSERT INTO room_titles (room_id, title) VALUES (?, ?)").run(room.roomId, "Sunday lunch");
-    const id = await createInvite(room);
+    const created = await createInvite(room);
+    const id = created.id;
     const mark = room.issued.length;
-    const welcome = await openWelcome(room, id);
+    const welcome = await openWelcome(room, created);
     expect(welcome.status).toBe(200);
     expect(welcome.contentType).toContain("text/html");
     expect(welcome.body).toContain("Owner One invited you to Sunday lunch.");
@@ -73,7 +74,6 @@ describe("join pages", () => {
     expect(finished.status).toBe(303);
     expect(locationPath(finished.location)).toBe(`/j/${id}/done`);
     const session = cookieValue(finished.setCookies, "commona_session");
-    const joined = cookieValue(finished.setCookies, "commona_joined");
     expect(session.length).toBeGreaterThan(20);
     expect(finished.body).not.toContain(session);
     expect(finished.location ?? "").not.toContain(session);
@@ -85,7 +85,7 @@ describe("join pages", () => {
 
     const done = await call(room.baseUrl, "GET", `/j/${id}/done`, {
       accept: "text/html",
-      cookie: `commona_joined=${joined}`,
+      cookie: `commona_session=${session}`,
     });
     expect(done.status).toBe(200);
     expect(done.body).toContain("You're in.");
@@ -110,7 +110,6 @@ describe("join pages", () => {
     const secrets = [
       invite,
       session,
-      joined,
       ...room.issued.slice(mark).map((item) => item.token),
     ];
     const publicText = [welcome.body, sharing.body, done.body, connect.body, continued.location, finished.location]
@@ -125,8 +124,9 @@ describe("join pages", () => {
 
   it("stores None when the sharing form omits the choice", async () => {
     room = await startJoinHarness();
-    const id = await createInvite(room);
-    const welcome = await openWelcome(room, id);
+    const created = await createInvite(room);
+    const id = created.id;
+    const welcome = await openWelcome(room, created);
     const invite = cookieValue(welcome.setCookies, "commona_invite");
     const welcomeNonce = cookieValue(welcome.setCookies, "commona_form");
     const continued = await call(room.baseUrl, "POST", `/j/${id}/continue`, {
@@ -151,8 +151,9 @@ describe("join pages", () => {
 
   it("stores Messages when that choice is submitted", async () => {
     room = await startJoinHarness();
-    const id = await createInvite(room);
-    const welcome = await openWelcome(room, id);
+    const created = await createInvite(room);
+    const id = created.id;
+    const welcome = await openWelcome(room, created);
     const invite = cookieValue(welcome.setCookies, "commona_invite");
     const welcomeNonce = cookieValue(welcome.setCookies, "commona_form");
     await call(room.baseUrl, "POST", `/j/${id}/continue`, {
@@ -174,8 +175,9 @@ describe("join pages", () => {
     expect(room.sharing.level(room.roomId, owner.id, "O2")).toBe(SharingLevel.Messages);
     expect(room.sharing.level(room.roomId, "O1", owner.id)).toBe(SharingLevel.None);
 
-    const filesId = await createInvite(room);
-    const filesWelcome = await openWelcome(room, filesId);
+    const filesInviteLink = await createInvite(room);
+    const filesId = filesInviteLink.id;
+    const filesWelcome = await openWelcome(room, filesInviteLink);
     const filesInvite = cookieValue(filesWelcome.setCookies, "commona_invite");
     const filesNonce = cookieValue(filesWelcome.setCookies, "commona_form");
     await call(room.baseUrl, "POST", `/j/${filesId}/continue`, {
@@ -201,9 +203,10 @@ describe("join pages", () => {
     room = await startJoinHarness();
     room.db.prepare("INSERT INTO room_titles (room_id, title) VALUES (?, ?)").run(room.roomId, "Sunday lunch");
 
-    const expiredId = await createInvite(room, 60);
+    const expiredInvite = await createInvite(room, 60);
+    const expiredId = expiredInvite.id;
     room.clock.advance(60_000);
-    const expired = await openWelcome(room, expiredId);
+    const expired = await openWelcome(room, expiredInvite);
     expect(expired.status).toBe(200);
     expect(expired.body).toContain("This link has expired, so ask Owner One for a new link.");
     expect(expired.body).not.toContain("Sunday lunch");
@@ -212,8 +215,9 @@ describe("join pages", () => {
     assertNoJargon(expired.body);
     expect(freeze(expired.body, expiredId)).toMatchSnapshot("expired");
 
-    const usedId = await createInvite(room);
-    const usedGet = await call(room.baseUrl, "GET", `/j/${usedId}`);
+    const usedInvite = await createInvite(room);
+    const usedId = usedInvite.id;
+    const usedGet = await call(room.baseUrl, "GET", usedInvite.openPath);
     expect(usedGet.status).toBe(200);
     expect(JSON.parse(usedGet.body)).toEqual({ ok: true });
     const usedSecret = cookieValue(usedGet.setCookies, "commona_invite");
@@ -222,7 +226,7 @@ describe("join pages", () => {
       json: {},
     });
     expect(accepted.status).toBe(201);
-    const used = await openWelcome(room, usedId);
+    const used = await openWelcome(room, usedInvite);
     expect(used.body).toContain("This link has already been used, so ask Owner One for a new link.");
     expect(used.body).not.toContain("Sunday lunch");
     expect(used.body).not.toContain(room.roomId);
@@ -231,12 +235,13 @@ describe("join pages", () => {
     assertNoJargon(used.body);
     expect(freeze(used.body, usedId)).toMatchSnapshot("used");
 
-    const revokedId = await createInvite(room);
+    const revokedInvite = await createInvite(room);
+    const revokedId = revokedInvite.id;
     const revokedDelete = await call(room.baseUrl, "DELETE", `/rooms/${room.roomId}/invites/${revokedId}`, {
       token: room.tokens.issueAgentToken("A1"),
     });
     expect(revokedDelete.status).toBe(200);
-    const revoked = await openWelcome(room, revokedId);
+    const revoked = await openWelcome(room, revokedInvite);
     expect(revoked.body).toContain("This link was cancelled, so ask Owner One for a new link.");
     expect(revoked.body).not.toContain("Sunday lunch");
     expect(revoked.body).not.toContain(room.roomId);
@@ -247,10 +252,11 @@ describe("join pages", () => {
 
   it("returns JSON when the caller does not ask for HTML", async () => {
     room = await startJoinHarness();
-    const id = await createInvite(room);
-    const unnamed = await call(room.baseUrl, "GET", `/j/${id}`);
+    const created = await createInvite(room);
+    const unnamed = await call(room.baseUrl, "GET", `/j/${created.id}`);
     expect(unnamed.contentType).toContain("json");
     expect(JSON.parse(unnamed.body)).toEqual({ ok: true });
+    expect(unnamed.setCookies.some((value) => value.startsWith("commona_invite="))).toBe(false);
     const plain = await createInvite(room);
     const html = await openWelcome(room, plain);
     expect(html.body).toContain("Owner One invited you to the shared room.");

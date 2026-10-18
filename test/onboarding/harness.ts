@@ -124,13 +124,20 @@ export function cookieValue(setCookies: string[], name: string): string {
   return header.slice(name.length + 1, end === -1 ? undefined : end);
 }
 
-export async function createInvite(room: JoinHarness, expiresInSeconds?: number): Promise<string> {
+export interface CreatedInviteLink {
+  id: string;
+  /** First GET path. It carries the raw secret. Later paths use the id alone. */
+  openPath: string;
+}
+
+export async function createInvite(room: JoinHarness, expiresInSeconds?: number): Promise<CreatedInviteLink> {
   const created = await call(room.baseUrl, "POST", `/rooms/${room.roomId}/invites`, {
     token: room.owner,
     json: expiresInSeconds === undefined ? {} : { expiresInSeconds },
   });
   if (created.status !== 201) throw new Error(created.body);
-  return (JSON.parse(created.body) as { invite: { id: string } }).invite.id;
+  const invite = (JSON.parse(created.body) as { invite: { id: string; link: string } }).invite;
+  return { id: invite.id, openPath: new URL(invite.link).pathname };
 }
 
 export const CANARIES = [

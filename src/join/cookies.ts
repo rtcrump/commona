@@ -1,7 +1,6 @@
 export const INVITE_COOKIE = "commona_invite";
 export const SESSION_COOKIE = "commona_session";
 export const FORM_COOKIE = "commona_form";
-export const JOINED_COOKIE = "commona_joined";
 
 export function serializeCookie(name: string, value: string, path: string, maxAge?: number): string {
   const age = maxAge === undefined ? "" : `; Max-Age=${maxAge}`;

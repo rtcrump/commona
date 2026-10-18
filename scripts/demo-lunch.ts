@@ -399,13 +399,15 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
     });
 
     const inviteIds: string[] = [];
+    const invitePaths: string[] = [];
     await run("invite-links", async () => {
       if (!orlaToken || !roomId) throw new DemoError("invite-links");
       for (let n = 0; n < 2; n += 1) {
         const created = await request(baseUrl, "POST", `/rooms/${roomId}/invites`, { token: orlaToken, json: {} });
         if (created.status !== 201) throw new DemoError("invite-links");
-        const id = (JSON.parse(created.body) as { invite: { id: string; link: string } }).invite.id;
-        inviteIds.push(id);
+        const invite = (JSON.parse(created.body) as { invite: { id: string; link: string } }).invite;
+        inviteIds.push(invite.id);
+        invitePaths.push(new URL(invite.link).pathname);
       }
       if (inviteIds.length !== 2) throw new DemoError("invite-links");
       transcript("owner Orla (demo) created 2 invite links");
@@ -414,11 +416,11 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
     const friendTokens = new Map<DemoOwnerKey, string>();
     const friendJars = new Map<DemoOwnerKey, Map<string, string>>();
 
-    const joinFriend = async (key: "pim" | "tavi", inviteId: string) => {
+    const joinFriend = async (key: "pim" | "tavi", inviteId: string, openPath: string) => {
       const spec = DEMO_OWNERS.find((owner) => owner.key === key);
       if (!spec) throw new DemoError("join");
       const jar = new Map<string, string>();
-      const welcome = await request(baseUrl, "GET", `/j/${inviteId}`, { accept: "text/html" });
+      const welcome = await request(baseUrl, "GET", openPath, { accept: "text/html" });
       if (welcome.status !== 200) throw new DemoError("join");
       if (!welcome.body.includes("Lunch") || !welcome.body.includes("Orla (demo)")) throw new DemoError("join");
       absorb(jar, welcome.setCookies);
@@ -463,13 +465,15 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
 
     await run("join-pim", async () => {
       const id = inviteIds[0];
-      if (!id) throw new DemoError("join-pim");
-      await joinFriend("pim", id);
+      const openPath = invitePaths[0];
+      if (!id || !openPath) throw new DemoError("join-pim");
+      await joinFriend("pim", id, openPath);
     });
     await run("join-tavi", async () => {
       const id = inviteIds[1];
-      if (!id) throw new DemoError("join-tavi");
-      await joinFriend("tavi", id);
+      const openPath = invitePaths[1];
+      if (!id || !openPath) throw new DemoError("join-tavi");
+      await joinFriend("tavi", id, openPath);
     });
 
     await run("sharing", async () => {
@@ -525,7 +529,7 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
           const inviteId = key === "pim" ? inviteIds[0] : inviteIds[1];
           if (!inviteId) throw new DemoError("connect");
           const jar = friendJars.get(key);
-          if (!jar?.get("commona_session") || !jar.get("commona_joined")) throw new DemoError("connect");
+          if (!jar?.get("commona_session")) throw new DemoError("connect");
           const page = await openFriendConnect(baseUrl, inviteId, jar);
           const copied = await request(baseUrl, "POST", `/j/${inviteId}/connect/link`, {
             cookie: cookieHeader(jar),

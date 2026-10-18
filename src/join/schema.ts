@@ -74,6 +74,13 @@ CREATE TABLE IF NOT EXISTS invite_owners (
   owner_id TEXT NOT NULL REFERENCES owners(id),
   room_id TEXT NOT NULL REFERENCES rooms(id)
 );
+
+-- First name typed on the join page, kept until finish. The raw invite secret is not a column.
+CREATE TABLE IF NOT EXISTS invite_pending_names (
+  invite_id TEXT PRIMARY KEY REFERENCES invites(id),
+  secret_hash TEXT NOT NULL,
+  first_name TEXT NOT NULL
+);
 `;
 
 /** Apply the invite migration. Safe to call more than once on the same database. */

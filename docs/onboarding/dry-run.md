@@ -25,13 +25,13 @@ npm run build
 
 ## 2. Start the server
 
-The server listens on port 3000 unless you set `PORT`. A port is the number other programs use to reach it on this computer. Leave this window open.
+`npm start` runs the local Worker on port 3000. A port is the number other programs use to reach it on this computer. This command does not deploy. Leave this window open. How to deploy later is in [docs/hosting/cloudflare.md](../hosting/cloudflare.md).
 
 ```
 npm start
 ```
 
-It prints nothing when it is ready. That silence is normal.
+It prints a local address. That is ready.
 
 In a second window, check it.
 
@@ -69,37 +69,23 @@ Leave this window open. The address works only while this window is open.
 
 `COMMONA_PUBLIC_ORIGIN` is the public address written into invite links. It must be `https://` plus the host from step 3, with no path and no slash at the end. A wrong value makes a later request fail with `COMMONA_PUBLIC_ORIGIN must be an https origin`.
 
-`COMMONA_DB` is the database file. Without it the server keeps the room only in memory, and a restart forgets the room.
+The Worker does not read `COMMONA_DB`. It keeps the room in a SQLite Durable Object on this computer. Stopping `npm start` does not delete that object.
 
-Stop the server window with Ctrl+C. Leave the tunnel window open. In the server window, set both, then start again. Replace `REPLACE-ME` with the host you copied.
-
-macOS Terminal:
+Stop the server window with Ctrl+C. Leave the tunnel window open. In the project folder, create a file named `.dev.vars`. That file stays on this computer. Git ignores it. Replace `REPLACE-ME` with the host you copied. Add a second line named `COMMONA_HOST_SECRET`. After the equals sign, put a long random string of letters, digits, underscores, and hyphens. Do not use a value from this page. Do not print that line. Do not commit the file.
 
 ```
-export COMMONA_PUBLIC_ORIGIN="https://REPLACE-ME.trycloudflare.com"
-export COMMONA_DB="$HOME/commona-dry-run.sqlite"
-npm start
+COMMONA_PUBLIC_ORIGIN=https://REPLACE-ME.trycloudflare.com
 ```
 
-Windows PowerShell:
+Start the server again from that same folder:
 
 ```
-$env:COMMONA_PUBLIC_ORIGIN = "https://REPLACE-ME.trycloudflare.com"
-$env:COMMONA_DB = "$env:USERPROFILE\commona-dry-run.sqlite"
-npm start
-```
-
-Windows Command Prompt:
-
-```
-set COMMONA_PUBLIC_ORIGIN=https://REPLACE-ME.trycloudflare.com
-set COMMONA_DB=%USERPROFILE%\commona-dry-run.sqlite
 npm start
 ```
 
 Check `/health` again, the same way as step 2. Then open `https://REPLACE-ME.trycloudflare.com/health` in a browser, using your real host. You should see the same ok answer. What the browser shows when the tunnel is wrong was not checked here. **(unverified)**
 
-The server reads these settings only from the window where it was started. If you change them, press Ctrl+C and run `npm start` again in that same window.
+The Worker reads `COMMONA_PUBLIC_ORIGIN` and `COMMONA_HOST_SECRET` from `.dev.vars` when you run `npm start`. If you change that file, press Ctrl+C and run `npm start` again.
 
 ## 5. Lunch rehearsal
 
@@ -206,18 +192,16 @@ set COMMONA_CONNECT_URL=https://REPLACE-ME.trycloudflare.com/mcp
 npm start
 ```
 
-If this is a new window, set `COMMONA_PUBLIC_ORIGIN` and `COMMONA_DB` again before `npm start`.
+If this is a new window, the `.dev.vars` file from step 4 is still in the project folder. Start with `npm start` from that folder.
 
-The room server has to be running, with the https address from step 4, before you create the invite. Starting it also opens a host command. That command listens only on this computer, at `http://127.0.0.1:3002`, unless you set `COMMONA_HOST_PORT`. The public pages stay on port 3000. The tunnel from step 3 must point only at port 3000. Never point a tunnel at port 3002. The public address does not serve the host command.
+The room server has to be running, with the https address from step 4, before you create the invite. Room creation is `POST /host/room` on that same server, at `http://127.0.0.1:3000`. There is no second port. The tunnel from step 3 points at port 3000. The route refuses the call unless `COMMONA_HOST_SECRET` matches. See [docs/hosting/cloudflare.md](../hosting/cloudflare.md).
 
-Startup writes a one-time host secret to a file. The default file is `~/.commona/host-secret` on macOS. On Windows it is `%USERPROFILE%\.commona\host-secret` (in PowerShell, `$env:USERPROFILE\.commona\host-secret`). Set `COMMONA_HOST_SECRET_FILE` only if you want a different file, and set that same path when you start the server and when you run the command below. The secret file is owner-only (mode 0600). On Windows that mode is not applied. Each time the server starts, it writes a new secret over that file. The previous secret stops working. The secret is not printed. Do not open the secret file. Do not share it. Do not paste it into a chat or a note.
-
-In another window, set `COMMONA_URL` to the host command address, `http://127.0.0.1:3002`. If you changed `COMMONA_HOST_PORT`, use that port. This is not the public tunnel, and it is not port 3000. Set `COMMONA_HOST_CREDENTIAL` to a new file path on this computer. That file will hold the host agent's credential. A credential is the secret that proves who the host's agent is. The command writes it there and does not print it.
+The server does not write the host secret to a file. You already put it in `.dev.vars`. In another window, set `COMMONA_HOST_SECRET` to that same value. Do not print it. Set `COMMONA_URL` to `http://127.0.0.1:3000`. This is the local server, not the public tunnel. Set `COMMONA_HOST_CREDENTIAL` to a new file path on this computer. That file will hold the host agent's credential. A credential is the secret that proves who the host's agent is. The command writes it there and does not print it.
 
 macOS Terminal:
 
 ```
-export COMMONA_URL="http://127.0.0.1:3002"
+export COMMONA_URL="http://127.0.0.1:3000"
 export COMMONA_HOST_CREDENTIAL="$HOME/commona-host-credential"
 npm run room:new -- Lunch "Host (demo)"
 ```
@@ -225,7 +209,7 @@ npm run room:new -- Lunch "Host (demo)"
 Windows PowerShell:
 
 ```
-$env:COMMONA_URL = "http://127.0.0.1:3002"
+$env:COMMONA_URL = "http://127.0.0.1:3000"
 $env:COMMONA_HOST_CREDENTIAL = "$env:USERPROFILE\commona-host-credential"
 npm run room:new -- Lunch "Host (demo)"
 ```
@@ -233,12 +217,12 @@ npm run room:new -- Lunch "Host (demo)"
 Windows Command Prompt:
 
 ```
-set COMMONA_URL=http://127.0.0.1:3002
+set COMMONA_URL=http://127.0.0.1:3000
 set COMMONA_HOST_CREDENTIAL=%USERPROFILE%\commona-host-credential
 npm run room:new -- Lunch "Host (demo)"
 ```
 
-`Lunch` is the room title. `Host (demo)` is a made-up name for you. The join page shows that name. The command reads the host secret file and talks only to `POST /host/room` on port 3002. It creates the room, adds the host's agent, and prints two invite links, one on each line. It prints nothing else. A third argument changes how many links to print. The default is 2. On macOS the credential file is owner-only (mode 0600). On Windows that mode is not applied. Do not open the credential file. Do not share it. Do not paste it into a chat or a note.
+`Lunch` is the room title. `Host (demo)` is a made-up name for you. The join page shows that name. The command sends `POST /host/room` on port 3000. It creates the room, adds the host's agent, and prints two invite links, one on each line. It prints nothing else. A third argument changes how many links to print. The default is 2. On macOS the credential file is owner-only (mode 0600). On Windows that mode is not applied. Do not open the credential file. Do not share it. Do not paste it into a chat or a note.
 
 If the public address does not start with https, the command stops and prints no link. If the credential path already exists, the command stops. Use a new path. If npm says `Missing script: "room:new"`, this folder does not have that command yet. Stop. This page was not run with that command on this checkout. **(unverified)**
 

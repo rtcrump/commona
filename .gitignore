@@ -8,6 +8,8 @@ coverage/
 *.sqlite3
 .env
 .env.*
+.dev.vars
+.wrangler/
 m1-report.md
 m1-report.json
 *.tsbuildinfo

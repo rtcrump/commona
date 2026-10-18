@@ -26,8 +26,9 @@ describe("join pages show no room content", () => {
     room.db.prepare("INSERT INTO room_titles (room_id, title) VALUES (?, ?)").run(room.roomId, "Sunday lunch");
     const pages: string[] = [];
 
-    const welcomeId = await createInvite(room);
-    const welcome = await call(room.baseUrl, "GET", `/j/${welcomeId}`, { accept: "text/html" });
+    const welcomeInvite = await createInvite(room);
+    const welcomeId = welcomeInvite.id;
+    const welcome = await call(room.baseUrl, "GET", welcomeInvite.openPath, { accept: "text/html" });
     expect(welcome.status).toBe(200);
     expect(welcome.contentType).toContain("text/html");
     expect(welcome.body).toContain("Sunday lunch");
@@ -59,7 +60,7 @@ describe("join pages show no room content", () => {
 
     const done = await call(room.baseUrl, "GET", `/j/${welcomeId}/done`, {
       accept: "text/html",
-      cookie: `commona_joined=${joined}`,
+      cookie: `commona_session=${session}`,
     });
     expect(done.body).toContain("You're in.");
     pages.push(done.body);
@@ -89,20 +90,23 @@ describe("join pages show no room content", () => {
     const script = await call(room.baseUrl, "GET", "/onboarding/connect.js");
     pages.push(script.body);
 
-    const staleId = await createInvite(room);
+    const staleInvite = await createInvite(room);
+    const staleId = staleInvite.id;
     const stale = await call(room.baseUrl, "POST", `/j/${staleId}/continue`, { form: { firstName: "Alex" } });
     expect(stale.status).toBe(403);
     pages.push(stale.body);
 
-    const expiredId = await createInvite(room, 60);
+    const expiredInvite = await createInvite(room, 60);
+    const expiredId = expiredInvite.id;
     room.clock.advance(60_000);
     const expired = await call(room.baseUrl, "GET", `/j/${expiredId}`, { accept: "text/html" });
     expect(expired.body).toContain("expired");
     expect(expired.body).not.toContain("Sunday lunch");
     pages.push(expired.body);
 
-    const usedId = await createInvite(room);
-    const usedGet = await call(room.baseUrl, "GET", `/j/${usedId}`);
+    const usedInvite = await createInvite(room);
+    const usedId = usedInvite.id;
+    const usedGet = await call(room.baseUrl, "GET", usedInvite.openPath);
     const usedSecret = cookieValue(usedGet.setCookies, "commona_invite");
     await call(room.baseUrl, "POST", `/j/${usedId}/accept`, { cookie: `commona_invite=${usedSecret}`, json: {} });
     const used = await call(room.baseUrl, "GET", `/j/${usedId}`, { accept: "text/html" });
@@ -110,7 +114,8 @@ describe("join pages show no room content", () => {
     expect(used.body).not.toContain("Sunday lunch");
     pages.push(used.body);
 
-    const revokedId = await createInvite(room);
+    const revokedInvite = await createInvite(room);
+    const revokedId = revokedInvite.id;
     await call(room.baseUrl, "DELETE", `/rooms/${room.roomId}/invites/${revokedId}`, {
       token: room.tokens.issueAgentToken("A1"),
     });
