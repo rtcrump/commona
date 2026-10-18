@@ -8,6 +8,8 @@ import { newSecret } from "../onboarding/account.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost, readFeed } from "../room/posts.js";
+import { isRevokedAgentKey } from "../agent-api/keys.js";
+import { AgentPostLimited } from "../agent-api/limit.js";
 import { renderRoomMessage, renderRoomPage, type RoomPagePost } from "./page.js";
 import { ensureRoomPageSchema } from "./schema.js";
 
@@ -109,6 +111,7 @@ function redeemAndShow(deps: RoomDeps, roomId: string, inviteId: string | null, 
 
 function showForCookie(deps: RoomDeps, roomId: string, cookie: string | undefined): Response {
   const principal = agentFromCookie(deps, cookie);
+  if (principal === "revoked") return htmlResponse(renderRoomMessage("This key was revoked."), 401);
   if (!principal) return htmlResponse(renderRoomMessage("Open an invite link to join this room."), 403);
   const posts = recentPosts(deps, principal, roomId);
   const nonce = newSecret();
@@ -129,6 +132,7 @@ function handlePost(deps: RoomDeps, roomId: string, cookie: string | undefined, 
       return htmlResponse(renderRoomMessage("This room is not here."), 404);
     }
     const principal = agentFromCookie(deps, cookie);
+    if (principal === "revoked") return htmlResponse(renderRoomMessage("This key was revoked."), 401);
     if (!principal) return htmlResponse(renderRoomMessage("Open an invite link to join this room."), 403);
     const nonce = field(body, "nonce");
     const text = field(body, "text");
@@ -161,9 +165,13 @@ function recentPosts(deps: RoomDeps, principal: AuthPrincipal, roomId: string): 
   return messages.slice(-RECENT_POSTS).map((item) => ({ text: item.text }));
 }
 
-function agentFromCookie(deps: RoomDeps, cookie: string | undefined): Extract<AuthPrincipal, { kind: "agent" }> | null {
+function agentFromCookie(
+  deps: RoomDeps,
+  cookie: string | undefined,
+): Extract<AuthPrincipal, { kind: "agent" }> | "revoked" | null {
   const key = readCookie(cookie, AGENT_COOKIE);
   if (!key) return null;
+  if (isRevokedAgentKey(deps, key)) return "revoked";
   const principal = deps.tokens.authenticate(key);
   if (!principal || principal.kind !== "agent") return null;
   return principal;
@@ -239,6 +247,9 @@ function assertHidden(text: string, secrets: readonly string[]): void {
 }
 
 function htmlFromError(error: unknown): Response {
+  if (error instanceof AgentPostLimited) {
+    return htmlResponse(renderRoomMessage("Try again later."), 429, [], error.retryAfter);
+  }
   if (error instanceof RoomHttpError) {
     const sentence = error.status === 404 ? "This room is not here." : "This invite cannot be used. Ask for a new link.";
     return htmlResponse(renderRoomMessage(sentence), error.status);
@@ -246,13 +257,19 @@ function htmlFromError(error: unknown): Response {
   throw error;
 }
 
-function htmlResponse(body: string, status: number, cookies: readonly string[] = []): Response {
+function htmlResponse(
+  body: string,
+  status: number,
+  cookies: readonly string[] = [],
+  retryAfter?: number,
+): Response {
   const headers = new Headers({
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
     "referrer-policy": "no-referrer",
     "content-security-policy": "default-src 'none'; form-action 'self'; base-uri 'none'",
   });
+  if (retryAfter !== undefined) headers.set("retry-after", String(retryAfter));
   for (const cookie of cookies) headers.append("set-cookie", cookie);
   return new Response(body, { status, headers });
 }
