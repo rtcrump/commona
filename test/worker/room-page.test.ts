@@ -10,23 +10,35 @@ const escaped = "&quot;Bring napkins &lt;script&gt;alert(1)&lt;/script&gt; &amp;
 describe("worker room page", () => {
   it("serves the page with JavaScript off, escapes a form post, and refuses a second use", async () => {
     const created = await hostRoom("Sunday lunch");
-    const opened = await SELF.fetch(`https://room.example.test/r/${created.roomId}?t=${created.secret}`);
-    const page = await opened.text();
-    expect(opened.status).toBe(200);
-    expect(page).not.toMatch(/<script/i);
-    expect(page).toContain('<form method="post"');
-    expect(page).toContain(">Post</button>");
-    expect(page).toContain("<h1>Sunday lunch</h1>");
-    expect(page.includes(created.secret)).toBe(false);
-    expect(page.includes(created.credential)).toBe(false);
-    expect(page.includes(hostSecret)).toBe(false);
+    const opened = await SELF.fetch(`https://room.example.test/r/${created.roomId}?t=${created.secret}`, {
+      redirect: "manual",
+    });
+    const openedBody = await opened.text();
+    expect(opened.status).toBe(303);
+    expect(opened.headers.get("location")).toBe(`/r/${created.roomId}`);
+    expect(openedBody.includes(created.secret)).toBe(false);
+    expect(openedBody.includes(created.credential)).toBe(false);
+    expect(openedBody.includes(hostSecret)).toBe(false);
 
     const header = opened.headers.getSetCookie().find((value) => value.startsWith("commona_agent=")) ?? "";
     const key = cookieValue(header);
     expect(header).toContain("HttpOnly");
     expect(header).toContain("Secure");
     expect(header).toContain("SameSite=Strict");
+    expect(openedBody.includes(key)).toBe(false);
+
+    const landed = await SELF.fetch(`https://room.example.test/r/${created.roomId}`, {
+      headers: { cookie: `commona_agent=${key}` },
+    });
+    const page = await landed.text();
+    expect(landed.status).toBe(200);
+    expect(page).not.toMatch(/<script/i);
+    expect(page).toContain('<form method="post"');
+    expect(page).toContain(">Post</button>");
+    expect(page).toContain("<h1>Sunday lunch</h1>");
     expect(page.includes(`<pre>${key}</pre>`)).toBe(true);
+    expect(page.includes(created.secret)).toBe(false);
+    expect(page.includes(created.credential)).toBe(false);
 
     const nonce = nonceOf(page);
     const posted = await SELF.fetch(`https://room.example.test/r/${created.roomId}`, {

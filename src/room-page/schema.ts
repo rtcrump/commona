@@ -13,6 +13,13 @@ CREATE TABLE IF NOT EXISTS room_form_tokens (
   token_hash TEXT NOT NULL,
   PRIMARY KEY (agent_id, room_id)
 );
+
+-- The raw agent key, kept only until the clean room page is read once.
+CREATE TABLE IF NOT EXISTS room_key_flash (
+  agent_id TEXT PRIMARY KEY REFERENCES agents(id),
+  room_id TEXT NOT NULL REFERENCES rooms(id),
+  agent_key TEXT NOT NULL
+);
 `;
 
 /** Apply the room page table. Safe to call more than once on the same database. */

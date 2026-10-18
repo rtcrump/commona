@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { hashToken } from "../../contract/index.js";
-import { call, cookieValue, createInvite, startJoinHarness, type JoinHarness } from "../onboarding/harness.js";
+import { RECENT_MESSAGES_SQL } from "../../src/room-page/messages.js";
+import { call, cookieValue, createInvite, startJoinHarness, type Hit, type JoinHarness } from "../onboarding/harness.js";
 
 const MARKUP = 'Bring napkins <script>alert(1)</script> & "forks"';
 const ESCAPED = "&quot;Bring napkins &lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;forks&quot;&quot;";
@@ -22,30 +23,36 @@ describe("plain room page", () => {
     const membersBefore = memberCount(room);
 
     const opened = await call(room.baseUrl, "GET", `/r/${room.roomId}?t=${secret}`);
-    expect(opened.status).toBe(200);
-    expect(opened.contentType).toContain("text/html");
-    expect(opened.body).toContain("<h1>Sunday lunch</h1>");
-    expect(opened.body).toContain("No posts yet.");
-    expect(opened.body.includes("Host note about napkins")).toBe(false);
-    expect(opened.body).toContain('<form method="post"');
-    expect(opened.body).toContain('name="text"');
-    expect(opened.body).toContain(">Post</button>");
-    expect(opened.body).toContain(`POST /rooms/${room.roomId}/posts is live`);
-    expect(opened.body).toContain(`GET /rooms/${room.roomId}/feed is live`);
-    expect(opened.body).not.toMatch(/<script/i);
+    expect(opened.status).toBe(303);
+    expect(opened.location).toBe(`/r/${room.roomId}`);
     expect(opened.body.includes(secret)).toBe(false);
     expect(opened.body.includes(hashToken(secret))).toBe(false);
-
     const key = cookieValue(opened.setCookies, "commona_agent");
     const header = opened.setCookies.find((value) => value.startsWith("commona_agent=")) ?? "";
     expect(header).toContain("HttpOnly");
     expect(header).toContain("Secure");
     expect(header).toContain("SameSite=Strict");
     expect(/^[A-Za-z0-9_-]{20,}$/.test(key)).toBe(true);
-    expect(opened.body.includes(`<pre>${key}</pre>`)).toBe(true);
+    expect(opened.body.includes(key)).toBe(false);
     expect(memberCount(room)).toBe(membersBefore + 1);
     expect(auditText(room).includes(secret)).toBe(false);
     expect(auditText(room).includes(key)).toBe(false);
+
+    const page = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `commona_agent=${key}` });
+    expect(page.status).toBe(200);
+    expect(page.contentType).toContain("text/html");
+    expect(page.body).toContain("<h1>Sunday lunch</h1>");
+    expect(page.body).toContain("No posts yet.");
+    expect(page.body.includes("Host note about napkins")).toBe(false);
+    expect(page.body).toContain('<form method="post"');
+    expect(page.body).toContain('name="text"');
+    expect(page.body).toContain(">Post</button>");
+    expect(page.body).toContain(`POST /rooms/${room.roomId}/posts is live`);
+    expect(page.body).toContain(`GET /rooms/${room.roomId}/feed is live`);
+    expect(page.body).not.toMatch(/<script/i);
+    expect(page.body.includes(`<pre>${key}</pre>`)).toBe(true);
+    expect(page.body.includes(secret)).toBe(false);
+    expect(flashCount(room)).toBe(0);
 
     const again = await call(room.baseUrl, "GET", `/r/${room.roomId}`, {
       cookie: `commona_agent=${key}`,
@@ -78,11 +85,14 @@ describe("plain room page", () => {
     expect(pending.used_at).toBeNull();
 
     const opened = await call(room.baseUrl, "GET", path);
-    expect(opened.status).toBe(200);
+    expect(opened.status).toBe(303);
+    expect(opened.location).toBe(`/r/${room.roomId}`);
     const key = cookieValue(opened.setCookies, "commona_agent");
     expect(/^[A-Za-z0-9_-]{20,}$/.test(key)).toBe(true);
-    expect(opened.body.includes(`<pre>${key}</pre>`)).toBe(true);
-    expect(opened.body.includes(secret)).toBe(false);
+    const page = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `commona_agent=${key}` });
+    expect(page.status).toBe(200);
+    expect(page.body.includes(`<pre>${key}</pre>`)).toBe(true);
+    expect(page.body.includes(secret)).toBe(false);
     const used = room.db.prepare("SELECT used_at FROM invites WHERE id = ?").get(invite.id) as {
       used_at: string | null;
     };
@@ -113,9 +123,9 @@ describe("plain room page", () => {
     const invite = await createInvite(room);
     nameRoom(room, "Sunday lunch");
     const secret = secretOf(invite.openPath);
-    const opened = await call(room.baseUrl, "GET", `/r/${room.roomId}/${invite.id}/${secret}`);
-    const key = cookieValue(opened.setCookies, "commona_agent");
-    const nonce = nonceOf(opened.body);
+    const joined = await joinRoom(room, `/r/${room.roomId}/${invite.id}/${secret}`);
+    const key = joined.key;
+    const nonce = nonceOf(joined.page.body);
     const stored = room.db.prepare("SELECT token_hash FROM room_form_tokens").get() as { token_hash: string };
     expect(stored.token_hash).toBe(hashToken(nonce));
     expect(stored.token_hash).not.toBe(nonce);
@@ -154,8 +164,8 @@ describe("plain room page", () => {
     room = await startJoinHarness();
     const invite = await createInvite(room);
     const secret = secretOf(invite.openPath);
-    const opened = await call(room.baseUrl, "GET", `/r/${room.roomId}?t=${secret}`);
-    const key = cookieValue(opened.setCookies, "commona_agent");
+    const joined = await joinRoom(room, `/r/${room.roomId}?t=${secret}`);
+    const key = joined.key;
     const postsBefore = postCount(room);
 
     const badToken = await call(room.baseUrl, "POST", `/r/${room.roomId}`, {
@@ -166,7 +176,7 @@ describe("plain room page", () => {
     expect(postCount(room)).toBe(postsBefore);
 
     const noCookie = await call(room.baseUrl, "POST", `/r/${room.roomId}`, {
-      form: { nonce: nonceOf(opened.body), text: "Bring napkins" },
+      form: { nonce: nonceOf(joined.page.body), text: "Bring napkins" },
     });
     expect(noCookie.status).toBe(403);
     expect(postCount(room)).toBe(postsBefore);
@@ -185,8 +195,77 @@ describe("plain room page", () => {
     expect(row.used_at).toBeNull();
 
     const stillGood = await call(room.baseUrl, "GET", `/r/${room.roomId}?t=${secret}`);
-    expect(stillGood.status).toBe(200);
+    expect(stillGood.status).toBe(303);
+    expect(stillGood.location).toBe(`/r/${room.roomId}`);
     expect(cookieValue(stillGood.setCookies, "commona_agent").length).toBeGreaterThan(20);
+  });
+
+  it("shows the room when a used invite URL is opened with that room's agent cookie", async () => {
+    room = await startJoinHarness();
+    nameRoom(room, "Sunday lunch");
+    const invite = await createInvite(room);
+    const secret = secretOf(invite.openPath);
+    const path = `/r/${room.roomId}/${invite.id}/${secret}`;
+    const joined = await joinRoom(room, path);
+    expect(joined.page.body.includes(`<pre>${joined.key}</pre>`)).toBe(true);
+
+    const again = await call(room.baseUrl, "GET", path, { cookie: `commona_agent=${joined.key}` });
+    expect(again.status).toBe(200);
+    expect(again.body).toContain("<h1>Sunday lunch</h1>");
+    expect(again.body).toContain('<form method="post"');
+    expect(again.body).not.toContain("This invite cannot be used");
+    expect(again.body.includes(joined.key)).toBe(false);
+    expect(again.body.includes(secret)).toBe(false);
+  });
+
+  it("shows only the 20 newest messages and does not read file content", async () => {
+    room = await startJoinHarness();
+    const invite = await createInvite(room);
+    const joined = await joinRoom(room, `/r/${room.roomId}?t=${secretOf(invite.openPath)}`);
+    const member = room.db
+      .prepare("SELECT agent_id, owner_id FROM memberships WHERE room_id = ? AND agent_id NOT IN ('A1', 'A2')")
+      .get(room.roomId) as { agent_id: string; owner_id: string };
+    for (let index = 1; index <= 21; index += 1) {
+      const stamp = `2026-04-02T00:00:${String(index).padStart(2, "0")}.000Z`;
+      const id = `post_room_page_${String(index).padStart(2, "0")}`;
+      room.db
+        .prepare(
+          `INSERT INTO posts (
+             id, room_id, author_agent_id, author_owner_id, text, reply_to_id, thread_id, round, held,
+             block_category, block_location, created_at
+           ) VALUES (?, ?, ?, ?, ?, NULL, ?, 1, 0, NULL, NULL, ?)`,
+        )
+        .run(id, room.roomId, member.agent_id, member.owner_id, `Napkin note ${String(index).padStart(2, "0")}`, id, stamp);
+    }
+    const fileBytes = Buffer.from("FILEBYTES-ROOM-PAGE");
+    room.db
+      .prepare(
+        `INSERT INTO files (
+           id, room_id, author_agent_id, author_owner_id, name, media_type, content, metadata_json,
+           byte_length, round, held, block_category, block_location, created_at
+         ) VALUES (?, ?, ?, ?, 'napkin-list.txt', 'text/plain', ?, '{}', ?, 1, 0, NULL, NULL, ?)`,
+      )
+      .run("file_room_page_blob", room.roomId, member.agent_id, member.owner_id, fileBytes, fileBytes.length, "2026-04-02T00:01:00.000Z");
+
+    const seen: string[] = [];
+    const prepare = room.db.prepare.bind(room.db);
+    room.db.prepare = ((sql: string) => {
+      seen.push(sql);
+      return prepare(sql);
+    }) as typeof room.db.prepare;
+    const page = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `commona_agent=${joined.key}` });
+    room.db.prepare = prepare;
+    expect(page.status).toBe(200);
+    expect(page.body).toContain("Napkin note 02");
+    expect(page.body).toContain("Napkin note 21");
+    expect(page.body.includes("Napkin note 01")).toBe(false);
+    expect(page.body.includes("FILEBYTES-ROOM-PAGE")).toBe(false);
+    expect(page.body.includes("napkin-list.txt")).toBe(false);
+    expect(page.body.indexOf("Napkin note 02")).toBeLessThan(page.body.indexOf("Napkin note 21"));
+    expect(seen.some((sql) => sql.includes("LIMIT"))).toBe(true);
+    expect(seen.some((sql) => sql.includes("FROM files") || sql.includes("from files"))).toBe(false);
+    expect(RECENT_MESSAGES_SQL.includes("FROM files")).toBe(false);
+    expect(RECENT_MESSAGES_SQL.includes("content")).toBe(false);
   });
 });
 
@@ -199,6 +278,21 @@ function seedHostPost(room: JoinHarness, text: string): void {
        ) VALUES (?, ?, 'A1', 'O1', ?, NULL, ?, 1, 0, NULL, NULL, ?)`,
     )
     .run("post_room_page_host", room.roomId, text, "post_room_page_host", "2026-04-01T12:00:00.000Z");
+}
+
+async function joinRoom(room: JoinHarness, path: string): Promise<{ key: string; page: Hit }> {
+  const opened = await call(room.baseUrl, "GET", path);
+  expect(opened.status).toBe(303);
+  expect(opened.location).toBe(`/r/${room.roomId}`);
+  const key = cookieValue(opened.setCookies, "commona_agent");
+  const page = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `commona_agent=${key}` });
+  expect(page.status).toBe(200);
+  return { key, page };
+}
+
+function flashCount(room: JoinHarness): number {
+  const row = room.db.prepare("SELECT COUNT(*) AS n FROM room_key_flash").get() as { n: number };
+  return row.n;
 }
 
 function nameRoom(room: JoinHarness, title: string): void {

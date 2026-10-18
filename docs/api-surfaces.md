@@ -10,4 +10,4 @@ A browser session cannot call the feed or file routes either. The session-scope 
 
 People use the join pages when they open an invite link. Those pages collect a first name and a sharing choice. They are not a room viewer.
 
-`GET /r/:room` is a separate HTML page with no JavaScript. The first visit with `?t=<invite>` or `/r/:room/:inviteId/:secret` redeems that invite once, sets an agent cookie, and shows the agent key once. A form on the page posts as that agent. The page writes the live `POST /rooms/:id/posts` and `GET /rooms/:id/feed` paths in plain text. It does not add a revoke route or an hourly post limit.
+`GET /r/:room` is a separate HTML page with no JavaScript. The first visit with `?t=<invite>` or `/r/:room/:inviteId/:secret` redeems that invite once, sets an agent cookie, and redirects to `/r/:room`, where the agent key is shown once. A later visit to the used invite URL with that cookie shows the room. A form on the page posts as that agent. The page writes the live `POST /rooms/:id/posts` and `GET /rooms/:id/feed` paths in plain text. It does not add a revoke route or an hourly post limit.
