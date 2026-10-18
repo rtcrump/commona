@@ -4,44 +4,65 @@ import type { RoomDeps } from "../room/deps.js";
 import type { RoomPagePost } from "./page.js";
 
 export const RECENT_MESSAGE_LIMIT = 20;
+/** Stop after this many batches. A page may show fewer than 20 messages. */
+export const RECENT_MESSAGE_MAX_BATCHES = 10;
 
 /**
- * Message text only, newest first. No file rows and no file content.
- * Held messages stay out. Callers keep scanning until the sharing filter
- * has filled the visible window.
+ * One batch of message text, newest first, from an exclusive keyset cursor.
+ * No file rows and no file content. Held messages stay out.
+ * The cursor is (created_at, id). The index is posts_room_held_recent.
  */
 export const RECENT_MESSAGES_SQL = `
-SELECT text, author_owner_id
+SELECT text, author_owner_id, created_at, id
 FROM posts
 WHERE room_id = ? AND held = 0
+  AND (created_at, id) < (?, ?)
 ORDER BY created_at DESC, id DESC
-LIMIT ? OFFSET ?
+LIMIT ?
 `;
+
+/** Past every real post timestamp and id, so the first batch starts at the newest row. */
+const CURSOR_START = "9999-99-99T99:99:99.999Z";
+
+type RecentRow = {
+  text: string;
+  author_owner_id: string;
+  created_at: string;
+  id: string;
+};
 
 /** Newest messages the viewer may see, oldest of that window first. Also audits the read. */
 export function recentMessages(deps: RoomDeps, principal: AuthPrincipal, roomId: string): RoomPagePost[] {
   requireMember(deps, principal, roomId);
   const visible: { text: string }[] = [];
-  let offset = 0;
-  for (;;) {
-    const rows = deps.db.prepare(RECENT_MESSAGES_SQL).all(roomId, RECENT_MESSAGE_LIMIT, offset) as {
-      text: string;
-      author_owner_id: string;
-    }[];
+  const levels = new Map<string, string>();
+  const stmt = deps.db.prepare(RECENT_MESSAGES_SQL);
+  let cursorAt = CURSOR_START;
+  let cursorId = CURSOR_START;
+  for (let batch = 0; batch < RECENT_MESSAGE_MAX_BATCHES && visible.length < RECENT_MESSAGE_LIMIT; batch += 1) {
+    const rows = stmt.all(roomId, cursorAt, cursorId, RECENT_MESSAGE_LIMIT) as RecentRow[];
     if (rows.length === 0) break;
     for (const row of rows) {
       if (visible.length >= RECENT_MESSAGE_LIMIT) break;
+      let level = levels.get(row.author_owner_id);
+      if (level === undefined) {
+        level = deps.sharing.level(roomId, row.author_owner_id, principal.ownerId);
+        levels.set(row.author_owner_id, level);
+      }
       const allowed = feedIncludes({
         held: false,
-        level: deps.sharing.level(roomId, row.author_owner_id, principal.ownerId),
+        level,
         itemKind: "message",
         viewerOwnerId: principal.ownerId,
         authorOwnerId: row.author_owner_id,
       });
       if (allowed) visible.push({ text: row.text });
     }
-    offset += rows.length;
-    if (visible.length >= RECENT_MESSAGE_LIMIT || rows.length < RECENT_MESSAGE_LIMIT) break;
+    const last = rows[rows.length - 1];
+    if (!last) break;
+    cursorAt = last.created_at;
+    cursorId = last.id;
+    if (rows.length < RECENT_MESSAGE_LIMIT) break;
   }
   visible.reverse();
   const actorId = principal.kind === "agent" ? principal.agentId : principal.ownerId;

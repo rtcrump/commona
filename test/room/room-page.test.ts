@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { hashToken } from "../../contract/index.js";
-import { RECENT_MESSAGES_SQL } from "../../src/room-page/messages.js";
+import { RECENT_MESSAGE_LIMIT, RECENT_MESSAGE_MAX_BATCHES, RECENT_MESSAGES_SQL } from "../../src/room-page/messages.js";
+import { POSTS_RECENT_INDEX } from "../../src/room-page/schema.js";
 import { agentCookieName } from "../../src/room-page/routes.js";
 import { call, cookieValue, createInvite, startJoinHarness, type Hit, type JoinHarness } from "../onboarding/harness.js";
 
@@ -355,7 +356,125 @@ describe("plain room page", () => {
     expect(page.body.includes("Hidden note")).toBe(false);
     expect(page.body.indexOf("Visible note 02")).toBeLessThan(page.body.indexOf("Visible note 21"));
   });
+
+  it("keeps visible notes in order when hidden notes sit between them", async () => {
+    room = await startJoinHarness();
+    const invite = await createInvite(room);
+    const joined = await joinRoom(room, `/r/${room.roomId}?t=${secretOf(invite.openPath)}`);
+    const member = room.db
+      .prepare("SELECT agent_id, owner_id FROM memberships WHERE room_id = ? AND agent_id NOT IN ('A1', 'A2')")
+      .get(room.roomId) as { agent_id: string; owner_id: string };
+    const roomId = room.roomId;
+    let tick = 0;
+    const insert = room.db.prepare(
+      `INSERT INTO posts (
+         id, room_id, author_agent_id, author_owner_id, text, reply_to_id, thread_id, round, held,
+         block_category, block_location, created_at
+       ) VALUES (?, ?, ?, ?, ?, NULL, ?, 1, 0, NULL, NULL, ?)`,
+    );
+    const write = room.db.transaction(() => {
+      for (let index = 1; index <= 21; index += 1) {
+        const label = String(index).padStart(2, "0");
+        tick += 1;
+        insert.run(
+          `post_gap_visible_${label}`,
+          roomId,
+          member.agent_id,
+          member.owner_id,
+          `Gap note ${label}`,
+          `post_gap_visible_${label}`,
+          stampAt(tick),
+        );
+        for (let hidden = 1; hidden <= 4; hidden += 1) {
+          tick += 1;
+          const id = `post_gap_hidden_${label}_${hidden}`;
+          insert.run(id, roomId, "A1", "O1", `Hidden gap ${label}`, id, stampAt(tick));
+        }
+      }
+    });
+    write();
+
+    const page = await call(room.baseUrl, "GET", `/r/${room.roomId}`, {
+      cookie: `${agentCookieName(room.roomId)}=${joined.key}`,
+    });
+    expect(page.status).toBe(200);
+    expect(page.body).toContain("Gap note 02");
+    expect(page.body).toContain("Gap note 21");
+    expect(page.body.includes("Gap note 01")).toBe(false);
+    expect(page.body.includes("Hidden gap")).toBe(false);
+    expect(page.body.indexOf("Gap note 02")).toBeLessThan(page.body.indexOf("Gap note 21"));
+  });
+
+  it("stops after the scan cap when newer posts are hidden", async () => {
+    room = await startJoinHarness();
+    const invite = await createInvite(room);
+    const joined = await joinRoom(room, `/r/${room.roomId}?t=${secretOf(invite.openPath)}`);
+    const columns = room.db.prepare(`PRAGMA index_info(${POSTS_RECENT_INDEX})`).all() as { name: string }[];
+    expect(columns.map((column) => column.name)).toEqual(["room_id", "held", "created_at", "id"]);
+    const plan = room.db.prepare(`EXPLAIN QUERY PLAN ${RECENT_MESSAGES_SQL}`).all(room.roomId, "9", "9", 20) as {
+      detail: string;
+    }[];
+    expect(plan.some((row) => row.detail.includes(POSTS_RECENT_INDEX))).toBe(true);
+
+    const member = room.db
+      .prepare("SELECT agent_id, owner_id FROM memberships WHERE room_id = ? AND agent_id NOT IN ('A1', 'A2')")
+      .get(room.roomId) as { agent_id: string; owner_id: string };
+    const roomId = room.roomId;
+    const hiddenRows = RECENT_MESSAGE_LIMIT * RECENT_MESSAGE_MAX_BATCHES;
+    const insert = room.db.prepare(
+      `INSERT INTO posts (
+         id, room_id, author_agent_id, author_owner_id, text, reply_to_id, thread_id, round, held,
+         block_category, block_location, created_at
+       ) VALUES (?, ?, ?, ?, ?, NULL, ?, 1, 0, NULL, NULL, ?)`,
+    );
+    const write = room.db.transaction(() => {
+      insert.run(
+        "post_past_cap",
+        roomId,
+        member.agent_id,
+        member.owner_id,
+        "Visible note past the cap",
+        "post_past_cap",
+        stampAt(1),
+      );
+      for (let index = 1; index <= hiddenRows; index += 1) {
+        const id = `post_cap_hidden_${String(index).padStart(3, "0")}`;
+        insert.run(id, roomId, "A1", "O1", `Hidden cap ${String(index).padStart(3, "0")}`, id, stampAt(index + 1));
+      }
+    });
+    write();
+
+    let batches = 0;
+    const prepare = room.db.prepare.bind(room.db);
+    room.db.prepare = ((sql: string) => {
+      const stmt = prepare(sql);
+      if (sql === RECENT_MESSAGES_SQL) {
+        const all = stmt.all.bind(stmt);
+        stmt.all = ((...args: unknown[]) => {
+          batches += 1;
+          return all(...args);
+        }) as typeof stmt.all;
+      }
+      return stmt;
+    }) as typeof room.db.prepare;
+    const page = await call(room.baseUrl, "GET", `/r/${room.roomId}`, {
+      cookie: `${agentCookieName(room.roomId)}=${joined.key}`,
+    });
+    room.db.prepare = prepare;
+
+    expect(page.status).toBe(200);
+    expect(page.body).toContain("No posts yet.");
+    expect(page.body.includes("Visible note past the cap")).toBe(false);
+    expect(page.body.includes("Hidden cap")).toBe(false);
+    expect(batches).toBe(RECENT_MESSAGE_MAX_BATCHES);
+  });
 });
+
+function stampAt(index: number): string {
+  const minute = Math.floor(index / 60);
+  const second = index % 60;
+  return `2026-04-06T00:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}.000Z`;
+}
 
 function seedHostPost(room: JoinHarness, text: string): void {
   room.db
