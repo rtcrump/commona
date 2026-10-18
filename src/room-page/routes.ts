@@ -28,6 +28,7 @@ export function registerRoomPage(app: CommonaHono, deps: RoomDeps): void {
 
   app.get("/r/:room/:inviteId/:secret", (c) =>
     handleGet(deps, {
+      method: c.req.method,
       roomId: c.req.param("room"),
       inviteId: c.req.param("inviteId"),
       secret: c.req.param("secret"),
@@ -36,6 +37,7 @@ export function registerRoomPage(app: CommonaHono, deps: RoomDeps): void {
   );
   app.get("/r/:room", (c) =>
     handleGet(deps, {
+      method: c.req.method,
       roomId: c.req.param("room"),
       inviteId: null,
       secret: c.req.query("t") ?? null,
@@ -47,8 +49,19 @@ export function registerRoomPage(app: CommonaHono, deps: RoomDeps): void {
 
 function handleGet(
   deps: RoomDeps,
-  input: { roomId: string; inviteId: string | null; secret: string | null; cookie: string | undefined },
+  input: {
+    method: string;
+    roomId: string;
+    inviteId: string | null;
+    secret: string | null;
+    cookie: string | undefined;
+  },
 ): Response {
+  // Hono runs HEAD on this GET route and then drops the body. A redeem here would
+  // use the invite and discard the one-time agent key. Only GET may redeem.
+  if (input.method !== "GET") {
+    return htmlResponse(renderRoomMessage("Open this page in a browser to join the room."), 200);
+  }
   try {
     if (!isId(input.roomId) || !roomExists(deps, input.roomId)) {
       return htmlResponse(renderRoomMessage("This room is not here."), 404);

@@ -63,6 +63,32 @@ describe("plain room page", () => {
     expect(memberCount(room)).toBe(membersBefore + 1);
   });
 
+  it("does not redeem an invite on HEAD, so the following GET still shows the key", async () => {
+    room = await startJoinHarness();
+    const invite = await createInvite(room);
+    const secret = secretOf(invite.openPath);
+    const path = `/r/${room.roomId}/${invite.id}/${secret}`;
+
+    const head = await call(room.baseUrl, "HEAD", path);
+    expect(head.setCookies.some((value) => value.startsWith("commona_agent="))).toBe(false);
+    expect(head.body.includes(secret)).toBe(false);
+    const pending = room.db.prepare("SELECT used_at FROM invites WHERE id = ?").get(invite.id) as {
+      used_at: string | null;
+    };
+    expect(pending.used_at).toBeNull();
+
+    const opened = await call(room.baseUrl, "GET", path);
+    expect(opened.status).toBe(200);
+    const key = cookieValue(opened.setCookies, "commona_agent");
+    expect(/^[A-Za-z0-9_-]{20,}$/.test(key)).toBe(true);
+    expect(opened.body.includes(`<pre>${key}</pre>`)).toBe(true);
+    expect(opened.body.includes(secret)).toBe(false);
+    const used = room.db.prepare("SELECT used_at FROM invites WHERE id = ?").get(invite.id) as {
+      used_at: string | null;
+    };
+    expect(used.used_at).not.toBeNull();
+  });
+
   it("refuses an expired invite and leaves it unused", async () => {
     room = await startJoinHarness();
     const invite = await createInvite(room, 60);
