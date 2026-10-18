@@ -6,6 +6,7 @@ import { registerInviteRoutes } from "../join/routes.js";
 import { registerNoticeRoute } from "../notices/route.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
+import { registerRoomPage } from "../room-page/routes.js";
 import { registerRoomRoutes } from "../room/routes.js";
 import type { AppEnv, CommonaHono } from "./types.js";
 
@@ -39,6 +40,7 @@ export function createHttpApp(deps: RoomDeps): CommonaHono {
   registerHostRoute(app, deps);
   registerRoomRoutes(app, deps);
   registerInviteRoutes(app, deps);
+  registerRoomPage(app, deps);
   registerLogRoute(app, { db: deps.db, audit: deps.audit, clock: deps.clock });
   registerNoticeRoute(app, { db: deps.db, tokens: deps.tokens, audit: deps.audit, clock: deps.clock });
   return app;
