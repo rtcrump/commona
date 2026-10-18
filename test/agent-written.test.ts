@@ -134,6 +134,34 @@ describe("agent-written stats", () => {
     expect(classifyTrailers(mixed).kind).toBe("unattributed");
   });
 
+  it("counts a squash whose footer credits only the merger", () => {
+    const message = [
+      "feat(room): serve the room (#37)",
+      "",
+      "* feat(room): first slice",
+      "",
+      "The first slice lands.",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "",
+      "* fix(room): second slice",
+      "",
+      "The second slice lands.",
+      "",
+      "Authored-by-agent: cursor/other",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(message).kind).toBe("agent");
+  });
+
   it("does not count a squash co-authored by a person", () => {
     const message = [
       "feat(room): serve the room (#37)",

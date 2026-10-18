@@ -11,12 +11,11 @@ import { readFileSync, writeFileSync } from "node:fs";
  * each Authored-by-agent line above its own message and ends with a
  * Co-authored-by footer after a divider, so the last block has no
  * authorship. A commit with at least one Authored-by-agent trailer and no
- * Authored-by trailer is agent-written, unless it is a GitHub squash whose
- * Co-authored-by lines name a person. That footer is the merger, and a
- * person there means the squash is not agent-written. A normal agent commit
- * may still credit a person with Co-authored-by. That credit is not the
- * squash merger. A commit with neither authorship trailer, or with both, is
- * unattributed. Merge commits are skipped.
+ * Authored-by trailer is agent-written, unless the footer after the squash
+ * divider credits a person. That footer is the merger. A person credited
+ * inside a squashed commit is not the merger. A normal agent commit may
+ * still credit a person with Co-authored-by. A commit with neither
+ * authorship trailer, or with both, is unattributed. Merge commits are skipped.
  */
 
 const START = "<!-- agent-written-badge:start -->";
@@ -63,11 +62,19 @@ const SQUASH_DIVIDER = "---------";
 
 const AGENT_COAUTHOR_EMAILS = new Set(["cursoragent@cursor.com", "commona-bot@users.noreply.github.com"]);
 
-/** True when a squash footer credits a person, such as rtcrump, rather than an agent. */
+/** True when the footer after the squash divider credits a person, such as rtcrump. */
 function squashCreditsAPerson(message: string): boolean {
+  const footer = squashFooter(message);
+  if (footer === null) return false;
+  return coauthorValues(footer, false).some((value) => !isAgentCoauthor(value));
+}
+
+/** Lines after the divider. Null when this message is not a squash. */
+function squashFooter(message: string): string | null {
   const lines = message.replaceAll("\r\n", "\n").split("\n");
-  if (!lines.some((line) => line.trim() === SQUASH_DIVIDER)) return false;
-  return coauthorValues(message).some((value) => !isAgentCoauthor(value));
+  const at = lines.findIndex((line) => line.trim() === SQUASH_DIVIDER);
+  if (at === -1) return null;
+  return lines.slice(at + 1).join("\n");
 }
 
 function isAgentCoauthor(value: string): boolean {
@@ -77,10 +84,10 @@ function isAgentCoauthor(value: string): boolean {
   return name === "Cursor Agent" || /^(cursor|grok)\/[A-Za-z0-9._-]+$/.test(name);
 }
 
-function coauthorValues(message: string): string[] {
+function coauthorValues(message: string, skipFirst = true): string[] {
   const found: string[] = [];
   const paras = paragraphs(message);
-  for (let i = 1; i < paras.length; i += 1) {
+  for (let i = skipFirst ? 1 : 0; i < paras.length; i += 1) {
     const para = paras[i] ?? [];
     if (!pureAllowed(para)) continue;
     for (const trailer of parseTrailerLines(para)) {

@@ -50,6 +50,6 @@ QA trailers: 0
 
 Those lines are counted from git commit trailers. `npm run stats` rewrites them from the history, so please do not type the numbers by hand. There is no separate stats page.
 
-A human edit uses `Authored-by: human/<name>`. An agent edit uses `Authored-by-agent:` and `Model:`. A GitHub squash that credits a person in `Co-authored-by` is not counted as agent-written.
+A human edit uses `Authored-by: human/<name>`. An agent edit uses `Authored-by-agent:` and `Model:`. A GitHub squash whose footer after the divider credits a person in `Co-authored-by` is not counted as agent-written. A person credited inside a squashed commit is not that footer.
 
 [MIT](LICENSE).
