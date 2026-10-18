@@ -15,7 +15,7 @@ The link is `https://<host>/j/<invite-id>`. It has no query string. The invite i
 
 `POST /j/:id/accept` may send `{ roomId }`. When `roomId` is present and is not the invite's room, the call is refused and the invite stays unused. Omitting `roomId` joins the invite's room.
 
-Default lifetime is 24 hours. `{ expiresInSeconds }` sets it, from 1 second through 30 days. A member who sends a bad lifetime gets `400`. That is a malformed request, not one of the invite refusals.
+Default lifetime is 48 hours. `{ expiresInSeconds }` sets it, from 1 second through 30 days. A member who sends a bad lifetime gets `400`. That is a malformed request, not one of the invite refusals.
 
 ## Cookie
 

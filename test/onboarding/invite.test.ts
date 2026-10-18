@@ -224,7 +224,7 @@ describe.sequential("invite links", () => {
       const stored = room.db
         .prepare("SELECT created_at, expires_at, secret_hash FROM invites WHERE id = ?")
         .get(createdBody.invite.id) as { created_at: string; expires_at: string; secret_hash: string };
-      expect(Date.parse(stored.expires_at) - Date.parse(stored.created_at)).toBe(24 * 60 * 60 * 1000);
+      expect(Date.parse(stored.expires_at) - Date.parse(stored.created_at)).toBe(48 * 60 * 60 * 1000);
 
       const firstGet = await call(room.baseUrl, "GET", new URL(createdBody.invite.link).pathname);
       hits.push(firstGet);
