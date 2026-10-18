@@ -76,7 +76,9 @@ export function addMember(deps: RoomDeps, principal: AuthPrincipal, roomId: stri
       reasonCode: ReasonCode.NotOwner,
     });
   }
-  if (!agent.token_hash && agentKeyReissueBlocked(deps.db, agent.id)) throw RoomHttpError.forbidden();
+  if (!agent.token_hash && agentKeyReissueBlocked(deps.db, agent.id)) {
+    refuse(deps, { room: roomId, principal, action: AuditAction.JoinRefused });
+  }
 
   const existing = deps.db
     .prepare("SELECT room_id, agent_id, owner_id, created_at FROM memberships WHERE room_id = ? AND agent_id = ?")

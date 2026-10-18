@@ -263,6 +263,12 @@ describe("agent json api", () => {
       json: { agentId: agent.id },
     });
     expect(blocked.status).toBe(403);
+    const refusedJoin = room.db
+      .prepare("SELECT action, result, agent_id, owner_id FROM audit_log WHERE action = 'join_refused'")
+      .all() as { action: string; result: string; agent_id: string; owner_id: string }[];
+    expect(refusedJoin).toEqual([
+      { action: "join_refused", result: "refused", agent_id: `owner:${agent.owner_id}`, owner_id: agent.owner_id },
+    ]);
     const handoffDeps = { db: room.db, clock: room.clock, tokens: room.tokens };
     const handoff = issueAgentHandoff(handoffDeps, agent.owner_id);
     expect(() => claimAgentHandoff(handoffDeps, handoff.secret)).toThrow(/unusable/);
