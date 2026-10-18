@@ -529,7 +529,7 @@ export async function runLunchDemo(options: { artifactPath?: string } = {}): Pro
           const inviteId = key === "pim" ? inviteIds[0] : inviteIds[1];
           if (!inviteId) throw new DemoError("connect");
           const jar = friendJars.get(key);
-          if (!jar?.get("commona_session") || !jar.get("commona_joined")) throw new DemoError("connect");
+          if (!jar?.get("commona_session")) throw new DemoError("connect");
           const page = await openFriendConnect(baseUrl, inviteId, jar);
           const copied = await request(baseUrl, "POST", `/j/${inviteId}/connect/link`, {
             cookie: cookieHeader(jar),

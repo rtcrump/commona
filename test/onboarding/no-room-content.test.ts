@@ -60,7 +60,7 @@ describe("join pages show no room content", () => {
 
     const done = await call(room.baseUrl, "GET", `/j/${welcomeId}/done`, {
       accept: "text/html",
-      cookie: `commona_joined=${joined}`,
+      cookie: `commona_session=${session}`,
     });
     expect(done.body).toContain("You're in.");
     pages.push(done.body);

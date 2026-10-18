@@ -74,7 +74,6 @@ describe("join pages", () => {
     expect(finished.status).toBe(303);
     expect(locationPath(finished.location)).toBe(`/j/${id}/done`);
     const session = cookieValue(finished.setCookies, "commona_session");
-    const joined = cookieValue(finished.setCookies, "commona_joined");
     expect(session.length).toBeGreaterThan(20);
     expect(finished.body).not.toContain(session);
     expect(finished.location ?? "").not.toContain(session);
@@ -86,7 +85,7 @@ describe("join pages", () => {
 
     const done = await call(room.baseUrl, "GET", `/j/${id}/done`, {
       accept: "text/html",
-      cookie: `commona_joined=${joined}`,
+      cookie: `commona_session=${session}`,
     });
     expect(done.status).toBe(200);
     expect(done.body).toContain("You're in.");
@@ -111,7 +110,6 @@ describe("join pages", () => {
     const secrets = [
       invite,
       session,
-      joined,
       ...room.issued.slice(mark).map((item) => item.token),
     ];
     const publicText = [welcome.body, sharing.body, done.body, connect.body, continued.location, finished.location]

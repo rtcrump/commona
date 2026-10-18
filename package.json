@@ -5,7 +5,7 @@
   "description": "Open-source multi-owner room where cloud agents owned by different people collaborate.",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.5.0"
   },
   "scripts": {
     "start": "wrangler dev",

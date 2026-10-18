@@ -175,6 +175,49 @@ describe("worker room", () => {
     expect(await runInDurableObject(stub, (instance) => instance.pendingName(named.id))).toBeNull();
   });
 
+  // This stays ahead of the feed poll test. After that 429, a later test in this file cannot enter the object.
+  it("shows the Connect link after a restart only for the session that finished", async () => {
+    const response = await SELF.fetch("https://room.example.test/host/room", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [HOST_SECRET_HEADER]: hostSecret,
+      },
+      body: JSON.stringify({ title: "Sunday lunch", hostName: "Host (demo)", inviteCount: 2 }),
+    });
+    const body = await response.text();
+    expect(response.status).toBe(201);
+    const created = JSON.parse(body) as { invites?: string[] };
+    const alex = await finishJoin(created.invites?.[0] ?? "", "Alex");
+    const blair = await finishJoin(created.invites?.[1] ?? "", "Blair");
+
+    const stub = env.DIRECTORY.get(env.DIRECTORY.idFromName("global"));
+    await evictDurableObject(stub);
+
+    const done = await SELF.fetch(`https://room.example.test/j/${alex.id}/done`, {
+      redirect: "manual",
+      headers: { accept: "text/html", cookie: `commona_session=${alex.session}` },
+    });
+    const doneBody = await done.text();
+    expect(done.status).toBe(200);
+    expect(doneBody).toContain("You're in.");
+    expect(doneBody).toContain(`href="/j/${alex.id}/connect"`);
+    expect(doneBody).not.toContain(alex.session);
+    expect(doneBody).not.toContain(alex.secret);
+    expect(doneBody).not.toContain(blair.session);
+
+    const other = await SELF.fetch(`https://room.example.test/j/${alex.id}/done`, {
+      redirect: "manual",
+      headers: { accept: "text/html", cookie: `commona_session=${blair.session}` },
+    });
+    const otherBody = await other.text();
+    expect(otherBody).not.toContain("You're in.");
+    expect(otherBody).not.toContain(`href="/j/${alex.id}/connect"`);
+    expect(otherBody).not.toContain(alex.session);
+    expect(otherBody).not.toContain(blair.session);
+    expect(otherBody).not.toContain(alex.secret);
+  });
+
   it("creates a room with the host secret even when a forwarded header is set", async () => {
     const response = await SELF.fetch("https://room.example.test/host/room", {
       method: "POST",
@@ -205,6 +248,57 @@ describe("worker room", () => {
     expect(await again.json()).toEqual({ error: { code: "validation", message: "Try again later." } });
   });
 });
+
+async function finishJoin(
+  link: string,
+  firstName: string,
+): Promise<{ id: string; secret: string; session: string }> {
+  const named = inviteParts(link);
+  expect(named.id).toMatch(/^inv_[0-9a-f-]{36}$/);
+  expect(named.secret).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+  const opened = await SELF.fetch(`https://room.example.test/j/${named.id}/${named.secret}`, {
+    redirect: "manual",
+    headers: { accept: "text/html" },
+  });
+  expect(opened.status).toBe(200);
+  expect(await opened.text()).not.toContain(named.secret);
+  const inviteCookie = cookiePair(opened.headers.getSetCookie(), "commona_invite");
+  const formCookie = cookiePair(opened.headers.getSetCookie(), "commona_form");
+  const continued = await SELF.fetch(`https://room.example.test/j/${named.id}/continue`, {
+    method: "POST",
+    redirect: "manual",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      cookie: `${inviteCookie}; ${formCookie}`,
+    },
+    body: new URLSearchParams({ nonce: cookieValue(formCookie), firstName }),
+  });
+  expect(continued.status).toBe(303);
+  expect(await continued.text()).not.toContain(named.secret);
+  const sharing = await SELF.fetch(`https://room.example.test/j/${named.id}/sharing`, {
+    redirect: "manual",
+    headers: { accept: "text/html", cookie: inviteCookie },
+  });
+  expect(sharing.status).toBe(200);
+  expect(await sharing.text()).not.toContain(named.secret);
+  const shareForm = cookiePair(sharing.headers.getSetCookie(), "commona_form");
+  const finished = await SELF.fetch(`https://room.example.test/j/${named.id}/finish`, {
+    method: "POST",
+    redirect: "manual",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      cookie: `${inviteCookie}; ${shareForm}`,
+    },
+    body: new URLSearchParams({ nonce: cookieValue(shareForm), seeing: "Nothing" }),
+  });
+  const finishedBody = await finished.text();
+  expect(finished.status).toBe(303);
+  expect(finished.headers.get("location")).toBe(`/j/${named.id}/done`);
+  expect(finishedBody).not.toContain(named.secret);
+  const session = cookieValue(cookiePair(finished.headers.getSetCookie(), "commona_session"));
+  expect(session.length).toBeGreaterThan(20);
+  return { id: named.id, secret: named.secret, session };
+}
 
 function inviteParts(link: string): { id: string; secret: string } {
   const parts = new URL(link).pathname.split("/");
