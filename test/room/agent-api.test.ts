@@ -21,6 +21,7 @@ describe("agent json api", () => {
 
     const opened = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?t=${secret}`);
     expect(opened.status).toBe(200);
+    expect(opened.location).toBeNull();
     expect(opened.contentType).toContain("application/json");
     const joined = JSON.parse(opened.body) as Joined;
     expect(joined.roomId).toBe(room.roomId);
@@ -113,8 +114,10 @@ describe("agent json api", () => {
     const invite = await createInvite(room);
     const secret = secretOf(invite.openPath);
     const opened = await call(room.baseUrl, "GET", `/r/${room.roomId}?t=${secret}`);
+    expect(opened.status).toBe(303);
     const key = cookieValue(opened.setCookies, "commona_agent");
-    const nonce = nonceOf(opened.body);
+    const landed = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `commona_agent=${key}` });
+    const nonce = nonceOf(landed.body);
     const agent = room.db.prepare("SELECT id FROM agents WHERE token_hash = ?").get(hashToken(key)) as { id: string };
 
     const stranger = room.tokens.issueOwnerToken("O2");
@@ -185,8 +188,10 @@ describe("agent json api", () => {
     room = await startJoinHarness();
     const invite = await createInvite(room);
     const opened = await call(room.baseUrl, "GET", `/r/${room.roomId}?t=${secretOf(invite.openPath)}`);
+    expect(opened.status).toBe(303);
     const key = cookieValue(opened.setCookies, "commona_agent");
-    const nonce = nonceOf(opened.body);
+    const landed = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `commona_agent=${key}` });
+    const nonce = nonceOf(landed.body);
     const agent = room.db.prepare("SELECT id FROM agents WHERE token_hash = ?").get(hashToken(key)) as { id: string };
 
     for (let index = 0; index < 29; index += 1) {

@@ -12,11 +12,10 @@ import { isInviteId, redeemInvite } from "../join/service.js";
 import { ensureInviteSchema } from "../join/schema.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
-import { createPost, readFeed } from "../room/posts.js";
+import { createPost } from "../room/posts.js";
+import { recentMessages } from "../room-page/messages.js";
 import { isRevokedAgentKey, revokeAgentKey } from "./keys.js";
 import { ensureAgentApiSchema } from "./schema.js";
-
-const RECENT_POSTS = 20;
 
 /**
  * JSON room API. It mirrors the plain HTML page: join with one invite, read posts, post a message.
@@ -151,11 +150,7 @@ function requireBearer(deps: RoomDeps, authorization: string | undefined): AuthP
 }
 
 function recentPosts(deps: RoomDeps, principal: AuthPrincipal, roomId: string): { text: string }[] {
-  const feed = readFeed(deps, principal, roomId, undefined);
-  return feed.items
-    .filter((item) => item.kind === "message")
-    .slice(-RECENT_POSTS)
-    .map((item) => ({ text: item.text }));
+  return recentMessages(deps, principal, roomId);
 }
 
 function inviteIdForSecret(deps: RoomDeps, roomId: string, secret: string): string | null {

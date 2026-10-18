@@ -1,5 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
-import { hashToken, isId, type AuthPrincipal } from "../../contract/index.js";
+import { formatTimestamp, hashToken, isId, type AuthPrincipal } from "../../contract/index.js";
+import { isRevokedAgentKey } from "../agent-api/keys.js";
+import { AgentPostLimited } from "../agent-api/limit.js";
 import type { CommonaHono } from "../http/types.js";
 import { readCookie, serializeCookie } from "../join/cookies.js";
 import { ensureInviteSchema } from "../join/schema.js";
@@ -7,16 +9,13 @@ import { isInviteId, redeemInvite } from "../join/service.js";
 import { newSecret } from "../onboarding/account.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
-import { createPost, readFeed } from "../room/posts.js";
-import { isRevokedAgentKey } from "../agent-api/keys.js";
-import { AgentPostLimited } from "../agent-api/limit.js";
-import { renderRoomMessage, renderRoomPage, type RoomPagePost } from "./page.js";
+import { createPost } from "../room/posts.js";
+import { recentMessages } from "./messages.js";
+import { renderRoomMessage, renderRoomPage } from "./page.js";
 import { ensureRoomPageSchema } from "./schema.js";
 
 /** Agent key for the plain room page. HttpOnly, Secure, SameSite=Strict. */
 export const AGENT_COOKIE = "commona_agent";
-
-const RECENT_POSTS = 20;
 
 /**
  * Plain HTML room page.
@@ -69,14 +68,32 @@ function handleGet(
       return htmlResponse(renderRoomMessage("This room is not here."), 404);
     }
     const secret = input.secret && input.secret.length > 0 ? input.secret : null;
-    if (secret) return redeemAndShow(deps, input.roomId, input.inviteId, secret);
+    if (secret) return openInvite(deps, input.roomId, input.inviteId, secret, input.cookie);
     return showForCookie(deps, input.roomId, input.cookie);
   } catch (error) {
     return htmlFromError(error);
   }
 }
 
-function redeemAndShow(deps: RoomDeps, roomId: string, inviteId: string | null, secret: string): Response {
+function openInvite(
+  deps: RoomDeps,
+  roomId: string,
+  inviteId: string | null,
+  secret: string,
+  cookie: string | undefined,
+): Response {
+  const gate = classifyInvite(deps, roomId, inviteId, secret);
+  if (gate === "open") return redeemAndRedirect(deps, roomId, inviteId, secret);
+  if (agentFromCookie(deps, cookie) === "revoked") {
+    return htmlResponse(renderRoomMessage("This key was revoked."), 401);
+  }
+  if (gate === "used" && memberFromCookie(deps, roomId, cookie)) {
+    return showForCookie(deps, roomId, cookie, [secret]);
+  }
+  return htmlResponse(renderRoomMessage("This invite cannot be used. Ask for a new link."), 403);
+}
+
+function redeemAndRedirect(deps: RoomDeps, roomId: string, inviteId: string | null, secret: string): Response {
   const id = inviteId ?? inviteIdForSecret(deps, roomId, secret);
   if (!id) return htmlResponse(renderRoomMessage("This invite cannot be used. Ask for a new link."), 403);
   let redeemed;
@@ -88,41 +105,35 @@ function redeemAndShow(deps: RoomDeps, roomId: string, inviteId: string | null, 
     }
     throw error;
   }
-  const principal: AuthPrincipal = {
-    kind: "agent",
-    agentId: redeemed.agent.id,
-    ownerId: redeemed.owner.id,
-  };
   const key = deps.tokens.issueAgentToken(redeemed.agent.id);
   if (!/^[A-Za-z0-9_-]+$/.test(key)) throw new Error("refusing to send a secret");
-  const posts = recentPosts(deps, principal, roomId);
-  const nonce = newSecret();
-  saveFormToken(deps, principal.agentId, roomId, nonce);
-  const page = renderRoomPage({
-    title: roomTitle(deps, roomId),
-    roomId,
-    posts,
-    nonce,
-    agentKey: key,
-  });
-  assertHidden(page, [secret]);
-  return htmlResponse(page, 200, [serializeCookie(AGENT_COOKIE, key, "/r")]);
+  saveKeyFlash(deps, redeemed.agent.id, roomId, key);
+  const location = `/r/${roomId}`;
+  assertHidden(location, [secret, key]);
+  return redirect(location, [serializeCookie(AGENT_COOKIE, key, "/r")]);
 }
 
-function showForCookie(deps: RoomDeps, roomId: string, cookie: string | undefined): Response {
+function showForCookie(
+  deps: RoomDeps,
+  roomId: string,
+  cookie: string | undefined,
+  hidden: readonly string[] = [],
+): Response {
   const principal = agentFromCookie(deps, cookie);
   if (principal === "revoked") return htmlResponse(renderRoomMessage("This key was revoked."), 401);
   if (!principal) return htmlResponse(renderRoomMessage("Open an invite link to join this room."), 403);
-  const posts = recentPosts(deps, principal, roomId);
+  const posts = recentMessages(deps, principal, roomId);
   const nonce = newSecret();
   saveFormToken(deps, principal.agentId, roomId, nonce);
+  const agentKey = takeKeyFlash(deps, principal.agentId, roomId);
   const page = renderRoomPage({
     title: roomTitle(deps, roomId),
     roomId,
     posts,
     nonce,
-    agentKey: null,
+    agentKey,
   });
+  assertHidden(page, hidden);
   return htmlResponse(page, 200);
 }
 
@@ -153,16 +164,57 @@ function handlePost(deps: RoomDeps, roomId: string, cookie: string | undefined, 
     }
     const location = `/r/${roomId}`;
     assertHidden(location, [nonce, readCookie(cookie, AGENT_COOKIE) ?? ""]);
-    return redirect(location);
+    return redirect(location, []);
   } catch (error) {
     return htmlFromError(error);
   }
 }
 
-function recentPosts(deps: RoomDeps, principal: AuthPrincipal, roomId: string): RoomPagePost[] {
-  const feed = readFeed(deps, principal, roomId, undefined);
-  const messages = feed.items.filter((item) => item.kind === "message");
-  return messages.slice(-RECENT_POSTS).map((item) => ({ text: item.text }));
+function memberFromCookie(deps: RoomDeps, roomId: string, cookie: string | undefined): boolean {
+  const principal = agentFromCookie(deps, cookie);
+  if (!principal || principal === "revoked") return false;
+  const row = deps.db
+    .prepare("SELECT 1 AS ok FROM memberships WHERE room_id = ? AND agent_id = ?")
+    .get(roomId, principal.agentId) as { ok: number } | undefined;
+  return row !== undefined;
+}
+
+type InviteGate = "open" | "used" | "closed";
+
+function classifyInvite(deps: RoomDeps, roomId: string, inviteId: string | null, secret: string): InviteGate {
+  ensureInviteSchema(deps.db);
+  if (!/^[A-Za-z0-9_-]+$/.test(secret)) return "closed";
+  const id = inviteId && isInviteId(inviteId) ? inviteId : inviteIdForSecret(deps, roomId, secret);
+  if (!id) return "closed";
+  const row = deps.db
+    .prepare("SELECT room_id, secret_hash, used_at, revoked_at, expires_at FROM invites WHERE id = ?")
+    .get(id) as
+    | { room_id: string; secret_hash: string; used_at: string | null; revoked_at: string | null; expires_at: string }
+    | undefined;
+  if (!row || row.room_id !== roomId || !sameHash(secret, row.secret_hash)) return "closed";
+  if (row.revoked_at !== null || row.expires_at <= formatTimestamp(deps.clock.now())) return "closed";
+  if (row.used_at !== null) return "used";
+  return "open";
+}
+
+function saveKeyFlash(deps: RoomDeps, agentId: string, roomId: string, key: string): void {
+  ensureRoomPageSchema(deps.db);
+  deps.db
+    .prepare(
+      `INSERT INTO room_key_flash (agent_id, room_id, agent_key) VALUES (?, ?, ?)
+       ON CONFLICT(agent_id) DO UPDATE SET room_id = excluded.room_id, agent_key = excluded.agent_key`,
+    )
+    .run(agentId, roomId, key);
+}
+
+function takeKeyFlash(deps: RoomDeps, agentId: string, roomId: string): string | null {
+  ensureRoomPageSchema(deps.db);
+  const row = deps.db
+    .prepare("SELECT agent_key FROM room_key_flash WHERE agent_id = ? AND room_id = ?")
+    .get(agentId, roomId) as { agent_key: string } | undefined;
+  if (!row) return null;
+  deps.db.prepare("DELETE FROM room_key_flash WHERE agent_id = ? AND room_id = ?").run(agentId, roomId);
+  return row.agent_key;
 }
 
 function agentFromCookie(
@@ -274,11 +326,12 @@ function htmlResponse(
   return new Response(body, { status, headers });
 }
 
-function redirect(location: string): Response {
+function redirect(location: string, cookies: readonly string[]): Response {
   const headers = new Headers({
     location,
     "cache-control": "no-store",
     "referrer-policy": "no-referrer",
   });
+  for (const cookie of cookies) headers.append("set-cookie", cookie);
   return new Response(null, { status: 303, headers });
 }
