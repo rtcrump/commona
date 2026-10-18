@@ -12,8 +12,14 @@ import { recentMessages } from "./messages.js";
 import { renderRoomMessage, renderRoomPage } from "./page.js";
 import { ensureRoomPageSchema } from "./schema.js";
 
-/** Agent key for the plain room page. HttpOnly, Secure, SameSite=Strict. */
-export const AGENT_COOKIE = "commona_agent";
+/** Per-room agent cookie. Two rooms do not share one name or one path. */
+export function agentCookieName(roomId: string): string {
+  return `commona_agent_${roomId}`;
+}
+
+function agentCookiePath(roomId: string): string {
+  return `/r/${roomId}`;
+}
 
 /**
  * Plain HTML room page.
@@ -105,7 +111,7 @@ function redeemAndRedirect(deps: RoomDeps, roomId: string, inviteId: string | nu
   saveKeyFlash(deps, redeemed.agent.id, roomId, key);
   const location = `/r/${roomId}`;
   assertHidden(location, [secret, key]);
-  return redirect(location, [serializeCookie(AGENT_COOKIE, key, "/r")]);
+  return redirect(location, [serializeCookie(agentCookieName(roomId), key, agentCookiePath(roomId))]);
 }
 
 function showForCookie(
@@ -114,7 +120,7 @@ function showForCookie(
   cookie: string | undefined,
   hidden: readonly string[] = [],
 ): Response {
-  const principal = agentFromCookie(deps, cookie);
+  const principal = agentFromCookie(deps, roomId, cookie);
   if (!principal) return htmlResponse(renderRoomMessage("Open an invite link to join this room."), 403);
   const posts = recentMessages(deps, principal, roomId);
   const nonce = newSecret();
@@ -136,7 +142,7 @@ function handlePost(deps: RoomDeps, roomId: string, cookie: string | undefined, 
     if (!isId(roomId) || !roomExists(deps, roomId)) {
       return htmlResponse(renderRoomMessage("This room is not here."), 404);
     }
-    const principal = agentFromCookie(deps, cookie);
+    const principal = agentFromCookie(deps, roomId, cookie);
     if (!principal) return htmlResponse(renderRoomMessage("Open an invite link to join this room."), 403);
     const nonce = field(body, "nonce");
     const text = field(body, "text");
@@ -156,7 +162,7 @@ function handlePost(deps: RoomDeps, roomId: string, cookie: string | undefined, 
       return htmlResponse(renderRoomMessage("That message was held and is not shown."), 200);
     }
     const location = `/r/${roomId}`;
-    assertHidden(location, [nonce, readCookie(cookie, AGENT_COOKIE) ?? ""]);
+    assertHidden(location, [nonce, readCookie(cookie, agentCookieName(roomId)) ?? ""]);
     return redirect(location, []);
   } catch (error) {
     return htmlFromError(error);
@@ -164,7 +170,7 @@ function handlePost(deps: RoomDeps, roomId: string, cookie: string | undefined, 
 }
 
 function memberFromCookie(deps: RoomDeps, roomId: string, cookie: string | undefined): boolean {
-  const principal = agentFromCookie(deps, cookie);
+  const principal = agentFromCookie(deps, roomId, cookie);
   if (!principal) return false;
   const row = deps.db
     .prepare("SELECT 1 AS ok FROM memberships WHERE room_id = ? AND agent_id = ?")
@@ -210,8 +216,12 @@ function takeKeyFlash(deps: RoomDeps, agentId: string, roomId: string): string |
   return row.agent_key;
 }
 
-function agentFromCookie(deps: RoomDeps, cookie: string | undefined): Extract<AuthPrincipal, { kind: "agent" }> | null {
-  const key = readCookie(cookie, AGENT_COOKIE);
+function agentFromCookie(
+  deps: RoomDeps,
+  roomId: string,
+  cookie: string | undefined,
+): Extract<AuthPrincipal, { kind: "agent" }> | null {
+  const key = readCookie(cookie, agentCookieName(roomId));
   if (!key) return null;
   const principal = deps.tokens.authenticate(key);
   if (!principal || principal.kind !== "agent") return null;
