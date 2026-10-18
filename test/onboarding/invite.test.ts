@@ -70,6 +70,18 @@ function json(hit: Hit): unknown {
   return JSON.parse(hit.bodyText) as unknown;
 }
 
+function linkPath(hit: Hit): string {
+  const body = json(hit) as { invite?: { link?: string } };
+  const link = body.invite?.link;
+  expect(link).toBeTruthy();
+  return new URL(link ?? "").pathname;
+}
+
+/** The create response is allowed to carry the raw secret inside the invite link and nowhere else. */
+function stripInviteLinks(blobs: string[]): string[] {
+  return blobs.map((blob) => blob.replace(/https?:\/\/[^"\s]+\/j\/inv_[0-9a-f-]+\/[A-Za-z0-9_-]+/g, ""));
+}
+
 function inviteSecret(hit: Hit): string {
   const header = hit.setCookies.find((value) => value.startsWith("commona_invite="));
   expect(header, hit.bodyText).toBeTruthy();
@@ -204,14 +216,17 @@ describe.sequential("invite links", () => {
       hits.push(created);
       expect(created.status).toBe(201);
       const createdBody = json(created) as { invite: { id: string; link: string; expiresAt: string } };
-      expect(createdBody.invite.link).toBe(`${room.baseUrl}/j/${createdBody.invite.id}`);
+      expect(createdBody.invite.link).toMatch(
+        new RegExp(`^${room.baseUrl}/j/${createdBody.invite.id}/[A-Za-z0-9_-]+$`),
+      );
       expect(new URL(createdBody.invite.link).search).toBe("");
+      expect(new URL(createdBody.invite.link).hash).toBe("");
       const stored = room.db
         .prepare("SELECT created_at, expires_at, secret_hash FROM invites WHERE id = ?")
         .get(createdBody.invite.id) as { created_at: string; expires_at: string; secret_hash: string };
       expect(Date.parse(stored.expires_at) - Date.parse(stored.created_at)).toBe(24 * 60 * 60 * 1000);
 
-      const firstGet = await call(room.baseUrl, "GET", `/j/${createdBody.invite.id}`);
+      const firstGet = await call(room.baseUrl, "GET", new URL(createdBody.invite.link).pathname);
       hits.push(firstGet);
       expect(firstGet.status).toBe(200);
       expect(json(firstGet)).toEqual({ ok: true });
@@ -304,7 +319,7 @@ describe.sequential("invite links", () => {
       const auditJson = JSON.stringify(
         room.db.prepare("SELECT room, agent_id, owner_id, action, result, detail_json FROM audit_log").all(),
       );
-      assertAbsent(publicBlobs(hits, room.logs, auditJson), [
+      assertAbsent(stripInviteLinks(publicBlobs(hits, room.logs, auditJson)), [
         secret,
         credential,
         handoff.secret,
@@ -343,7 +358,7 @@ describe.sequential("invite links", () => {
       });
       hits.push(expiredCreate);
       const expiredId = (json(expiredCreate) as { invite: { id: string } }).invite.id;
-      const expiredGet = await call(room.baseUrl, "GET", `/j/${expiredId}`);
+      const expiredGet = await call(room.baseUrl, "GET", linkPath(expiredCreate));
       hits.push(expiredGet);
       const expiredSecret = inviteSecret(expiredGet);
       secrets.push(expiredSecret);
@@ -365,7 +380,7 @@ describe.sequential("invite links", () => {
       });
       hits.push(replayCreate);
       const replayId = (json(replayCreate) as { invite: { id: string } }).invite.id;
-      const replayGet = await call(room.baseUrl, "GET", `/j/${replayId}`);
+      const replayGet = await call(room.baseUrl, "GET", linkPath(replayCreate));
       hits.push(replayGet);
       const replaySecret = inviteSecret(replayGet);
       secrets.push(replaySecret);
@@ -387,7 +402,7 @@ describe.sequential("invite links", () => {
       });
       hits.push(revokeCreate);
       const revokeId = (json(revokeCreate) as { invite: { id: string } }).invite.id;
-      const revokeGet = await call(room.baseUrl, "GET", `/j/${revokeId}`);
+      const revokeGet = await call(room.baseUrl, "GET", linkPath(revokeCreate));
       hits.push(revokeGet);
       const revokeSecret = inviteSecret(revokeGet);
       secrets.push(revokeSecret);
@@ -416,7 +431,7 @@ describe.sequential("invite links", () => {
       });
       hits.push(crossCreate);
       const crossId = (json(crossCreate) as { invite: { id: string } }).invite.id;
-      const crossGet = await call(room.baseUrl, "GET", `/j/${crossId}`);
+      const crossGet = await call(room.baseUrl, "GET", linkPath(crossCreate));
       hits.push(crossGet);
       const crossSecret = inviteSecret(crossGet);
       secrets.push(crossSecret);
@@ -479,7 +494,7 @@ describe.sequential("invite links", () => {
       );
 
       const auditJson = JSON.stringify(auditRows);
-      assertAbsent(publicBlobs(hits, room.logs, auditJson), [...secrets, ...flowAgents, planted]);
+      assertAbsent(stripInviteLinks(publicBlobs(hits, room.logs, auditJson)), [...secrets, ...flowAgents, planted]);
       const dump = dumpDatabase(room.db);
       for (const secret of [...secrets, ...flowAgents, planted]) expect(dump).not.toContain(secret);
       for (const secret of secrets) expect(dump).toContain(hashToken(secret));
@@ -497,8 +512,9 @@ describe.sequential("invite links", () => {
         token: room.owner,
         body: {},
       });
-      const id = (json(created) as { invite: { id: string } }).invite.id;
-      const got = await call(room.baseUrl, "GET", `/j/${id}`);
+      const createdBody = json(created) as { invite: { id: string; link: string } };
+      const id = createdBody.invite.id;
+      const got = await call(room.baseUrl, "GET", new URL(createdBody.invite.link).pathname);
       const secret = inviteSecret(got);
       const ownersBefore = (room.db.prepare("SELECT COUNT(*) AS n FROM owners").get() as { n: number }).n;
       const [first, second] = await Promise.all([
@@ -535,7 +551,10 @@ describe.sequential("invite links", () => {
       });
       expect(created.statusCode).toBe(201);
       const body = created.json() as { invite: { id: string; link: string } };
-      expect(body.invite.link).toBe(`https://room.example.test/j/${body.invite.id}`);
+      expect(body.invite.link).toMatch(
+        new RegExp(`^https://room.example.test/j/${body.invite.id}/[A-Za-z0-9_-]+$`),
+      );
+      expect(new URL(body.invite.link).search).toBe("");
 
       process.env.COMMONA_PUBLIC_ORIGIN = "https://join.example.test";
       const overridden = await call(room.baseUrl, "POST", `/rooms/${room.roomId}/invites`, {
@@ -543,7 +562,9 @@ describe.sequential("invite links", () => {
         body: {},
       });
       const overriddenBody = json(overridden) as { invite: { id: string; link: string } };
-      expect(overriddenBody.invite.link).toBe(`https://join.example.test/j/${overriddenBody.invite.id}`);
+      expect(overriddenBody.invite.link).toMatch(
+        new RegExp(`^https://join.example.test/j/${overriddenBody.invite.id}/[A-Za-z0-9_-]+$`),
+      );
     } finally {
       if (previous === undefined) delete process.env.COMMONA_PUBLIC_ORIGIN;
       else process.env.COMMONA_PUBLIC_ORIGIN = previous;

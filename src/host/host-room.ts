@@ -6,7 +6,6 @@ import {
   formatTimestamp,
   UNSCOPED_ROOM,
 } from "../../contract/index.js";
-import { dropInviteSecret } from "../join/pending.js";
 import { ensureInviteSchema } from "../join/schema.js";
 import { createInvite } from "../join/service.js";
 import { openAccount } from "../onboarding/account.js";
@@ -178,35 +177,28 @@ function jsonNoStore(c: Context<AppEnv>, body: unknown, status: number): Respons
 }
 
 function createHostedRoom(deps: RoomDeps, body: HostRoomBody, origin: string, hostSecret: string): HostRoomResult {
-  const inviteIds: string[] = [];
-  try {
-    const write = deps.db.transaction(() => {
-      ensureInviteSchema(deps.db);
-      const opened = openAccount(deps.db, deps.tokens);
-      deps.db.prepare("UPDATE owners SET display_name = ? WHERE id = ?").run(body.hostName, opened.ownerId);
-      const principal = { kind: "owner" as const, ownerId: opened.ownerId };
-      const room = createRoom(deps, principal);
-      addMember(deps, principal, room.id, opened.agentId);
-      deps.db.prepare("INSERT INTO room_titles (room_id, title) VALUES (?, ?)").run(room.id, body.title);
-      const invites: string[] = [];
-      for (let index = 0; index < body.inviteCount; index += 1) {
-        const created = createInvite(deps, principal, room.id, {});
-        inviteIds.push(created.id);
-        invites.push(`${origin}/j/${created.id}`);
-      }
-      const credential = deps.tokens.issueAgentToken(opened.agentId);
-      rememberHostGrant(deps.db, room.id, opened.ownerId);
-      assertClean(deps, invites, credential, [credential, opened.sessionToken, hostSecret]);
-      if (room.id.includes(credential) || opened.agentId.includes(credential)) {
-        throw new HostInputError("room:new failed");
-      }
-      return { invites, credential, roomId: room.id, agentId: opened.agentId };
-    });
-    return write();
-  } catch (error) {
-    for (const id of inviteIds) dropInviteSecret(id);
-    throw error;
-  }
+  const write = deps.db.transaction(() => {
+    ensureInviteSchema(deps.db);
+    const opened = openAccount(deps.db, deps.tokens);
+    deps.db.prepare("UPDATE owners SET display_name = ? WHERE id = ?").run(body.hostName, opened.ownerId);
+    const principal = { kind: "owner" as const, ownerId: opened.ownerId };
+    const room = createRoom(deps, principal);
+    addMember(deps, principal, room.id, opened.agentId);
+    deps.db.prepare("INSERT INTO room_titles (room_id, title) VALUES (?, ?)").run(room.id, body.title);
+    const invites: string[] = [];
+    for (let index = 0; index < body.inviteCount; index += 1) {
+      const created = createInvite(deps, principal, room.id, {});
+      invites.push(`${origin}/j/${created.id}/${created.secret}`);
+    }
+    const credential = deps.tokens.issueAgentToken(opened.agentId);
+    rememberHostGrant(deps.db, room.id, opened.ownerId);
+    assertClean(deps, invites, credential, [credential, opened.sessionToken, hostSecret]);
+    if (room.id.includes(credential) || opened.agentId.includes(credential)) {
+      throw new HostInputError("room:new failed");
+    }
+    return { invites, credential, roomId: room.id, agentId: opened.agentId };
+  });
+  return write();
 }
 
 function assertClean(deps: RoomDeps, invites: readonly string[], credential: string, hidden: readonly string[]): void {

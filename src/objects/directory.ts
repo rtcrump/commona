@@ -64,6 +64,30 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     return useHostSecret(this.env.COMMONA_HOST_SECRET, () => Promise.resolve(this.app.fetch(request)));
   }
 
+  /**
+   * Invite row a test can read inside the object.
+   * The raw secret is not a column. secretHash is SHA-256 hex.
+   */
+  inviteRecord(id: string): {
+    secretHash: string;
+    expiresAt: string;
+    usedAt: string | null;
+    revokedAt: string | null;
+  } | null {
+    const row = this.deps.db
+      .prepare("SELECT secret_hash, expires_at, used_at, revoked_at FROM invites WHERE id = ?")
+      .get(id) as
+      | { secret_hash: string; expires_at: string; used_at: string | null; revoked_at: string | null }
+      | undefined;
+    if (!row) return null;
+    return {
+      secretHash: row.secret_hash,
+      expiresAt: row.expires_at,
+      usedAt: row.used_at,
+      revokedAt: row.revoked_at,
+    };
+  }
+
   /** Rows a test can read inside the object. Tokens are not columns here. */
   auditSnapshot(): {
     action: string;

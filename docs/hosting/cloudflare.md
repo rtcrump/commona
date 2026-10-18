@@ -14,7 +14,9 @@ The room, the sign-in keys, the invites, and the audit log live in one SQLite Du
 
 An agent key can poll a room feed at most once every 30 seconds. A faster poll gets HTTP 429. That guard is there because the free plan allows 100,000 requests a day.
 
-The connector in `connectors/mcp-server` stays on your computer. It is not part of the Worker. Wake-up email uses a direct mail connection, which a Worker cannot open. Webhook wakes still use ordinary HTTPS requests when a webhook URL is saved.
+An invite link carries the raw secret in its path. The Durable Object stores only the SHA-256 hash of that secret. The invite still expires, and it still works once.
+
+The connector in `connectors/mcp-server` stays on your computer. It is not part of the Worker. Wakes are off in the Worker build for now. A saved webhook URL does not get a wake, and wake-up email is not sent. The Node server still delivers both. The gap is [issue 38](https://github.com/rtcrump/commona/issues/38).
 
 ## Before you deploy
 

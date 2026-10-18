@@ -28,8 +28,9 @@ describe("join name guards", () => {
 
   it("refuses a pending name from a browser that does not hold the invite cookie", async () => {
     room = await startJoinHarness();
-    const id = await createInvite(room);
-    const welcome = await call(room.baseUrl, "GET", `/j/${id}`, { accept: "text/html" });
+    const created = await createInvite(room);
+    const id = created.id;
+    const welcome = await call(room.baseUrl, "GET", created.openPath, { accept: "text/html" });
     const invite = cookieValue(welcome.setCookies, "commona_invite");
     const welcomeNonce = cookieValue(welcome.setCookies, "commona_form");
 
@@ -72,8 +73,9 @@ describe("join name guards", () => {
   it("rejects a protected name before it is stored as a display name", async () => {
     room = await startJoinHarness();
     const blocked = listedName();
-    const id = await createInvite(room);
-    const welcome = await call(room.baseUrl, "GET", `/j/${id}`, { accept: "text/html" });
+    const created = await createInvite(room);
+    const id = created.id;
+    const welcome = await call(room.baseUrl, "GET", created.openPath, { accept: "text/html" });
     const invite = cookieValue(welcome.setCookies, "commona_invite");
     const welcomeNonce = cookieValue(welcome.setCookies, "commona_form");
     const rejected = await call(room.baseUrl, "POST", `/j/${id}/continue`, {
@@ -103,8 +105,8 @@ describe("join name guards", () => {
     expect(displayNames(room)).toContain("Alex");
     expect(displayNames(room)).not.toContain(blocked);
 
-    const laterId = await createInvite(room);
-    const later = await call(room.baseUrl, "GET", `/j/${laterId}`, { accept: "text/html" });
+    const laterInvite = await createInvite(room);
+    const later = await call(room.baseUrl, "GET", `/j/${laterInvite.id}`, { accept: "text/html" });
     expect(later.body).not.toContain(blocked);
   });
 });

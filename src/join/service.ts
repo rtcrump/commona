@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import {
   AuditAction,
   AuditResult,
@@ -15,7 +16,6 @@ import { NEW_AGENT_NAME, NEW_OWNER_NAME, openAccount, newSecret } from "../onboa
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { inviteLog } from "./log.js";
-import { dropInviteSecret, holdInviteSecret, takeInviteSecret } from "./pending.js";
 import { ensureInviteSchema } from "./schema.js";
 
 export const DEFAULT_INVITE_TTL_SECONDS = 24 * 60 * 60;
@@ -44,6 +44,8 @@ interface InviteRow {
 
 export interface CreatedInvite {
   id: string;
+  /** Raw secret. It belongs in the invite URL only. The database stores the SHA-256 hash. */
+  secret: string;
   expiresAt: string;
 }
 
@@ -155,7 +157,6 @@ export function createInvite(deps: RoomDeps, principal: AuthPrincipal, roomId: s
       expiresAt,
       now,
     );
-  holdInviteSecret(id, secret);
   deps.audit.append({
     ts: now,
     room: roomId,
@@ -166,7 +167,7 @@ export function createInvite(deps: RoomDeps, principal: AuthPrincipal, roomId: s
     detail: { itemId: id },
   });
   inviteLog(`invite create id=${id} room=${roomId}`);
-  return { id, expiresAt };
+  return { id, secret, expiresAt };
 }
 
 export function revokeInvite(deps: RoomDeps, principal: AuthPrincipal, roomId: string, inviteId: string): void {
@@ -198,7 +199,6 @@ export function revokeInvite(deps: RoomDeps, principal: AuthPrincipal, roomId: s
   if (updated.changes !== 1) {
     refuse(deps, { room: UNSCOPED_ROOM, ...actor, itemId: inviteId });
   }
-  dropInviteSecret(inviteId);
   deps.audit.append({
     ts: now,
     room: roomId,
@@ -212,19 +212,26 @@ export function revokeInvite(deps: RoomDeps, principal: AuthPrincipal, roomId: s
 }
 
 /**
- * First GET of a still-open invite. Returns the secret once so the route can
- * set the cookie. Every other GET returns null and the same public page.
+ * The invite URL carries the raw secret. The database stores only its SHA-256 hash.
+ * A still-open invite returns that secret so the route can set the cookie.
+ * An expired, used, revoked, or wrong secret returns null. The invite stays single-use
+ * because redeem marks used_at.
  */
-export function secretForCookie(deps: RoomDeps, inviteId: string): string | null {
+export function secretForCookie(deps: RoomDeps, inviteId: string, presented: string | undefined): string | null {
   ensureInviteSchema(deps.db);
-  if (!isInviteId(inviteId)) return null;
+  if (!isInviteId(inviteId) || !presented || !/^[A-Za-z0-9_-]+$/.test(presented)) return null;
   const row = loadInvite(deps, inviteId);
   const now = formatTimestamp(deps.clock.now());
-  if (!row || row.used_at !== null || row.revoked_at !== null || row.expires_at <= now) {
-    dropInviteSecret(inviteId);
-    return null;
-  }
-  return takeInviteSecret(inviteId);
+  if (!row || row.used_at !== null || row.revoked_at !== null || row.expires_at <= now) return null;
+  if (!sameHash(presented, row.secret_hash)) return null;
+  return presented;
+}
+
+function sameHash(presented: string, expectedHex: string): boolean {
+  const got = Buffer.from(hashToken(presented));
+  const expected = Buffer.from(expectedHex);
+  if (got.length === 0 || got.length !== expected.length) return false;
+  return timingSafeEqual(got, expected);
 }
 
 export function redeemInvite(deps: RoomDeps, inviteId: string, secret: string | null, roomHint?: string): RedeemedInvite {
@@ -281,7 +288,6 @@ export function redeemInvite(deps: RoomDeps, inviteId: string, secret: string | 
   if (outcome !== "ok" || !redeemed) {
     refuse(deps, { room: UNSCOPED_ROOM, ...gate, itemId: inviteId });
   }
-  dropInviteSecret(inviteId);
   inviteLog(`invite redeem id=${inviteId} owner=${redeemed.owner.id} agent=${redeemed.agent.id}`);
   return redeemed;
 }

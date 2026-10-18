@@ -7,7 +7,7 @@ const LABEL_MAX = 80;
 const DEFAULT_INVITE_COUNT = 2;
 const MAX_INVITE_COUNT = 20;
 const INVITE_URL =
-  /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?\/j\/inv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?\/j\/inv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[A-Za-z0-9_-]+$/;
 const ROOM_ID = /^room_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const AGENT_ID = /^agent_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CREDENTIAL_UNWRITABLE = "COMMONA_HOST_CREDENTIAL is not writable";

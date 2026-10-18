@@ -27,7 +27,7 @@ const hostSecret = "host-test-secret";
 const title = "Sunday lunch";
 const hostName = "Host (demo)";
 const inviteUrl = new RegExp(
-  `^${origin}/j/inv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
+  `^${origin}/j/inv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[A-Za-z0-9_-]+$`,
 );
 
 interface RunResult {
@@ -247,9 +247,11 @@ describe("room:new", () => {
         expect(storedTitle.title).toBe(title);
         const room = db.prepare("SELECT id FROM rooms").get() as { id: string };
 
-        const invitePath = new URL(urls[0] ?? "").pathname;
+        const openPath = new URL(urls[0] ?? "").pathname;
+        const inviteId = openPath.split("/")[2] ?? "";
+        const invitePath = `/j/${inviteId}`;
         const jar = new Map<string, string>();
-        const welcome = await call(server.base, "GET", invitePath, { accept: "text/html" });
+        const welcome = await call(server.base, "GET", openPath, { accept: "text/html" });
         expect(welcome.status).toBe(200);
         expect(welcome.body).toContain(`${hostName} invited you to ${title}.`);
         expect(welcome.body).toContain("<button type=\"submit\">Join</button>");

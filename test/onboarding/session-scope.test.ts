@@ -21,8 +21,9 @@ describe("browser session scope", () => {
   it("refuses the feed, file, and held routes with only the session cookie", async () => {
     room = await startJoinHarness();
     seedCanaries(room.db, room.roomId);
-    const id = await createInvite(room);
-    const opened = await call(room.baseUrl, "GET", `/j/${id}`);
+    const created = await createInvite(room);
+    const id = created.id;
+    const opened = await call(room.baseUrl, "GET", created.openPath);
     const invite = cookieValue(opened.setCookies, "commona_invite");
     const accepted = await call(room.baseUrl, "POST", `/j/${id}/accept`, {
       cookie: `commona_invite=${invite}`,

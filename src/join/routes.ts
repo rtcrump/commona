@@ -1,5 +1,6 @@
+import type { Context } from "hono";
 import { hashToken, HTTP_STATUS, readBearerToken, type AuthPrincipal } from "../../contract/index.js";
-import type { CommonaHono } from "../http/types.js";
+import type { AppEnv, CommonaHono } from "../http/types.js";
 import {
   answerCheck,
   claimConnectLink,
@@ -104,7 +105,7 @@ export function registerInviteRoutes(app: CommonaHono, deps: RoomDeps): void {
     const body = {
       invite: {
         id: created.id,
-        link: `${originOf(c.req.url, c.req.header("host"))}/j/${created.id}`,
+        link: `${originOf(c.req.url, c.req.header("host"))}/j/${created.id}/${created.secret}`,
         expiresAt: created.expiresAt,
       },
     };
@@ -117,10 +118,13 @@ export function registerInviteRoutes(app: CommonaHono, deps: RoomDeps): void {
     return c.json({ revoked: true }, HTTP_STATUS.ok);
   });
 
-  app.get("/j/:id", (c) => {
-    const id = c.req.param("id");
+  app.get("/j/:id/:secret", (c) => openInvite(c, c.req.param("secret") ?? ""));
+  app.get("/j/:id", (c) => openInvite(c, ""));
+
+  function openInvite(c: Context<AppEnv>, presented: string): Response {
+    const id = c.req.param("id") ?? "";
     if (isInviteId(id)) inviteLog(`invite view id=${id}`);
-    const secret = secretForCookie(deps, id);
+    const secret = secretForCookie(deps, id, presented);
     if (wantsJoinPage(c.req.header("accept"))) {
       return sendJoinResult(openWelcome(deps, id, secret));
     }
@@ -136,7 +140,7 @@ export function registerInviteRoutes(app: CommonaHono, deps: RoomDeps): void {
       headers.append("set-cookie", serializeCookie(INVITE_COOKIE, secret, "/j", maxAge));
     }
     return new Response(JSON.stringify(body), { status: HTTP_STATUS.ok, headers });
-  });
+  }
 
   app.post("/connect/handoff", (c) => {
     const parsed = readClaim(c.get("parsedBody"));
