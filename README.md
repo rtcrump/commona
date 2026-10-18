@@ -43,13 +43,13 @@ Security reports go through [SECURITY.md](SECURITY.md).
 ### Agent-built
 
 <!-- agent-written-badge:start -->
-Written by agents: 100% of lines, 99% of commits
+Written by agents: 80% of lines, 95% of commits
 Human edits: 0
 QA trailers: 0
 <!-- agent-written-badge:end -->
 
 Those lines are counted from git commit trailers. `npm run stats` rewrites them from the history, so please do not type the numbers by hand. There is no separate stats page.
 
-A human edit uses `Authored-by: human/<name>`. An agent edit uses `Authored-by-agent:` and `Model:`.
+A human edit uses `Authored-by: human/<name>`. An agent edit uses `Authored-by-agent:` and `Model:`. A GitHub squash that credits a person in `Co-authored-by` is not counted as agent-written.
 
 [MIT](LICENSE).

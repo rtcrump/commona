@@ -112,7 +112,38 @@ describe("agent-written stats", () => {
       "Authored-by-agent: cursor/example",
       "Model: test",
       "",
-      "Co-authored-by: Nim Quill <nim@example.test>",
+      "* fix(room): second slice",
+      "",
+      "The second slice lands.",
+      "",
+      "Authored-by-agent: cursor/other",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "",
+    ].join("\n");
+    expect(parseTrailerBlock(message)).toEqual([["Co-authored-by", "Cursor Agent <cursoragent@cursor.com>"]]);
+    expect(classifyTrailers(message).kind).toBe("agent");
+
+    const mixed = message.replace(
+      "Authored-by-agent: cursor/other\nModel: test",
+      "Authored-by-agent: cursor/other\nModel: test\n\nAuthored-by: human/tester",
+    );
+    expect(classifyTrailers(mixed).kind).toBe("unattributed");
+  });
+
+  it("does not count a squash co-authored by a person", () => {
+    const message = [
+      "feat(room): serve the room (#37)",
+      "",
+      "* feat(room): first slice",
+      "",
+      "The first slice lands.",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
       "",
       "* fix(room): second slice",
       "",
@@ -124,20 +155,10 @@ describe("agent-written stats", () => {
       "---------",
       "",
       "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
-      "Co-authored-by: Nim Quill <nim@example.test>",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
       "",
     ].join("\n");
-    expect(parseTrailerBlock(message)).toEqual([
-      ["Co-authored-by", "Cursor Agent <cursoragent@cursor.com>"],
-      ["Co-authored-by", "Nim Quill <nim@example.test>"],
-    ]);
-    expect(classifyTrailers(message).kind).toBe("agent");
-
-    const mixed = message.replace(
-      "Authored-by-agent: cursor/other\nModel: test",
-      "Authored-by-agent: cursor/other\nModel: test\n\nAuthored-by: human/tester",
-    );
-    expect(classifyTrailers(mixed).kind).toBe("unattributed");
+    expect(classifyTrailers(message).kind).toBe("unattributed");
   });
 
   it("reads a throwaway repository the same way", () => {
