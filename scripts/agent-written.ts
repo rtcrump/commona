@@ -6,7 +6,12 @@ import { readFileSync, writeFileSync } from "node:fs";
  * Lines are insertions from `git log --numstat`. Commits are classified only
  * from Authored-by-agent and Authored-by trailers. A blank line between
  * trailer paragraphs still counts as one block, the same way
- * scripts/check_conventions.py does. A commit with neither trailer, or with
+ * scripts/check_conventions.py does. The counter reads every trailer
+ * paragraph in the message, not only the last block. A GitHub squash keeps
+ * each Authored-by-agent line above its own message and ends with a
+ * Co-authored-by footer after a divider, so the last block has no
+ * authorship. A commit with at least one Authored-by-agent trailer and no
+ * Authored-by trailer is agent-written. A commit with neither, or with
  * both, is unattributed. Merge commits are skipped.
  */
 
@@ -40,13 +45,30 @@ export function percent(part: number, whole: number): number {
 }
 
 export function classifyTrailers(message: string): { kind: CommitStat["kind"]; qa: string | null } {
-  const trailers = parseTrailerBlock(message);
+  const trailers = authorshipTrailers(message);
   const agent = trailers.filter(([key]) => key === "Authored-by-agent").length;
   const human = trailers.filter(([key]) => key === "Authored-by").length;
-  const qa = trailers.find(([key]) => key === "QA")?.[1] ?? null;
-  if (agent === 1 && human === 0) return { kind: "agent", qa };
+  const qa = parseTrailerBlock(message).find(([key]) => key === "QA")?.[1] ?? null;
+  if (agent >= 1 && human === 0) return { kind: "agent", qa };
   if (human === 1 && agent === 0) return { kind: "human", qa };
   return { kind: "unattributed", qa };
+}
+
+/**
+ * Authorship lines from every trailer paragraph.
+ * Body text and the squash divider are skipped. They do not hide trailers above them.
+ */
+function authorshipTrailers(message: string): [string, string][] {
+  const found: [string, string][] = [];
+  const paras = paragraphs(message);
+  for (let i = 1; i < paras.length; i += 1) {
+    const para = paras[i] ?? [];
+    if (!pureAllowed(para)) continue;
+    for (const trailer of parseTrailerLines(para)) {
+      if (trailer[0] === "Authored-by-agent" || trailer[0] === "Authored-by") found.push(trailer);
+    }
+  }
+  return found;
 }
 
 const TRAILER_RE = /^([A-Za-z][A-Za-z-]*): (.+)$/;
