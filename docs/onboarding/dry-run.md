@@ -6,13 +6,13 @@ Use a made-up first name if a page asks for one. Do not type a real date of birt
 
 Run every command from the folder that contains `package.json`. The commands are the same on Windows and macOS except where a step shows both.
 
-You need Node.js 22 or newer. Node.js is the program that runs the server. You also need cloudflared, the program that opens a quick tunnel. A quick tunnel is a temporary public https address that forwards to a program on your computer. Installing Node.js or cloudflared is not a command in this repo. **(unverified)**
+You need Node.js 22.5.0 or later. Node.js is the program that runs the server. You also need cloudflared, the program that opens a quick tunnel. A quick tunnel is a temporary public https address that forwards to a program on your computer. Installing Node.js or cloudflared is not a command in this repo. **(unverified)**
 
 ```
 node -v
 ```
 
-A pass starts with `v22` or a higher number.
+A pass is `v22.5.0` or any later version. `v22.4.9` is not a pass.
 
 ## 1. Install and build
 
@@ -71,11 +71,19 @@ Leave this window open. The address works only while this window is open.
 
 The Worker does not read `COMMONA_DB`. It keeps the room in a SQLite Durable Object on this computer. Stopping `npm start` does not delete that object.
 
-Stop the server window with Ctrl+C. Leave the tunnel window open. In the project folder, create a file named `.dev.vars`. That file stays on this computer. Git ignores it. Replace `REPLACE-ME` with the host you copied. Add a second line named `COMMONA_HOST_SECRET`. After the equals sign, put a long random string of letters, digits, underscores, and hyphens. Do not use a value from this page. Do not print that line. Do not commit the file.
+`npm start` runs `wrangler dev`. Wrangler dev ignores shell exports. A shell export is a setting you type with `export`, `$env:`, or `set` in that window. The Worker does not see it. In local dev the Worker reads three settings, and only from a file named `.dev.vars` in the project folder: `COMMONA_PUBLIC_ORIGIN`, `COMMONA_HOST_SECRET`, and `COMMONA_CONNECT_URL`. Those settings belong in that file. The connector window and the `room:new` window are separate programs. They still use the shell, as the later steps show.
+
+Stop the server window with Ctrl+C. Leave the tunnel window open. Create `.dev.vars` in the project folder. That file stays on this computer. Git ignores it, so `.dev.vars` stays out of git. Do not commit it. Do not print the secret line.
+
+This is a fake example. Do not use these values.
 
 ```
-COMMONA_PUBLIC_ORIGIN=https://REPLACE-ME.trycloudflare.com
+COMMONA_PUBLIC_ORIGIN=https://example.invalid
+COMMONA_HOST_SECRET=fake-host-secret-not-real
+COMMONA_CONNECT_URL=https://example.invalid/mcp
 ```
+
+Copy that shape. On the origin line, replace `https://example.invalid` with `https://` plus the host from step 3, with no path and no slash at the end. Replace `fake-host-secret-not-real` with a long random string of letters, digits, underscores, and hyphens that you make up. Leave the `COMMONA_CONNECT_URL` line out until step 6. You do not have that address yet.
 
 Start the server again from that same folder:
 
@@ -85,7 +93,7 @@ npm start
 
 Check `/health` again, the same way as step 2. Then open `https://REPLACE-ME.trycloudflare.com/health` in a browser, using your real host. You should see the same ok answer. What the browser shows when the tunnel is wrong was not checked here. **(unverified)**
 
-The Worker reads `COMMONA_PUBLIC_ORIGIN` and `COMMONA_HOST_SECRET` from `.dev.vars` when you run `npm start`. If you change that file, press Ctrl+C and run `npm start` again.
+The Worker reads `COMMONA_PUBLIC_ORIGIN`, `COMMONA_HOST_SECRET`, and `COMMONA_CONNECT_URL` from `.dev.vars` when you run `npm start`. `wrangler.toml` has a placeholder origin, `https://example.invalid`. The `.dev.vars` file replaces it on this computer. If you change `.dev.vars`, press Ctrl+C and run `npm start` again.
 
 ## 5. Lunch rehearsal
 
@@ -169,30 +177,19 @@ Copy that second https address. The exact sentence cloudflared prints was not ch
 
 `COMMONA_CONNECT_URL` is the public address of the connector. It is that second host plus `/mcp`, with no slash after `mcp`. Do not put the secret link in this setting.
 
-Stop the room server with Ctrl+C. In that same window, add the setting and start the room server again. The settings from step 4 stay in that window. Leave both tunnels and the connector running.
-
-macOS Terminal:
+The Worker reads `COMMONA_CONNECT_URL` from `.dev.vars`. Do not set it with `export`, `$env:`, or `set`. Wrangler dev ignores those shell exports. Stop the room server with Ctrl+C. Leave both tunnels and the connector running. Open `.dev.vars` in the project folder and add this line. The value below is fake. Replace `example.invalid` with the host from the second tunnel. Keep `/mcp`. No slash after `mcp`.
 
 ```
-export COMMONA_CONNECT_URL="https://REPLACE-ME.trycloudflare.com/mcp"
+COMMONA_CONNECT_URL=https://example.invalid/mcp
+```
+
+The origin line and the secret line from step 4 stay in the file. `.dev.vars` stays out of git. Do not commit it. Do not print the secret line.
+
+Start the room server again from that folder:
+
+```
 npm start
 ```
-
-Windows PowerShell:
-
-```
-$env:COMMONA_CONNECT_URL = "https://REPLACE-ME.trycloudflare.com/mcp"
-npm start
-```
-
-Windows Command Prompt:
-
-```
-set COMMONA_CONNECT_URL=https://REPLACE-ME.trycloudflare.com/mcp
-npm start
-```
-
-If this is a new window, the `.dev.vars` file from step 4 is still in the project folder. Start with `npm start` from that folder.
 
 The room server has to be running, with the https address from step 4, before you create the invite. Room creation is `POST /host/room` on that same server, at `http://127.0.0.1:3000`. There is no second port. The tunnel from step 3 points at port 3000. The route refuses the call unless `COMMONA_HOST_SECRET` matches. See [docs/hosting/cloudflare.md](../hosting/cloudflare.md).
 
@@ -308,4 +305,4 @@ del /f /q "%USERPROFILE%\commona-host-credential"
 
 The https addresses are now dead. Opening one should fail. The exact words the browser shows were not checked here. **(unverified)**
 
-Do not reuse those addresses at the lunch. A new tunnel is a new address. Set `COMMONA_PUBLIC_ORIGIN` and `COMMONA_CONNECT_URL` again, and use **Copy my link** only after that. The old link dies with the old address.
+Do not reuse those addresses at the lunch. A new tunnel is a new address. Put the new `COMMONA_PUBLIC_ORIGIN` and `COMMONA_CONNECT_URL` in `.dev.vars`, and use **Copy my link** only after that. The old link dies with the old address.
