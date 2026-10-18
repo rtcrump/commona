@@ -88,6 +88,26 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     };
   }
 
+  /**
+   * First name saved on the join page, for a test.
+   * secretHash is SHA-256 hex. The raw invite secret is not stored.
+   */
+  pendingName(inviteId: string): { firstName: string; secretHash: string } | null {
+    const row = this.deps.db
+      .prepare("SELECT first_name, secret_hash FROM invite_pending_names WHERE invite_id = ?")
+      .get(inviteId) as { first_name: string; secret_hash: string } | undefined;
+    if (!row) return null;
+    return { firstName: row.first_name, secretHash: row.secret_hash };
+  }
+
+  /** Display names stored on owners, for a test. */
+  ownerDisplayNames(): string[] {
+    const rows = this.deps.db.prepare("SELECT display_name FROM owners ORDER BY display_name").all() as {
+      display_name: string;
+    }[];
+    return rows.map((row) => row.display_name);
+  }
+
   /** Rows a test can read inside the object. Tokens are not columns here. */
   auditSnapshot(): {
     action: string;

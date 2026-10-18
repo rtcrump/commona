@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { MAX_FILE_BYTES } from "../../contract/index.js";
+import { ApiErrorCode, MAX_FILE_BYTES } from "../../contract/index.js";
 import { registerLogRoute } from "../audit/route.js";
 import { registerHostRoute } from "../host/host-room.js";
 import { registerInviteRoutes } from "../join/routes.js";
@@ -9,7 +9,8 @@ import { RoomHttpError } from "../room/http.js";
 import { registerRoomRoutes } from "../room/routes.js";
 import type { AppEnv, CommonaHono } from "./types.js";
 
-const BODY_LIMIT = Math.ceil((MAX_FILE_BYTES + 1) * (4 / 3)) + 65_536;
+/** Largest request body. A file is base64, so the cap sits above one max file plus form overhead. */
+export const BODY_LIMIT = Math.ceil((MAX_FILE_BYTES + 1) * (4 / 3)) + 65_536;
 
 /** Room HTTP API. The same app runs in Node and inside the Durable Object. */
 export function createHttpApp(deps: RoomDeps): CommonaHono {
@@ -20,8 +21,9 @@ export function createHttpApp(deps: RoomDeps): CommonaHono {
       await next();
       return;
     }
-    const raw = await c.req.arrayBuffer();
-    if (raw.byteLength > BODY_LIMIT) throw RoomHttpError.badRequest();
+    if (contentLengthOverLimit(c.req.header("content-length"))) return payloadTooLarge();
+    const raw = await readCappedBody(c.req.raw);
+    if (raw instanceof Response) return raw;
     c.set("parsedBody", parseBody(c.req.header("content-type"), raw));
     await next();
   });
@@ -40,6 +42,45 @@ export function createHttpApp(deps: RoomDeps): CommonaHono {
   registerLogRoute(app, { db: deps.db, audit: deps.audit, clock: deps.clock });
   registerNoticeRoute(app, { db: deps.db, tokens: deps.tokens, audit: deps.audit, clock: deps.clock });
   return app;
+}
+
+function contentLengthOverLimit(header: string | undefined): boolean {
+  if (header === undefined) return false;
+  const trimmed = header.trim();
+  if (!/^\d+$/.test(trimmed)) return false;
+  return BigInt(trimmed) > BigInt(BODY_LIMIT);
+}
+
+function payloadTooLarge(): Response {
+  const error = new RoomHttpError(413, ApiErrorCode.Validation);
+  return Response.json(error.body(), { status: 413 });
+}
+
+/** Read the body, and stop once it passes the cap. A declared Content-Length is not trusted. */
+async function readCappedBody(request: Request): Promise<ArrayBuffer | Response> {
+  const body = request.body;
+  if (!body) return new ArrayBuffer(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value || value.byteLength === 0) continue;
+    total += value.byteLength;
+    if (total > BODY_LIMIT) {
+      await reader.cancel();
+      return payloadTooLarge();
+    }
+    chunks.push(value);
+  }
+  const raw = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    raw.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return raw.buffer;
 }
 
 function parseBody(contentType: string | undefined, raw: ArrayBuffer): unknown {
