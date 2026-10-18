@@ -162,6 +162,33 @@ describe("agent-written stats", () => {
     expect(classifyTrailers(message).kind).toBe("agent");
   });
 
+  it("ignores a Markdown rule inside a squashed commit", () => {
+    const message = [
+      "feat(room): serve the room (#37)",
+      "",
+      "* feat(room): first slice",
+      "",
+      "The first slice lands.",
+      "",
+      "    ---------",
+      "",
+      "---------",
+      "",
+      "That rule is part of the commit body.",
+      "",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(message).kind).toBe("agent");
+  });
+
   it("does not count a squash co-authored by a person", () => {
     const message = [
       "feat(room): serve the room (#37)",

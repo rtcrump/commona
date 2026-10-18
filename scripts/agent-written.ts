@@ -69,10 +69,14 @@ function squashCreditsAPerson(message: string): boolean {
   return coauthorValues(footer, false).some((value) => !isAgentCoauthor(value));
 }
 
-/** Lines after the divider. Null when this message is not a squash. */
+/**
+ * Lines after the last exact divider. An indented line is not the divider.
+ * A Markdown rule inside a squashed commit is not the footer.
+ * Null when this message is not a squash.
+ */
 function squashFooter(message: string): string | null {
   const lines = message.replaceAll("\r\n", "\n").split("\n");
-  const at = lines.findIndex((line) => line.trim() === SQUASH_DIVIDER);
+  const at = lines.findLastIndex((line) => line === SQUASH_DIVIDER);
   if (at === -1) return null;
   return lines.slice(at + 1).join("\n");
 }
