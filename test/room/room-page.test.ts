@@ -28,8 +28,9 @@ describe("plain room page", () => {
     expect(opened.location).toBe(`/r/${room.roomId}`);
     expect(opened.body.includes(secret)).toBe(false);
     expect(opened.body.includes(hashToken(secret))).toBe(false);
-    const key = cookieValue(opened.setCookies, agentCookieName(room.roomId));
-    const header = opened.setCookies.find((value) => value.startsWith(`${agentCookieName(room.roomId)}=`)) ?? "";
+    const cookieName = agentCookieName(room.roomId);
+    const key = cookieValue(opened.setCookies, cookieName);
+    const header = opened.setCookies.find((value) => value.startsWith(`${cookieName}=`)) ?? "";
     expect(header).toContain("HttpOnly");
     expect(header).toContain("Secure");
     expect(header).toContain("SameSite=Strict");
@@ -79,7 +80,8 @@ describe("plain room page", () => {
     const path = `/r/${room.roomId}/${invite.id}/${secret}`;
 
     const head = await call(room.baseUrl, "HEAD", path);
-    expect(head.setCookies.some((value) => value.startsWith(`${agentCookieName(room.roomId)}=`))).toBe(false);
+    const cookieName = agentCookieName(room.roomId);
+    expect(head.setCookies.some((value) => value.startsWith(`${cookieName}=`))).toBe(false);
     expect(head.body.includes(secret)).toBe(false);
     const pending = room.db.prepare("SELECT used_at FROM invites WHERE id = ?").get(invite.id) as {
       used_at: string | null;
@@ -110,7 +112,8 @@ describe("plain room page", () => {
     const opened = await call(room.baseUrl, "GET", `/r/${room.roomId}/${invite.id}/${secret}`);
     expect(opened.status).toBe(403);
     expect(opened.body).toContain("This invite cannot be used");
-    expect(opened.setCookies.some((value) => value.startsWith(`${agentCookieName(room.roomId)}=`))).toBe(false);
+    const cookieName = agentCookieName(room.roomId);
+    expect(opened.setCookies.some((value) => value.startsWith(`${cookieName}=`))).toBe(false);
     expect(opened.body.includes(secret)).toBe(false);
     const row = room.db.prepare("SELECT used_at, secret_hash FROM invites WHERE id = ?").get(invite.id) as {
       used_at: string | null;
