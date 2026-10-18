@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { hashToken } from "../../contract/index.js";
+import { claimAgentHandoff, issueAgentHandoff } from "../../src/onboarding/handoff.js";
 import { call, cookieValue, createInvite, startJoinHarness, type JoinHarness } from "../onboarding/harness.js";
 
 const NOTE = "Bring napkins";
@@ -241,6 +242,106 @@ describe("agent json api", () => {
     expect(later.status).toBe(201);
     expect(postCount(room)).toBe(31);
   });
+
+  it("blocks reissue after revoke until the room owner sends a new invite", async () => {
+    room = await startJoinHarness();
+    const joined = await join(room);
+    const key = joined.agentKey;
+    const agent = room.db.prepare("SELECT id, owner_id FROM agents WHERE id = ?").get(joined.agentId) as {
+      id: string;
+      owner_id: string;
+    };
+    const agentOwner = room.tokens.issueOwnerToken(agent.owner_id);
+
+    const revoked = await call(room.baseUrl, "DELETE", `/api/r/${room.roomId}/agents/${agent.id}`, {
+      token: room.owner,
+    });
+    expect(revoked.status).toBe(200);
+
+    const blocked = await call(room.baseUrl, "POST", `/rooms/${room.roomId}/members`, {
+      token: agentOwner,
+      json: { agentId: agent.id },
+    });
+    expect(blocked.status).toBe(403);
+    const handoffDeps = { db: room.db, clock: room.clock, tokens: room.tokens };
+    const handoff = issueAgentHandoff(handoffDeps, agent.owner_id);
+    expect(() => claimAgentHandoff(handoffDeps, handoff.secret)).toThrow(/unusable/);
+    const still = room.db.prepare("SELECT token_hash FROM agents WHERE id = ?").get(agent.id) as {
+      token_hash: string | null;
+    };
+    expect(still.token_hash).toBeNull();
+    await expect401(room, key);
+
+    const guestOwner = room.tokens.issueOwnerToken("O2");
+    const guestInvite = await call(room.baseUrl, "POST", `/rooms/${room.roomId}/invites`, {
+      token: guestOwner,
+      json: {},
+    });
+    expect(guestInvite.status).toBe(201);
+    const stillBlocked = await call(room.baseUrl, "POST", `/rooms/${room.roomId}/members`, {
+      token: agentOwner,
+      json: { agentId: agent.id },
+    });
+    expect(stillBlocked.status).toBe(403);
+
+    const restored = await createInvite(room);
+    expect(restored.id.length).toBeGreaterThan(0);
+    const claimed = claimAgentHandoff(handoffDeps, handoff.secret);
+    const key2 = claimed.credential;
+    expect(key2).not.toBe(key);
+    await expect401(room, key);
+    const live = await call(room.baseUrl, "GET", `/api/r/${room.roomId}`, { token: key2 });
+    expect(live.status).toBe(200);
+
+    const revokedAgain = await call(room.baseUrl, "DELETE", `/api/r/${room.roomId}/agents/${agent.id}`, {
+      token: room.owner,
+    });
+    expect(revokedAgain.status).toBe(200);
+    await expect401(room, key);
+    await expect401(room, key2);
+    const hashes = room.db
+      .prepare("SELECT token_hash FROM agent_key_revocations WHERE agent_id = ? ORDER BY token_hash")
+      .all(agent.id) as { token_hash: string }[];
+    expect(hashes.map((row) => row.token_hash).sort()).toEqual([hashToken(key), hashToken(key2)].sort());
+    const audits = room.db
+      .prepare("SELECT action, result FROM audit_log WHERE action = 'setting_change' AND detail_json LIKE ?")
+      .all(`%${agent.id}%`) as { action: string; result: string }[];
+    expect(audits).toEqual([
+      { action: "setting_change", result: "ok" },
+      { action: "setting_change", result: "ok" },
+    ]);
+    expect(auditText(room).includes(key)).toBe(false);
+    expect(auditText(room).includes(key2)).toBe(false);
+  });
+
+  it("revokes a key that was forced out after an earlier revoke", async () => {
+    room = await startJoinHarness();
+    const joined = await join(room);
+    const key = joined.agentKey;
+    const first = await call(room.baseUrl, "DELETE", `/api/r/${room.roomId}/agents/${joined.agentId}`, {
+      token: room.owner,
+    });
+    expect(first.status).toBe(200);
+
+    const rotated = room.tokens.issueAgentToken(joined.agentId);
+    const usingRotated = await call(room.baseUrl, "GET", `/api/r/${room.roomId}`, { token: rotated });
+    expect(usingRotated.status).toBe(200);
+
+    const second = await call(room.baseUrl, "DELETE", `/api/r/${room.roomId}/agents/${joined.agentId}`, {
+      token: room.owner,
+    });
+    expect(second.status).toBe(200);
+    await expect401(room, key);
+    await expect401(room, rotated);
+    const cleared = room.db.prepare("SELECT token_hash FROM agents WHERE id = ?").get(joined.agentId) as {
+      token_hash: string | null;
+    };
+    expect(cleared.token_hash).toBeNull();
+    const hashes = room.db
+      .prepare("SELECT token_hash FROM agent_key_revocations WHERE agent_id = ?")
+      .all(joined.agentId) as { token_hash: string }[];
+    expect(hashes.map((row) => row.token_hash).sort()).toEqual([hashToken(key), hashToken(rotated)].sort());
+  });
 });
 
 interface Joined {
@@ -249,6 +350,13 @@ interface Joined {
   title: string;
   posts: { text: string }[];
   agentKey: string;
+}
+
+async function expect401(room: JoinHarness, key: string): Promise<void> {
+  const read = await call(room.baseUrl, "GET", `/api/r/${room.roomId}`, { token: key });
+  expect(read.status).toBe(401);
+  const posted = await call(room.baseUrl, "POST", `/api/r/${room.roomId}`, { token: key, json: { text: NOTE } });
+  expect(posted.status).toBe(401);
 }
 
 async function join(room: JoinHarness): Promise<Joined> {

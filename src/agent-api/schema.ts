@@ -9,13 +9,13 @@ const applied = new WeakSet<Database.Database>();
  */
 const AGENT_API_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS agent_key_revocations (
+  token_hash TEXT PRIMARY KEY,
   agent_id TEXT NOT NULL,
   room_id TEXT NOT NULL,
-  token_hash TEXT NOT NULL,
   revoked_at TEXT NOT NULL,
-  PRIMARY KEY (agent_id, room_id)
+  blocks_reissue INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS agent_key_revocations_hash ON agent_key_revocations (token_hash);
+CREATE INDEX IF NOT EXISTS agent_key_revocations_member ON agent_key_revocations (agent_id, room_id);
 
 CREATE TABLE IF NOT EXISTS agent_post_hits (
   agent_id TEXT NOT NULL,
