@@ -1,25 +1,21 @@
 import type Database from "better-sqlite3";
-import Fastify, { type FastifyInstance } from "fastify";
 import {
-  MAX_FILE_BYTES,
   systemClock,
   type AuditLog,
   type Clock,
   type ContentGuard,
-  type HealthResponse,
   type OwnerNotifier,
   type SharingDirectory,
   type TokenStore,
   type WakeQueue,
 } from "../contract/index.js";
-import { createAuditLog, registerLogRoute } from "./audit/index.js";
+import { createAuditLog } from "./audit/index.js";
 import { createTokenStore } from "./auth/index.js";
 import { guard } from "./guard/index.js";
-import { registerInviteRoutes } from "./join/routes.js";
-import { createOwnerNotifier, registerNoticeRoute } from "./notices/index.js";
+import { listenNode, type NodeListener } from "./http/node-listen.js";
+import { createHttpApp } from "./http/server.js";
+import { createOwnerNotifier } from "./notices/index.js";
 import type { RoomDeps } from "./room/deps.js";
-import { RoomHttpError } from "./room/http.js";
-import { registerRoomRoutes } from "./room/routes.js";
 import { closeDefaultRuntime, defaultRuntime } from "./runtime.js";
 import { createSharingDirectory } from "./sharing/index.js";
 import type { SmtpEndpoint } from "./wakeup/smtp.js";
@@ -43,12 +39,27 @@ export interface BuildAppOptions {
   smtp?: SmtpEndpoint | null;
 }
 
+export interface InjectResult {
+  statusCode: number;
+  body: string;
+  json(): unknown;
+}
+
+export interface RunningApp {
+  fetch(request: Request): Promise<Response>;
+  listen(options: { host: string; port: number }): Promise<void>;
+  close(): Promise<void>;
+  inject(options: { method: string; url: string; headers?: Record<string, string>; payload?: unknown }): Promise<InjectResult>;
+  server: { address(): ReturnType<NodeListener["server"]["address"]> };
+}
+
 /**
  * The no-argument app is what the harness starts. It opens COMMONA_DB (or memory),
  * wires auth, audit, sharing, the name block, notices, and wake-up, and delivers
  * to the webhook URLs stored on the agents.
+ * The Worker builds the same HTTP app inside a Durable Object and does not call this.
  */
-export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
+export function buildApp(options: BuildAppOptions = {}): RunningApp {
   const shared = options.db === undefined ? defaultRuntime() : undefined;
   const db = options.db ?? shared!.db;
   const clock = options.clock ?? shared?.clock ?? systemClock;
@@ -70,33 +81,46 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     ...(deliverWake ? { deliverWake } : {}),
     ...(smtp ? { smtp } : {}),
   };
-  const app = Fastify({
-    logger: false,
-    // Base64 expands a file by 4/3. Leave room for a just-over-limit body so the route can answer 400.
-    bodyLimit: Math.ceil((MAX_FILE_BYTES + 1) * (4 / 3)) + 65_536,
-  });
-  app.setErrorHandler((error, _request, reply) => {
-    if (error instanceof RoomHttpError) {
-      return reply.status(error.status).send(error.body());
-    }
-    const statusCode = statusOf(error);
-    if (statusCode === 400 || statusCode === 413) return reply.status(400).send(RoomHttpError.badRequest().body());
-    if (statusCode === 404) return reply.status(404).send(RoomHttpError.notFound().body());
-    return reply.status(statusCode).send({
-      error: { code: "validation", message: "Request failed." },
-    });
-  });
-  app.get("/health", async (): Promise<HealthResponse> => ({ ok: true, service: "commona" }));
-  registerRoomRoutes(app, deps);
-  registerInviteRoutes(app, deps);
-  registerLogRoute(app, { db, audit, clock });
-  registerNoticeRoute(app, { db, tokens, audit, clock });
-  if (shared) {
-    app.addHook("onClose", async () => {
-      closeDefaultRuntime();
-    });
-  }
-  return app;
+  const app = createHttpApp(deps);
+  let listener: NodeListener | undefined;
+  return {
+    fetch(request: Request): Promise<Response> {
+      return Promise.resolve(app.fetch(request));
+    },
+    async inject(options): Promise<InjectResult> {
+      const headers = new Headers();
+      const host = options.headers?.host ?? "127.0.0.1";
+      for (const [key, value] of Object.entries(options.headers ?? {})) headers.set(key, value);
+      headers.set("host", host);
+      const body = options.payload === undefined ? undefined : JSON.stringify(options.payload);
+      if (body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json");
+      const response = await Promise.resolve(
+        app.fetch(new Request(`http://${host}${options.url}`, { method: options.method, headers, body })),
+      );
+      const text = await response.text();
+      return {
+        statusCode: response.status,
+        body: text,
+        json: () => JSON.parse(text) as unknown,
+      };
+    },
+    async listen(options: { host: string; port: number }): Promise<void> {
+      listener = await listenNode((request) => Promise.resolve(app.fetch(request)), options.host, options.port);
+    },
+    server: {
+      address() {
+        return listener ? listener.server.address() : null;
+      },
+    },
+    async close(): Promise<void> {
+      if (listener) {
+        const current = listener;
+        listener = undefined;
+        await current.close();
+      }
+      if (shared) closeDefaultRuntime();
+    },
+  };
 }
 
 function resolveSmtp(options: BuildAppOptions, shared: SmtpEndpoint | undefined): SmtpEndpoint | undefined {
@@ -107,12 +131,4 @@ function resolveSmtp(options: BuildAppOptions, shared: SmtpEndpoint | undefined)
 
 function deliverWith(wake: { deliver(wakeId: string): Promise<unknown> }): (wakeId: string) => Promise<void> {
   return (wakeId) => wake.deliver(wakeId).then(() => undefined);
-}
-
-function statusOf(error: unknown): number {
-  if (typeof error === "object" && error !== null && "statusCode" in error) {
-    const statusCode = (error as { statusCode?: unknown }).statusCode;
-    if (typeof statusCode === "number" && statusCode >= 400 && statusCode <= 599) return statusCode;
-  }
-  return 500;
 }

@@ -1,5 +1,5 @@
-import type { FastifyInstance } from "fastify";
 import { HTTP_STATUS, readBearerToken, type AuthPrincipal } from "../../contract/index.js";
+import type { CommonaHono } from "../http/types.js";
 import { readCookie, SESSION_COOKIE } from "../join/cookies.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
@@ -7,68 +7,62 @@ import { addMember, createRoom } from "./membership.js";
 import { createPost, readFeed, readFile, readHeld, uploadFile } from "./posts.js";
 import { updateSharing } from "./sharing.js";
 
-export function registerRoomRoutes(app: FastifyInstance, deps: RoomDeps): void {
-  app.post("/rooms", async (request, reply) => {
-    const principal = requirePrincipal(deps, request.headers.authorization);
+export function registerRoomRoutes(app: CommonaHono, deps: RoomDeps): void {
+  app.post("/rooms", (c) => {
+    const principal = requirePrincipal(deps, c.req.header("authorization"));
     const room = createRoom(deps, principal);
-    return reply.code(HTTP_STATUS.created).send({ room });
+    return c.json({ room }, HTTP_STATUS.created);
   });
 
-  app.post<{ Params: { roomId: string } }>("/rooms/:roomId/members", async (request, reply) => {
-    const principal = requirePrincipal(deps, request.headers.authorization);
-    const agentId = readAgentId(request.body);
-    const result = addMember(deps, principal, request.params.roomId, agentId);
-    return reply.code(result.created ? HTTP_STATUS.created : HTTP_STATUS.ok).send(result.response);
+  app.post("/rooms/:roomId/members", (c) => {
+    const principal = requirePrincipal(deps, c.req.header("authorization"));
+    const agentId = readAgentId(c.get("parsedBody"));
+    const result = addMember(deps, principal, c.req.param("roomId"), agentId);
+    const status = result.created ? HTTP_STATUS.created : HTTP_STATUS.ok;
+    return c.json(result.response, status);
   });
 
-  app.post<{ Params: { roomId: string } }>("/rooms/:roomId/posts", async (request, reply) => {
-    const principal = requirePrincipal(deps, request.headers.authorization);
-    const result = createPost(deps, principal, request.params.roomId, request.body);
+  app.post("/rooms/:roomId/posts", async (c) => {
+    const principal = requirePrincipal(deps, c.req.header("authorization"));
+    const result = await createPost(deps, principal, c.req.param("roomId"), c.get("parsedBody"));
     const status = result.outcome === "accepted" ? HTTP_STATUS.created : HTTP_STATUS.ok;
-    return reply.code(status).send(result);
+    return c.json(result, status);
   });
 
-  app.post<{ Params: { roomId: string } }>("/rooms/:roomId/files", async (request, reply) => {
-    const principal = requirePrincipal(deps, request.headers.authorization);
-    const result = uploadFile(deps, principal, request.params.roomId, request.body);
+  app.post("/rooms/:roomId/files", async (c) => {
+    const principal = requirePrincipal(deps, c.req.header("authorization"));
+    const result = await uploadFile(deps, principal, c.req.param("roomId"), c.get("parsedBody"));
     const status = result.outcome === "accepted" ? HTTP_STATUS.created : HTTP_STATUS.ok;
-    return reply.code(status).send(result);
+    return c.json(result, status);
   });
 
-  app.get<{ Params: { roomId: string }; Querystring: { as?: string } }>(
-    "/rooms/:roomId/feed",
-    async (request, reply) => {
-      const principal = requirePrincipal(deps, request.headers.authorization);
-      const feed = readFeed(deps, principal, request.params.roomId, request.query.as);
-      return reply.code(HTTP_STATUS.ok).send(feed);
-    },
-  );
-
-  app.get<{ Params: { roomId: string; fileId: string } }>(
-    "/rooms/:roomId/files/:fileId",
-    async (request, reply) => {
-      const principal = requirePrincipal(deps, request.headers.authorization);
-      const file = readFile(deps, principal, request.params.roomId, request.params.fileId);
-      return reply.code(HTTP_STATUS.ok).send(file);
-    },
-  );
-
-  app.put<{ Params: { roomId: string } }>("/rooms/:roomId/sharing", async (request, reply) => {
-    const principal = requirePrincipal(deps, request.headers.authorization);
-    const sharing = updateSharing(deps, principal, request.params.roomId, request.body);
-    return reply.code(HTTP_STATUS.ok).send(sharing);
+  app.get("/rooms/:roomId/feed", (c) => {
+    const principal = requirePrincipal(deps, c.req.header("authorization"));
+    const feed = readFeed(deps, principal, c.req.param("roomId"), c.req.query("as"));
+    return c.json(feed, HTTP_STATUS.ok);
   });
 
-  app.get<{ Params: { roomId: string } }>("/rooms/:roomId/held", async (request, reply) => {
-    const principal = heldPrincipal(deps, request.headers.authorization, request.headers.cookie);
-    const held = readHeld(deps, principal, request.params.roomId);
-    return reply.code(HTTP_STATUS.ok).send(held);
+  app.get("/rooms/:roomId/files/:fileId", (c) => {
+    const principal = requirePrincipal(deps, c.req.header("authorization"));
+    const file = readFile(deps, principal, c.req.param("roomId"), c.req.param("fileId"));
+    return c.json(file, HTTP_STATUS.ok);
+  });
+
+  app.put("/rooms/:roomId/sharing", (c) => {
+    const principal = requirePrincipal(deps, c.req.header("authorization"));
+    const sharing = updateSharing(deps, principal, c.req.param("roomId"), c.get("parsedBody"));
+    return c.json(sharing, HTTP_STATUS.ok);
+  });
+
+  app.get("/rooms/:roomId/held", (c) => {
+    const principal = heldPrincipal(deps, c.req.header("authorization"), c.req.header("cookie"));
+    const held = readHeld(deps, principal, c.req.param("roomId"));
+    return c.json(held, HTTP_STATUS.ok);
   });
 }
 
-function requirePrincipal(deps: RoomDeps, authorization: string | string[] | undefined): AuthPrincipal {
-  const header = Array.isArray(authorization) ? authorization[0] : authorization;
-  const token = readBearerToken(header);
+function requirePrincipal(deps: RoomDeps, authorization: string | undefined): AuthPrincipal {
+  const token = readBearerToken(authorization);
   if (!token) throw RoomHttpError.unauthorized();
   const principal = deps.tokens.authenticate(token);
   if (!principal) throw RoomHttpError.unauthorized();
@@ -79,13 +73,8 @@ function requirePrincipal(deps: RoomDeps, authorization: string | string[] | und
  * Bearer token when one is sent. Otherwise the browser session cookie.
  * A known owner from either one is refused by readHeld. A missing or unknown value is 401.
  */
-function heldPrincipal(
-  deps: RoomDeps,
-  authorization: string | string[] | undefined,
-  cookie: string | string[] | undefined,
-): AuthPrincipal {
-  const header = Array.isArray(authorization) ? authorization[0] : authorization;
-  const bearer = readBearerToken(header);
+function heldPrincipal(deps: RoomDeps, authorization: string | undefined, cookie: string | undefined): AuthPrincipal {
+  const bearer = readBearerToken(authorization);
   if (bearer) {
     const principal = deps.tokens.authenticate(bearer);
     if (!principal) throw RoomHttpError.unauthorized();

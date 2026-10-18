@@ -1,4 +1,3 @@
-import type { FastifyInstance } from "fastify";
 import type Database from "better-sqlite3";
 import {
   AuditAction,
@@ -11,6 +10,7 @@ import {
   type Clock,
   type TokenStore,
 } from "../../contract/index.js";
+import type { CommonaHono } from "../http/types.js";
 import { RoomHttpError } from "../room/http.js";
 import { listNotices } from "./store.js";
 
@@ -25,12 +25,9 @@ export interface NoticeRouteDeps {
  * `GET /notices` returns the caller's notices, oldest first.
  * A successful read is not audited. An agent is `403` and that refusal is.
  */
-export function registerNoticeRoute(app: FastifyInstance, deps: NoticeRouteDeps): void {
-  app.get("/notices", async (request) => {
-    const header = Array.isArray(request.headers.authorization)
-      ? request.headers.authorization[0]
-      : request.headers.authorization;
-    const token = readBearerToken(header);
+export function registerNoticeRoute(app: CommonaHono, deps: NoticeRouteDeps): void {
+  app.get("/notices", (c) => {
+    const token = readBearerToken(c.req.header("authorization"));
     if (!token) throw RoomHttpError.unauthorized();
     const principal = deps.tokens.authenticate(token);
     if (!principal) throw RoomHttpError.unauthorized();
@@ -46,6 +43,6 @@ export function registerNoticeRoute(app: FastifyInstance, deps: NoticeRouteDeps)
       });
       throw RoomHttpError.forbidden(ReasonCode.NotOwner);
     }
-    return { notices: listNotices(deps.db, principal.ownerId) };
+    return c.json({ notices: listNotices(deps.db, principal.ownerId) });
   });
 }

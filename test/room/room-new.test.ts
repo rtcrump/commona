@@ -11,7 +11,7 @@ import { createTokenStore } from "../../src/auth/index.js";
 import { openDatabase } from "../../src/db.js";
 import { createOwnerNotifier } from "../../src/notices/index.js";
 import type { RoomDeps } from "../../src/room/deps.js";
-import { HOST_SECRET_HEADER, startHostListener } from "../../src/room/host.js";
+import { HOST_SECRET_HEADER } from "../../src/host/host-room.js";
 import { createSharingDirectory } from "../../src/sharing/index.js";
 
 const allowAll: ContentGuard = {
@@ -23,6 +23,7 @@ const allowAll: ContentGuard = {
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const script = path.join(root, "scripts/room-new.ts");
 const origin = "https://join.example.test";
+const hostSecret = "host-test-secret";
 const title = "Sunday lunch";
 const hostName = "Host (demo)";
 const inviteUrl = new RegExp(
@@ -112,10 +113,13 @@ async function call(
 describe("room:new", () => {
   const dirs: string[] = [];
   const previousOrigin = process.env.COMMONA_PUBLIC_ORIGIN;
+  const previousSecret = process.env.COMMONA_HOST_SECRET;
 
   afterEach(async () => {
     if (previousOrigin === undefined) delete process.env.COMMONA_PUBLIC_ORIGIN;
     else process.env.COMMONA_PUBLIC_ORIGIN = previousOrigin;
+    if (previousSecret === undefined) delete process.env.COMMONA_HOST_SECRET;
+    else process.env.COMMONA_HOST_SECRET = previousSecret;
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
@@ -136,6 +140,7 @@ describe("room:new", () => {
     const dir = await tempDir();
     const dbPath = path.join(dir, "room.sqlite");
     const secretPath = path.join(dir, "host-secret");
+    process.env.COMMONA_HOST_SECRET = hostSecret;
     const db = openDatabase(dbPath);
     const deps = {
       db,
@@ -154,22 +159,14 @@ describe("room:new", () => {
       if (db.open) db.close();
       throw new Error("room server did not bind");
     }
-    let host;
-    try {
-      host = await startHostListener(deps, { port: 0, secretPath });
-    } catch (error) {
-      await app.close();
-      if (db.open) db.close();
-      throw error;
-    }
+    const base = `http://127.0.0.1:${address.port}`;
     return {
-      base: `http://127.0.0.1:${address.port}`,
-      host: host.url,
+      base,
+      host: base,
       secretPath,
       dbPath,
       deps,
       stop: async () => {
-        await host.close();
         await app.close();
         if (db.open) db.close();
       },
@@ -216,13 +213,10 @@ describe("room:new", () => {
     const dir = path.dirname(server.dbPath);
     const credentialPath = path.join(dir, "host-credential");
     try {
-      const secret = await readFile(server.secretPath, "utf8");
-      expect(secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
-      expect((await stat(server.secretPath)).mode & 0o777).toBe(0o600);
       const result = await run([title, hostName, "2"], {
         COMMONA_URL: server.host,
         COMMONA_HOST_CREDENTIAL: credentialPath,
-        COMMONA_HOST_SECRET_FILE: server.secretPath,
+        COMMONA_HOST_SECRET: hostSecret,
       });
       expect(result.code).toBe(0);
       expect(result.stderr).toBe("");
@@ -233,8 +227,8 @@ describe("room:new", () => {
       expect(fields.token.length).toBeGreaterThan(20);
       expect(fields.roomId).toMatch(/^room_[0-9a-f-]{36}$/);
       expect(fields.agentId).toMatch(/^agent_[0-9a-f-]{36}$/);
-      expect(credentialFile).not.toContain(secret);
-      for (const hidden of [fields.token, fields.roomId, fields.agentId, secret]) {
+      expect(credentialFile).not.toContain(hostSecret);
+      for (const hidden of [fields.token, fields.roomId, fields.agentId, hostSecret]) {
         expect(result.stdout).not.toContain(hidden);
         expect(result.stderr).not.toContain(hidden);
       }
@@ -246,7 +240,7 @@ describe("room:new", () => {
         const details = db.prepare("SELECT detail_json FROM audit_log").all() as { detail_json: string }[];
         for (const row of details) {
           expect(row.detail_json).not.toContain(fields.token);
-          expect(row.detail_json).not.toContain(secret);
+          expect(row.detail_json).not.toContain(hostSecret);
         }
         expect(fields.roomId).toBe((db.prepare("SELECT id FROM rooms").get() as { id: string }).id);
         const storedTitle = db.prepare("SELECT title FROM room_titles").get() as { title: string };
@@ -315,7 +309,7 @@ describe("room:new", () => {
         const items = (JSON.parse(feed.body) as { items?: { text?: string }[] }).items ?? [];
         expect(items.some((item) => item.text === "host says hello")).toBe(true);
         expect(feed.body).not.toContain(fields.token);
-        expect(feed.body).not.toContain(secret);
+        expect(feed.body).not.toContain(hostSecret);
         expect(feed.body).not.toContain(inviteeToken);
       } finally {
         if (db.open) db.close();
@@ -333,7 +327,7 @@ describe("room:new", () => {
       const result = await run([title, hostName], {
         COMMONA_URL: server.host,
         COMMONA_HOST_CREDENTIAL: credentialPath,
-        COMMONA_HOST_SECRET_FILE: server.secretPath,
+        COMMONA_HOST_SECRET: hostSecret,
       });
       expect(result.code).toBe(0);
       expect(result.stderr).toBe("");
@@ -351,7 +345,7 @@ describe("room:new", () => {
       const result = await run(["Jane Testpatient", hostName, "1"], {
         COMMONA_URL: server.host,
         COMMONA_HOST_CREDENTIAL: credentialPath,
-        COMMONA_HOST_SECRET_FILE: server.secretPath,
+        COMMONA_HOST_SECRET: hostSecret,
       });
       expect(result.code).toBe(0);
       expect(result.stderr).toBe("");
@@ -376,7 +370,7 @@ describe("room:new", () => {
       const result = await run(["Sunday <lunch>", hostName], {
         COMMONA_URL: server.host,
         COMMONA_HOST_CREDENTIAL: credentialPath,
-        COMMONA_HOST_SECRET_FILE: server.secretPath,
+        COMMONA_HOST_SECRET: hostSecret,
       });
       expect(result.code).toBe(1);
       expect(result.stdout).toBe("");
@@ -395,7 +389,7 @@ describe("room:new", () => {
       const result = await run([title, hostName], {
         COMMONA_URL: server.host,
         COMMONA_HOST_CREDENTIAL: credentialPath,
-        COMMONA_HOST_SECRET_FILE: server.secretPath,
+        COMMONA_HOST_SECRET: hostSecret,
       });
       expect(result.code).toBe(1);
       expect(result.stdout).toBe("");
@@ -406,22 +400,18 @@ describe("room:new", () => {
     }
   });
 
-  it("does not serve the host command on the public port", async () => {
+  it("refuses room creation on the public route without the host secret", async () => {
     process.env.COMMONA_PUBLIC_ORIGIN = origin;
     const server = await startServer();
     try {
-      const secret = await readFile(server.secretPath, "utf8");
       const response = await fetch(`${server.base}/host/room`, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          [HOST_SECRET_HEADER]: secret,
-        },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ title, hostName, inviteCount: 1 }),
       });
       const body = await response.text();
-      expect(response.status).toBe(404);
-      expect(body).not.toContain(secret);
+      expect(response.status).toBe(403);
+      expect(body).not.toContain(hostSecret);
       expect(body).not.toContain("inv_");
       expect(roomCount(server.dbPath)).toBe(0);
     } finally {
@@ -429,29 +419,27 @@ describe("room:new", () => {
     }
   });
 
-  it("refuses a forwarded header and a wrong or missing secret", async () => {
+  it("ignores forwarded headers and still refuses a wrong or missing secret", async () => {
     process.env.COMMONA_PUBLIC_ORIGIN = origin;
     const server = await startServer();
     try {
-      const secret = await readFile(server.secretPath, "utf8");
-      const forwarded = ["cf-connecting-ip", "x-forwarded-for", "forwarded", "x-real-ip"];
-      for (const name of forwarded) {
-        const hit = await postHost(server.host, {
-          [HOST_SECRET_HEADER]: secret,
-          [name]: "127.0.0.1",
-        });
-        expect(hit.status).toBe(403);
-        expect(hit.body).not.toContain(secret);
-        expect(hit.body).not.toContain("inv_");
-      }
       const missing = await postHost(server.host, {});
       expect(missing.status).toBe(403);
       expect(missing.body).not.toContain("inv_");
-      const wrong = await postHost(server.host, { [HOST_SECRET_HEADER]: "a".repeat(43) });
+      const wrong = await postHost(server.host, { [HOST_SECRET_HEADER]: "wrong-host-secret" });
       expect(wrong.status).toBe(403);
-      expect(wrong.body).not.toContain(secret);
+      expect(wrong.body).not.toContain(hostSecret);
       expect(wrong.body).not.toContain("inv_");
       expect(roomCount(server.dbPath)).toBe(0);
+      const forwarded = ["cf-connecting-ip", "x-forwarded-for", "forwarded", "x-real-ip"];
+      for (const name of forwarded) {
+        const hit = await postHost(server.host, {
+          [HOST_SECRET_HEADER]: hostSecret,
+          [name]: "203.0.113.4",
+        });
+        expect(hit.status).toBe(201);
+        expect(hit.body).not.toContain(hostSecret);
+      }
     } finally {
       await server.stop();
     }
@@ -465,7 +453,7 @@ describe("room:new", () => {
       const missing = await run([title, hostName], {
         COMMONA_URL: server.host,
         COMMONA_HOST_CREDENTIAL: path.join(dir, "missing-dir", "host-credential"),
-        COMMONA_HOST_SECRET_FILE: server.secretPath,
+        COMMONA_HOST_SECRET: hostSecret,
       });
       expect(missing.code).toBe(1);
       expect(missing.stdout).toBe("");
@@ -476,33 +464,46 @@ describe("room:new", () => {
       const blocked = await run([title, hostName], {
         COMMONA_URL: server.host,
         COMMONA_HOST_CREDENTIAL: existing,
-        COMMONA_HOST_SECRET_FILE: server.secretPath,
+        COMMONA_HOST_SECRET: hostSecret,
       });
       expect(blocked.code).toBe(1);
       expect(blocked.stdout).toBe("");
       expect(blocked.stderr).toBe("COMMONA_HOST_CREDENTIAL is not writable\n");
       expect(await readFile(existing, "utf8")).toBe("keep\n");
-      expect(blocked.stderr).not.toContain(await readFile(server.secretPath, "utf8"));
+      expect(blocked.stderr).not.toContain(hostSecret);
       expect(roomCount(server.dbPath)).toBe(0);
     } finally {
       await server.stop();
     }
   });
 
-  it("writes the host secret only after the listener binds", async () => {
+  it("does not write a host secret file", async () => {
     const server = await startServer();
     try {
-      const port = Number(new URL(server.host).port);
-      const kept = await readFile(server.secretPath, "utf8");
-      const blocked = path.join(path.dirname(server.secretPath), "blocked-secret");
-      await expect(startHostListener(server.deps, { port, secretPath: blocked })).rejects.toThrow(
-        "host command could not listen",
-      );
-      await expect(stat(blocked)).rejects.toThrow();
-      await expect(startHostListener(server.deps, { port, secretPath: server.secretPath })).rejects.toThrow(
-        "host command could not listen",
-      );
-      expect(await readFile(server.secretPath, "utf8")).toBe(kept);
+      await expect(stat(server.secretPath)).rejects.toThrow();
+      const missing = await postHost(server.base, {});
+      expect(missing.status).toBe(403);
+      expect(missing.body).not.toContain(hostSecret);
+      expect(roomCount(server.dbPath)).toBe(0);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("stops when the host secret is not set and creates nothing", async () => {
+    process.env.COMMONA_PUBLIC_ORIGIN = origin;
+    const server = await startServer();
+    const credentialPath = path.join(path.dirname(server.dbPath), "host-credential");
+    try {
+      const result = await run([title, hostName], {
+        COMMONA_URL: server.host,
+        COMMONA_HOST_CREDENTIAL: credentialPath,
+        COMMONA_HOST_SECRET: "",
+      });
+      expect(result.code).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("COMMONA_HOST_SECRET is not set\n");
+      expect(roomCount(server.dbPath)).toBe(0);
     } finally {
       await server.stop();
     }

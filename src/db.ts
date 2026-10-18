@@ -1,25 +1,25 @@
-import Database from "better-sqlite3";
-import { SCHEMA_SQL, SIGNING_SECRET_MIGRATIONS } from "../contract/index.js";
-
-export function openDatabase(path: string): Database.Database {
-  const db = new Database(path);
-  // WAL lets the harness open the same file while the server is running.
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  db.pragma("busy_timeout = 5000");
-  db.exec(SCHEMA_SQL);
-  applySigningSecretMigrations(db);
-  return db;
-}
+import type Database from "better-sqlite3";
+import { createSqliteDatabase } from "./db/adapter.js";
+import { openNodeDriver } from "./db/node-driver.js";
+import { prepareDatabase } from "./db/prepare.js";
 
 /**
- * `CREATE TABLE IF NOT EXISTS` leaves an older `owners` or `agents` table unchanged.
- * Add the signing-secret columns before any query reads them.
+ * Open the Node database. The Worker does not call this.
+ * Node 22 needs `--experimental-sqlite` before the process starts.
  */
-function applySigningSecretMigrations(db: Database.Database): void {
-  for (const step of SIGNING_SECRET_MIGRATIONS) {
-    const rows = db.prepare(`PRAGMA table_info(${step.table})`).all() as { name: string }[];
-    if (rows.some((row) => row.name === step.column)) continue;
-    db.exec(step.sql);
+export function openDatabase(path: string): Database.Database {
+  const db = createSqliteDatabase(openNodeDriver(path));
+  try {
+    db.pragma("journal_mode = WAL");
+  } catch {
+    // A memory database may ignore WAL.
   }
+  db.pragma("foreign_keys = ON");
+  try {
+    db.pragma("busy_timeout = 5000");
+  } catch {
+    // busy_timeout is a Node file-database setting.
+  }
+  prepareDatabase(db);
+  return db;
 }

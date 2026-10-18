@@ -28,6 +28,7 @@ These paths are safety-core. They are the name block, sharing, the audit log, si
 - `src/auth/`, `src/room/access.ts`, `src/room/membership.ts`, and `src/room/routes.ts` — bearer tokens, join, and the membership check.
 - `contract/` — the shared types those modules implement.
 - `src/app.ts` and `src/runtime.ts` — the wiring that builds the server from those modules.
+- `src/host/host-room.ts` is the host-only room route. It checks the host secret and records a refusal. Trafford reads that file line by line.
 
 The same list is `.github/safety-core-paths.txt`. A pull request that changes one of these paths, or that carries the `critical-core` label, is a safety-core pull request. The label alone is enough.
 

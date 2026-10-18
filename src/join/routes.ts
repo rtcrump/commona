@@ -1,5 +1,5 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
 import { hashToken, HTTP_STATUS, readBearerToken, type AuthPrincipal } from "../../contract/index.js";
+import type { CommonaHono } from "../http/types.js";
 import {
   answerCheck,
   claimConnectLink,
@@ -12,20 +12,19 @@ import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { INVITE_COOKIE, readCookie, serializeCookie, SESSION_COOKIE } from "./cookies.js";
 import { inviteLog } from "./log.js";
-import { registerFormParser, registerJoinPages, sendJoinResult, wantsJoinPage } from "./page-routes.js";
+import { registerJoinPages, sendJoinResult, wantsJoinPage } from "./page-routes.js";
 import { ensureInviteSchema } from "./schema.js";
 import { createInvite, isInviteId, redeemInvite, revokeInvite, secretForCookie } from "./service.js";
 
-function requirePrincipal(deps: RoomDeps, authorization: string | string[] | undefined): AuthPrincipal {
-  const header = Array.isArray(authorization) ? authorization[0] : authorization;
-  const token = readBearerToken(header);
+function requirePrincipal(deps: RoomDeps, authorization: string | undefined): AuthPrincipal {
+  const token = readBearerToken(authorization);
   if (!token) throw RoomHttpError.unauthorized();
   const principal = deps.tokens.authenticate(token);
   if (!principal) throw RoomHttpError.unauthorized();
   return principal;
 }
 
-function requireAgent(deps: RoomDeps, authorization: string | string[] | undefined): { agentId: string; ownerId: string } {
+function requireAgent(deps: RoomDeps, authorization: string | undefined): { agentId: string; ownerId: string } {
   const principal = requirePrincipal(deps, authorization);
   if (principal.kind !== "agent") throw RoomHttpError.unauthorized();
   return { agentId: principal.agentId, ownerId: principal.ownerId };
@@ -51,15 +50,14 @@ function readCheckId(body: unknown): string | null {
   return checkId;
 }
 
-function originOf(request: FastifyRequest): string {
+function originOf(url: string, hostHeader: string | undefined): string {
   const configured = configuredPublicOrigin();
   if (configured) return configured;
-  const host = request.headers.host ?? "localhost";
+  const host = hostHeader ?? "localhost";
   if (!/^[A-Za-z0-9.-]+(?::\d+)?$/.test(host)) return "http://localhost";
   const name = host.replace(/:\d+$/, "").toLowerCase();
-  // A non-local http link cannot store the Secure invite cookie.
   if (name !== "localhost" && name !== "127.0.0.1") return `https://${host}`;
-  const protocol = request.protocol === "https" ? "https" : "http";
+  const protocol = new URL(url).protocol === "https:" ? "https" : "http";
   return `${protocol}://${host}`;
 }
 
@@ -89,110 +87,112 @@ function assertPublic(body: unknown, forbidden: readonly string[]): void {
   }
 }
 
-export function registerInviteRoutes(app: FastifyInstance, deps: RoomDeps): void {
+function privateJson(body: unknown, status: number, extra?: Record<string, string>): Response {
+  const headers = new Headers(extra);
+  headers.set("content-type", "application/json");
+  headers.set("cache-control", "no-store");
+  return new Response(JSON.stringify(body), { status, headers });
+}
+
+export function registerInviteRoutes(app: CommonaHono, deps: RoomDeps): void {
   ensureInviteSchema(deps.db);
-  registerFormParser(app);
   registerJoinPages(app, deps);
 
-  app.post<{ Params: { room: string } }>("/rooms/:room/invites", async (request, reply) => {
-    const principal = requirePrincipal(deps, request.headers.authorization);
-    const created = createInvite(deps, principal, request.params.room, request.body);
+  app.post("/rooms/:room/invites", (c) => {
+    const principal = requirePrincipal(deps, c.req.header("authorization"));
+    const created = createInvite(deps, principal, c.req.param("room"), c.get("parsedBody"));
     const body = {
       invite: {
         id: created.id,
-        link: `${originOf(request)}/j/${created.id}`,
+        link: `${originOf(c.req.url, c.req.header("host"))}/j/${created.id}`,
         expiresAt: created.expiresAt,
       },
     };
-    return reply.code(HTTP_STATUS.created).send(body);
+    return c.json(body, HTTP_STATUS.created);
   });
 
-  app.delete<{ Params: { room: string; inviteId: string } }>(
-    "/rooms/:room/invites/:inviteId",
-    async (request, reply) => {
-      const principal = requirePrincipal(deps, request.headers.authorization);
-      revokeInvite(deps, principal, request.params.room, request.params.inviteId);
-      const body = { revoked: true };
-      return reply.code(HTTP_STATUS.ok).send(body);
-    },
-  );
+  app.delete("/rooms/:room/invites/:inviteId", (c) => {
+    const principal = requirePrincipal(deps, c.req.header("authorization"));
+    revokeInvite(deps, principal, c.req.param("room"), c.req.param("inviteId"));
+    return c.json({ revoked: true }, HTTP_STATUS.ok);
+  });
 
-  app.get<{ Params: { id: string } }>("/j/:id", async (request, reply) => {
-    const id = request.params.id;
+  app.get("/j/:id", (c) => {
+    const id = c.req.param("id");
     if (isInviteId(id)) inviteLog(`invite view id=${id}`);
     const secret = secretForCookie(deps, id);
-    if (wantsJoinPage(request.headers.accept)) {
-      return sendJoinResult(reply, openWelcome(deps, id, secret));
+    if (wantsJoinPage(c.req.header("accept"))) {
+      return sendJoinResult(openWelcome(deps, id, secret));
     }
     const body = { ok: true as const };
     if (secret) assertPublic(body, [secret, hashToken(secret)]);
-    reply.header("Cache-Control", "no-store");
-    reply.header("Referrer-Policy", "no-referrer");
+    const headers = new Headers({
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+      "content-type": "application/json",
+    });
     if (secret && /^[A-Za-z0-9_-]+$/.test(secret)) {
       const maxAge = cookieMaxAge(deps, id);
-      reply.header("Set-Cookie", serializeCookie(INVITE_COOKIE, secret, "/j", maxAge));
+      headers.append("set-cookie", serializeCookie(INVITE_COOKIE, secret, "/j", maxAge));
     }
-    return reply.code(HTTP_STATUS.ok).send(body);
+    return new Response(JSON.stringify(body), { status: HTTP_STATUS.ok, headers });
   });
 
-  app.post("/connect/handoff", async (request, reply) => {
-    const parsed = readClaim(request.body);
+  app.post("/connect/handoff", (c) => {
+    const parsed = readClaim(c.get("parsedBody"));
     if (!parsed || !handoffAllowsConnector(handoffDeps(deps), parsed.handoff, parsed.roomId)) {
       throw RoomHttpError.forbidden();
     }
-    reply.header("Cache-Control", "no-store");
-    reply.header("Referrer-Policy", "no-referrer");
-    return reply.code(HTTP_STATUS.ok).send({ ok: true });
+    return privateJson({ ok: true }, HTTP_STATUS.ok, { "referrer-policy": "no-referrer" });
   });
 
-  app.post("/connect/claim", async (request, reply) => {
-    const parsed = readClaim(request.body);
+  app.post("/connect/claim", (c) => {
+    const parsed = readClaim(c.get("parsedBody"));
     if (!parsed) throw RoomHttpError.forbidden();
     try {
       const claimed = claimConnectLink(handoffDeps(deps), parsed.handoff, parsed.roomId);
-      reply.header("Cache-Control", "no-store");
-      reply.header("Referrer-Policy", "no-referrer");
-      return reply.code(HTTP_STATUS.ok).send({
-        agentId: claimed.agentId,
-        ownerId: claimed.ownerId,
-        roomId: claimed.roomId,
-        credential: claimed.credential,
-      });
+      return privateJson(
+        {
+          agentId: claimed.agentId,
+          ownerId: claimed.ownerId,
+          roomId: claimed.roomId,
+          credential: claimed.credential,
+        },
+        HTTP_STATUS.ok,
+        { "referrer-policy": "no-referrer" },
+      );
     } catch {
       throw RoomHttpError.forbidden();
     }
   });
 
-  app.post("/connect/arrive", async (request, reply) => {
-    const agent = requireAgent(deps, request.headers.authorization);
+  app.post("/connect/arrive", (c) => {
+    const agent = requireAgent(deps, c.req.header("authorization"));
     try {
       noteArrival(handoffDeps(deps), agent.agentId, agent.ownerId);
     } catch {
       throw RoomHttpError.forbidden();
     }
-    reply.header("Cache-Control", "no-store");
-    return reply.code(HTTP_STATUS.ok).send({ ok: true });
+    return privateJson({ ok: true }, HTTP_STATUS.ok);
   });
 
-  app.get("/connect/pending", async (request, reply) => {
-    const agent = requireAgent(deps, request.headers.authorization);
+  app.get("/connect/pending", (c) => {
+    const agent = requireAgent(deps, c.req.header("authorization"));
     const checkId = takePendingCheck(handoffDeps(deps), agent.agentId);
-    reply.header("Cache-Control", "no-store");
-    return reply.code(HTTP_STATUS.ok).send({ checkId });
+    return privateJson({ checkId }, HTTP_STATUS.ok);
   });
 
-  app.post("/connect/check-in", async (request, reply) => {
-    const agent = requireAgent(deps, request.headers.authorization);
-    const checkId = readCheckId(request.body);
+  app.post("/connect/check-in", (c) => {
+    const agent = requireAgent(deps, c.req.header("authorization"));
+    const checkId = readCheckId(c.get("parsedBody"));
     if (!checkId || !answerCheck(handoffDeps(deps), agent.agentId, checkId)) throw RoomHttpError.forbidden();
-    reply.header("Cache-Control", "no-store");
-    return reply.code(HTTP_STATUS.ok).send({ ok: true });
+    return privateJson({ ok: true }, HTTP_STATUS.ok);
   });
 
-  app.post<{ Params: { id: string } }>("/j/:id/accept", async (request, reply) => {
-    const secret = readCookie(request.headers.cookie, INVITE_COOKIE);
-    const roomHint = readRoomHint(request.body);
-    const redeemed = redeemInvite(deps, request.params.id, secret, roomHint);
+  app.post("/j/:id/accept", (c) => {
+    const secret = readCookie(c.req.header("cookie"), INVITE_COOKIE);
+    const roomHint = readRoomHint(c.get("parsedBody"));
+    const redeemed = redeemInvite(deps, c.req.param("id"), secret, roomHint);
     const body = {
       owner: redeemed.owner,
       agent: redeemed.agent,
@@ -202,16 +202,17 @@ export function registerInviteRoutes(app: FastifyInstance, deps: RoomDeps): void
     const hidden = [redeemed.sessionToken, secret ?? ""].filter((value) => value.length > 0);
     assertPublic(body, [...hidden, ...hidden.map((value) => hashToken(value))]);
     if (!/^[A-Za-z0-9_-]+$/.test(redeemed.sessionToken)) throw new Error("refusing to send a secret");
-    reply.header("Cache-Control", "no-store");
-    reply.header("Set-Cookie", serializeCookie(SESSION_COOKIE, redeemed.sessionToken, "/"));
-    return reply.code(HTTP_STATUS.created).send(body);
+    const headers = new Headers({
+      "content-type": "application/json",
+      "cache-control": "no-store",
+    });
+    headers.append("set-cookie", serializeCookie(SESSION_COOKIE, redeemed.sessionToken, "/"));
+    return new Response(JSON.stringify(body), { status: HTTP_STATUS.created, headers });
   });
 }
 
 function cookieMaxAge(deps: RoomDeps, id: string): number {
-  const row = deps.db.prepare("SELECT expires_at FROM invites WHERE id = ?").get(id) as
-    | { expires_at: string }
-    | undefined;
+  const row = deps.db.prepare("SELECT expires_at FROM invites WHERE id = ?").get(id) as { expires_at: string } | undefined;
   if (!row) return 60;
   const seconds = Math.floor((Date.parse(row.expires_at) - deps.clock.now().getTime()) / 1000);
   return Math.max(1, seconds);

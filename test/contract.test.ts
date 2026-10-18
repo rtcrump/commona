@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -159,7 +159,7 @@ describe("schema", () => {
   it("adds signing-secret columns to a database created before them", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "commona-schema-"));
     const file = path.join(dir, "old.sqlite");
-    const created = new Database(file);
+    const created = new DatabaseSync(file);
     created.exec(`
       CREATE TABLE owners (
         id TEXT PRIMARY KEY,

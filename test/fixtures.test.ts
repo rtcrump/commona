@@ -35,8 +35,9 @@ describe("fixtures", () => {
 
   it("keeps the acceptance harness on npm run m1", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: { m1: string; test: string } };
-    expect(pkg.scripts.m1).toBe("tsx scripts/m1.ts");
-    expect(pkg.scripts.test).toBe("vitest run");
+    expect(pkg.scripts.m1).toContain("scripts/m1.ts");
+    expect(pkg.scripts.test).toContain("vitest");
     expect(pkg.scripts.test).not.toContain("m1");
+    expect(pkg.scripts.test).not.toContain("acceptance");
   });
 });

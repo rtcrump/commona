@@ -18,6 +18,7 @@
     "tests/**/*.ts",
     "contract/**/*.ts",
     "scripts/**/*.ts",
-    "vitest.config.ts"
+    "vitest.config.ts",
+    "vitest.workers.config.ts"
   ]
 }

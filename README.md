@@ -28,7 +28,7 @@ You need Node.js 22. `npm test` runs the unit tests. It does not run the 19 acce
 
 The package is private. The version is `0.0.0`. `package.json` has no `bin`. Nothing is published. `npx commona init` is the install command at launch. It is not a command you can run yet.
 
-`npm start` starts the server.
+`npm start` runs the local Worker with `wrangler dev`. It does not deploy. Deploy steps, free-plan limits, and what happens when a limit is passed are in [docs/hosting/cloudflare.md](docs/hosting/cloudflare.md).
 
 ## Contributing
 

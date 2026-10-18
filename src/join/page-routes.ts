@@ -1,7 +1,7 @@
-import type { FastifyInstance, FastifyReply } from "fastify";
 import { hashToken } from "../../contract/index.js";
+import type { CommonaHono } from "../http/types.js";
 import { connectorUrl } from "../onboarding/connect.js";
-import { connectScript, prefersHtml, joinStylesheet } from "../onboarding/html.js";
+import { connectScript, joinStylesheet, prefersHtml } from "../onboarding/html.js";
 import {
   openConnect,
   openConnectPage,
@@ -16,28 +16,7 @@ import {
 import type { RoomDeps } from "../room/deps.js";
 import { headerValue } from "./cookies.js";
 
-export function registerFormParser(app: FastifyInstance): void {
-  if (app.hasContentTypeParser("application/x-www-form-urlencoded")) return;
-  app.addContentTypeParser(
-    "application/x-www-form-urlencoded",
-    { parseAs: "string" },
-    (_request, body, done) => {
-      try {
-        const text = typeof body === "string" ? body : "";
-        const params = new URLSearchParams(text);
-        const record: Record<string, string> = {};
-        for (const [key, value] of params) {
-          if (record[key] === undefined) record[key] = value;
-        }
-        done(null, record);
-      } catch (error) {
-        done(error as Error, undefined);
-      }
-    },
-  );
-}
-
-export function wantsJoinPage(accept: string | string[] | undefined): boolean {
+export function wantsJoinPage(accept: string | undefined): boolean {
   return prefersHtml(headerValue(accept));
 }
 
@@ -49,48 +28,53 @@ function assertClean(text: string, secrets: readonly string[]): void {
   }
 }
 
-export function sendJoinResult(reply: FastifyReply, result: JoinResult): FastifyReply {
+export function sendJoinResult(result: JoinResult): Response {
   const html = result.html ?? "";
   const location = result.location ?? "";
   assertClean(html, result.secrets);
   assertClean(location, result.secrets);
-  reply.header("Cache-Control", "no-store");
-  reply.header("Referrer-Policy", "no-referrer");
-  if (result.cookies.length > 0) reply.header("set-cookie", result.cookies);
+  const headers = new Headers();
+  headers.set("cache-control", "no-store");
+  headers.set("referrer-policy", "no-referrer");
+  for (const cookie of result.cookies) headers.append("set-cookie", cookie);
   if (location) {
-    return reply.redirect(location, result.status);
+    headers.set("location", location);
+    return new Response(null, { status: result.status, headers });
   }
-  return reply.code(result.status).type("text/html; charset=utf-8").send(html);
+  headers.set("content-type", "text/html; charset=utf-8");
+  return new Response(html, { status: result.status, headers });
 }
 
 /** HTML screens for the invite link. They call the J1 invite helpers and do not read a room. */
-export function registerJoinPages(app: FastifyInstance, deps: RoomDeps): void {
-  app.get("/onboarding/join.css", async (_request, reply) => {
-    return reply.type("text/css; charset=utf-8").header("Cache-Control", "no-store").send(joinStylesheet());
+export function registerJoinPages(app: CommonaHono, deps: RoomDeps): void {
+  app.get("/onboarding/join.css", (c) => {
+    return c.body(joinStylesheet(), 200, {
+      "content-type": "text/css; charset=utf-8",
+      "cache-control": "no-store",
+    });
   });
 
-  app.get("/onboarding/connect.js", async (_request, reply) => {
-    return reply
-      .type("text/javascript; charset=utf-8")
-      .header("Cache-Control", "no-store")
-      .send(connectScript());
+  app.get("/onboarding/connect.js", (c) => {
+    return c.body(connectScript(), 200, {
+      "content-type": "text/javascript; charset=utf-8",
+      "cache-control": "no-store",
+    });
   });
 
-  app.get("/join/connect", async (_request, reply) => {
-    return sendJoinResult(reply, openConnect());
-  });
+  app.get("/join/connect", () => sendJoinResult(openConnect()));
 
-  app.get<{ Params: { id: string } }>("/j/:id/connect", async (request, reply) => {
-    return sendJoinResult(reply, openConnectPage(deps, request.params.id, request.headers.cookie));
-  });
+  app.get("/j/:id/connect", (c) => sendJoinResult(openConnectPage(deps, c.req.param("id"), c.req.header("cookie"))));
 
-  app.post<{ Params: { id: string } }>("/j/:id/connect/link", async (request, reply) => {
-    const prepared = prepareCopy(deps, request.params.id, request.body, request.headers.cookie);
-    if (!prepared.ok) return sendJoinResult(reply, prepared.result);
+  app.post("/j/:id/connect/link", (c) => {
+    const prepared = prepareCopy(deps, c.req.param("id"), c.get("parsedBody"), c.req.header("cookie"));
+    if (!prepared.ok) return sendJoinResult(prepared.result);
     const url = connectorUrl(process.env.COMMONA_CONNECT_URL?.trim() ?? "", prepared.secret, prepared.roomId);
-    reply.header("Cache-Control", "no-store");
-    reply.header("Referrer-Policy", "no-referrer");
-    if (!url) return reply.code(503).send({ error: "unavailable" });
+    if (!url) {
+      return c.json({ error: "unavailable" }, 503, {
+        "cache-control": "no-store",
+        "referrer-policy": "no-referrer",
+      });
+    }
     const payload = { url };
     const text = JSON.stringify(payload);
     for (const secret of prepared.hidden) {
@@ -98,29 +82,22 @@ export function registerJoinPages(app: FastifyInstance, deps: RoomDeps): void {
         throw new Error("refusing to send a secret");
       }
     }
-    return reply.code(200).send(payload);
+    return c.json(payload, 200, { "cache-control": "no-store", "referrer-policy": "no-referrer" });
   });
 
-  app.post<{ Params: { id: string } }>("/j/:id/connect/check", async (request, reply) => {
-    return sendJoinResult(
-      reply,
-      await submitCheck(deps, request.params.id, request.body, request.headers.cookie),
-    );
+  app.post("/j/:id/connect/check", async (c) => {
+    return sendJoinResult(await submitCheck(deps, c.req.param("id"), c.get("parsedBody"), c.req.header("cookie")));
   });
 
-  app.post<{ Params: { id: string } }>("/j/:id/continue", async (request, reply) => {
-    return sendJoinResult(reply, submitName(deps, request.params.id, request.body, request.headers.cookie));
+  app.post("/j/:id/continue", (c) => {
+    return sendJoinResult(submitName(deps, c.req.param("id"), c.get("parsedBody"), c.req.header("cookie")));
   });
 
-  app.get<{ Params: { id: string } }>("/j/:id/sharing", async (request, reply) => {
-    return sendJoinResult(reply, openSharing(deps, request.params.id, request.headers.cookie));
+  app.get("/j/:id/sharing", (c) => sendJoinResult(openSharing(deps, c.req.param("id"), c.req.header("cookie"))));
+
+  app.post("/j/:id/finish", (c) => {
+    return sendJoinResult(submitSharing(deps, c.req.param("id"), c.get("parsedBody"), c.req.header("cookie")));
   });
 
-  app.post<{ Params: { id: string } }>("/j/:id/finish", async (request, reply) => {
-    return sendJoinResult(reply, submitSharing(deps, request.params.id, request.body, request.headers.cookie));
-  });
-
-  app.get<{ Params: { id: string } }>("/j/:id/done", async (request, reply) => {
-    return sendJoinResult(reply, openDone(deps, request.params.id, request.headers.cookie));
-  });
+  app.get("/j/:id/done", (c) => sendJoinResult(openDone(deps, c.req.param("id"), c.req.header("cookie"))));
 }
