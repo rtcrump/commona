@@ -2,6 +2,7 @@ import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "../../contract/index.js";
 import { HOST_SECRET_HEADER } from "../../src/host/host-room.js";
+import { agentCookieName } from "../../src/room-page/routes.js";
 
 const hostSecret = "host-test-secret";
 
@@ -142,7 +143,7 @@ describe("open-join acceptance", () => {
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded",
-        cookie: `commona_agent=${joined.agentKey}`,
+        cookie: `${agentCookieName(room.roomId)}=${joined.agentKey}`,
       },
       body: new URLSearchParams({ nonce: "unused", text: "Grok Bot: after revoke" }),
     });
@@ -207,14 +208,15 @@ async function joinHtml(roomId: string, invite: InviteLink): Promise<HtmlAgent> 
   const openedBody = await opened.text();
   expect(opened.status).toBe(303);
   expect(openedBody.includes(invite.secret)).toBe(false);
-  const header = opened.headers.getSetCookie().find((value) => value.startsWith("commona_agent=")) ?? "";
-  const key = cookieValue(header);
+  const name = agentCookieName(roomId);
+  const header = opened.headers.getSetCookie().find((value) => value.startsWith(`${name}=`)) ?? "";
+  const key = cookieValue(header, name);
   expect(/^[A-Za-z0-9_-]{20,}$/.test(key)).toBe(true);
 
-  const page = await readHtml(roomId, header.split(";")[0] ?? `commona_agent=${key}`);
+  const page = await readHtml(roomId, header.split(";")[0] ?? `${name}=${key}`);
   expect(page.includes(`<pre>${key}</pre>`)).toBe(true);
   const agentId = await agentIdForKey(key);
-  return { cookie: `commona_agent=${key}`, key, agentId };
+  return { cookie: `${name}=${key}`, key, agentId };
 }
 
 async function joinJson(roomId: string, invite: InviteLink): Promise<JsonAgent> {
@@ -269,10 +271,10 @@ async function readJson(roomId: string, agentKey: string): Promise<{ text: strin
   return body.posts ?? [];
 }
 
-function cookieValue(header: string): string {
+function cookieValue(header: string, name: string): string {
   const end = header.indexOf(";");
   const pair = end === -1 ? header : header.slice(0, end);
-  return pair.slice("commona_agent=".length);
+  return pair.slice(name.length + 1);
 }
 
 async function agentIdForKey(key: string): Promise<string> {
