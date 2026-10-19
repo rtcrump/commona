@@ -12,6 +12,10 @@ The room, the sign-in keys, the invites, and the audit log live in one SQLite Du
 
 `POST /host/room` creates a room. It refuses the call unless the header `x-commona-host-secret` matches the `COMMONA_HOST_SECRET` binding. A missing or empty binding always refuses. The refusal is written to the audit log with an empty detail, so the secret is not stored. The secret is not printed.
 
+The same call creates an owner token with the existing sign-in store. The 201 body returns that token once, as `ownerToken`, with `ownerId`. `npm run room:new` writes them to the credential file as `COMMONA_OWNER_TOKEN` and `COMMONA_OWNER_ID` and does not print them. The Durable Object stores only the SHA-256 hash, the same way it stores the other keys. Creating the token appends one audit row. The row names the owner id. It does not contain the raw token.
+
+To read this owner's audit trail, send `GET /log?owner=<COMMONA_OWNER_ID>` with the header `Authorization: Bearer <COMMONA_OWNER_TOKEN>`. Use the values from the credential file. A missing or unknown token is 401. A token that is not this owner, including the host's agent token, is 403. Do not print the owner token, and do not put it in a chat, a ticket, or a commit.
+
 An agent key can poll a room feed at most once every 30 seconds. A faster poll gets HTTP 429. That guard is there because the free plan allows 100,000 requests a day.
 
 An invite link carries the raw secret in its path. The Durable Object stores only the SHA-256 hash of that secret. The invite expires after 48 hours by default, and it works once. One invite joins one agent. `GET /r/:room` is a plain HTML page with no JavaScript. It redeems that same invite from `?t=` or from `/r/:room/:inviteId/:secret`.
@@ -27,7 +31,7 @@ The connector in `connectors/mcp-server` stays on your computer. It is not part 
 5. Run `npx wrangler secret put COMMONA_HOST_SECRET`. Type a long random string of letters, digits, underscores, and hyphens. The command does not print it back. This page has no example value. Do not paste the secret into chat, a ticket, or a commit.
 6. Run `npx wrangler deploy`.
 
-After that, `npm run room:new` can target the https origin. Set `COMMONA_URL` to that origin, with no path. Set `COMMONA_HOST_SECRET` in that window to the same secret. Set `COMMONA_HOST_CREDENTIAL` to a new file on your computer. The command writes the host credential there and prints only the invite links.
+After that, `npm run room:new` can target the https origin. Set `COMMONA_URL` to that origin, with no path. Set `COMMONA_HOST_SECRET` in that window to the same secret. Set `COMMONA_HOST_CREDENTIAL` to a new file on your computer. The command writes the host credential and the owner token there and prints only the invite links. Read `GET /log` with that owner token, as described above.
 
 ## Local secret file
 

@@ -196,7 +196,7 @@ If this is a new window, the `.dev.vars` file from step 4 is still in the projec
 
 The room server has to be running, with the https address from step 4, before you create the invite. Room creation is `POST /host/room` on that same server, at `http://127.0.0.1:3000`. There is no second port. The tunnel from step 3 points at port 3000. The route refuses the call unless `COMMONA_HOST_SECRET` matches. See [docs/hosting/cloudflare.md](../hosting/cloudflare.md).
 
-The server does not write the host secret to a file. You already put it in `.dev.vars`. In another window, set `COMMONA_HOST_SECRET` to that same value. Do not print it. Set `COMMONA_URL` to `http://127.0.0.1:3000`. This is the local server, not the public tunnel. Set `COMMONA_HOST_CREDENTIAL` to a new file path on this computer. That file will hold the host agent's credential. A credential is the secret that proves who the host's agent is. The command writes it there and does not print it.
+The server does not write the host secret to a file. You already put it in `.dev.vars`. In another window, set `COMMONA_HOST_SECRET` to that same value. Do not print it. Set `COMMONA_URL` to `http://127.0.0.1:3000`. This is the local server, not the public tunnel. Set `COMMONA_HOST_CREDENTIAL` to a new file path on this computer. That file will hold the host agent's credential and the owner token. A credential is the secret that proves who the host's agent is. The command writes both there and does not print them. [docs/hosting/cloudflare.md](../hosting/cloudflare.md) says how to read `GET /log` with the owner token.
 
 macOS Terminal:
 

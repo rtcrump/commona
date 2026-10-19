@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { systemClock, type ContentGuard } from "../../contract/index.js";
+import { hashToken, systemClock, type ContentGuard } from "../../contract/index.js";
 import { buildApp } from "../../src/app.js";
 import { createAuditLog } from "../../src/audit/index.js";
 import { createTokenStore } from "../../src/auth/index.js";
@@ -194,7 +194,13 @@ describe("room:new", () => {
     return { status: response.status, body: await response.text() };
   }
 
-  function fieldsOf(text: string): { token: string; roomId: string; agentId: string } {
+  function fieldsOf(text: string): {
+    token: string;
+    roomId: string;
+    agentId: string;
+    ownerToken: string;
+    ownerId: string;
+  } {
     const fields = new Map<string, string>();
     for (const line of text.trim().split("\n")) {
       const eq = line.indexOf("=");
@@ -204,6 +210,8 @@ describe("room:new", () => {
       token: fields.get("COMMONA_AGENT_TOKEN") ?? "",
       roomId: fields.get("COMMONA_ROOM_ID") ?? "",
       agentId: fields.get("COMMONA_AGENT_ID") ?? "",
+      ownerToken: fields.get("COMMONA_OWNER_TOKEN") ?? "",
+      ownerId: fields.get("COMMONA_OWNER_ID") ?? "",
     };
   }
 
@@ -227,8 +235,21 @@ describe("room:new", () => {
       expect(fields.token.length).toBeGreaterThan(20);
       expect(fields.roomId).toMatch(/^room_[0-9a-f-]{36}$/);
       expect(fields.agentId).toMatch(/^agent_[0-9a-f-]{36}$/);
+      expect(fields.ownerToken.length).toBeGreaterThan(20);
+      expect(fields.ownerId).toMatch(/^owner_[0-9a-f-]{36}$/);
+      expect(fields.ownerToken).not.toBe(fields.token);
+      expect(credentialFile).toBe(
+        `COMMONA_AGENT_TOKEN=${fields.token}\nCOMMONA_ROOM_ID=${fields.roomId}\nCOMMONA_AGENT_ID=${fields.agentId}\nCOMMONA_OWNER_TOKEN=${fields.ownerToken}\nCOMMONA_OWNER_ID=${fields.ownerId}\n`,
+      );
       expect(credentialFile).not.toContain(hostSecret);
-      for (const hidden of [fields.token, fields.roomId, fields.agentId, hostSecret]) {
+      for (const hidden of [
+        fields.token,
+        fields.roomId,
+        fields.agentId,
+        fields.ownerToken,
+        fields.ownerId,
+        hostSecret,
+      ]) {
         expect(result.stdout).not.toContain(hidden);
         expect(result.stderr).not.toContain(hidden);
       }
@@ -240,8 +261,26 @@ describe("room:new", () => {
         const details = db.prepare("SELECT detail_json FROM audit_log").all() as { detail_json: string }[];
         for (const row of details) {
           expect(row.detail_json).not.toContain(fields.token);
+          expect(row.detail_json).not.toContain(fields.ownerToken);
           expect(row.detail_json).not.toContain(hostSecret);
         }
+        const owner = db.prepare("SELECT token_hash FROM owners WHERE id = ?").get(fields.ownerId) as {
+          token_hash: string;
+        };
+        expect(owner.token_hash).toBe(hashToken(fields.ownerToken));
+        expect(owner.token_hash).not.toContain(fields.ownerToken);
+        const issued = db
+          .prepare("SELECT result, owner_id, agent_id, detail_json FROM audit_log WHERE action = 'setting_change'")
+          .all() as { result: string; owner_id: string; agent_id: string; detail_json: string }[];
+        expect(
+          issued.some(
+            (row) =>
+              row.result === "ok" &&
+              row.owner_id === fields.ownerId &&
+              row.agent_id === `owner:${fields.ownerId}` &&
+              row.detail_json === `{"itemId":"${fields.ownerId}"}`,
+          ),
+        ).toBe(true);
         expect(fields.roomId).toBe((db.prepare("SELECT id FROM rooms").get() as { id: string }).id);
         const storedTitle = db.prepare("SELECT title FROM room_titles").get() as { title: string };
         expect(storedTitle.title).toBe(title);
