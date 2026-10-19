@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { formatTimestamp, hashToken, newId, type Clock, type TokenStore } from "../../contract/index.js";
+import { agentKeyReissueBlocked } from "../agent-api/keys.js";
 import { ensureInviteSchema } from "../join/schema.js";
 import { newSecret } from "./account.js";
 
@@ -76,6 +77,7 @@ export function claimAgentHandoff(
       )
       .get(secretHash) as HandoffRow | undefined;
     if (!row || row.used_at !== null || row.expires_at <= now) return null;
+    if (agentKeyReissueBlocked(deps.db, row.agent_id)) return null;
     const updated = deps.db
       .prepare("UPDATE agent_handoffs SET used_at = ? WHERE id = ? AND used_at IS NULL AND expires_at > ?")
       .run(now, row.id, now);

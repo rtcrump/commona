@@ -108,6 +108,29 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     return rows.map((row) => row.display_name);
   }
 
+  /**
+   * Agent key storage a test can read inside the object.
+   * tokenHash and revokedHash are SHA-256 hex. The raw key is not stored.
+   */
+  agentKeyState(agentId: string): { tokenHash: string | null; revokedHash: string | null } | null {
+    const agent = this.deps.db.prepare("SELECT token_hash FROM agents WHERE id = ?").get(agentId) as
+      | { token_hash: string | null }
+      | undefined;
+    if (!agent) return null;
+    const revoked = this.deps.db
+      .prepare("SELECT token_hash FROM agent_key_revocations WHERE agent_id = ?")
+      .get(agentId) as { token_hash: string } | undefined;
+    return { tokenHash: agent.token_hash, revokedHash: revoked?.token_hash ?? null };
+  }
+
+  /** How many posts this agent has counted toward the hourly limit. */
+  postHitCount(agentId: string): number {
+    const row = this.deps.db.prepare("SELECT COUNT(*) AS n FROM agent_post_hits WHERE agent_id = ?").get(agentId) as
+      | { n: number }
+      | undefined;
+    return Number(row?.n ?? 0);
+  }
+
   /** Rows a test can read inside the object. Tokens are not columns here. */
   auditSnapshot(): {
     action: string;

@@ -1,5 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { formatTimestamp, hashToken, isId, type AuthPrincipal } from "../../contract/index.js";
+import { isRevokedAgentKey } from "../agent-api/keys.js";
+import { AgentPostLimited } from "../agent-api/limit.js";
 import type { CommonaHono } from "../http/types.js";
 import { readCookie, serializeCookie } from "../join/cookies.js";
 import { ensureInviteSchema } from "../join/schema.js";
@@ -88,6 +90,9 @@ function openInvite(
 ): Response {
   const gate = classifyInvite(deps, roomId, inviteId, secret);
   if (gate === "open") return redeemAndRedirect(deps, roomId, inviteId, secret);
+  if (agentFromCookie(deps, roomId, cookie) === "revoked") {
+    return htmlResponse(renderRoomMessage("This key was revoked."), 401);
+  }
   if (gate === "used" && memberFromCookie(deps, roomId, cookie)) {
     return showForCookie(deps, roomId, cookie, [secret]);
   }
@@ -121,6 +126,7 @@ function showForCookie(
   hidden: readonly string[] = [],
 ): Response {
   const principal = agentFromCookie(deps, roomId, cookie);
+  if (principal === "revoked") return htmlResponse(renderRoomMessage("This key was revoked."), 401);
   if (!principal) return htmlResponse(renderRoomMessage("Open an invite link to join this room."), 403);
   const posts = recentMessages(deps, principal, roomId);
   const nonce = newSecret();
@@ -143,6 +149,7 @@ function handlePost(deps: RoomDeps, roomId: string, cookie: string | undefined, 
       return htmlResponse(renderRoomMessage("This room is not here."), 404);
     }
     const principal = agentFromCookie(deps, roomId, cookie);
+    if (principal === "revoked") return htmlResponse(renderRoomMessage("This key was revoked."), 401);
     if (!principal) return htmlResponse(renderRoomMessage("Open an invite link to join this room."), 403);
     const nonce = field(body, "nonce");
     const text = field(body, "text");
@@ -171,7 +178,7 @@ function handlePost(deps: RoomDeps, roomId: string, cookie: string | undefined, 
 
 function memberFromCookie(deps: RoomDeps, roomId: string, cookie: string | undefined): boolean {
   const principal = agentFromCookie(deps, roomId, cookie);
-  if (!principal) return false;
+  if (!principal || principal === "revoked") return false;
   const row = deps.db
     .prepare("SELECT 1 AS ok FROM memberships WHERE room_id = ? AND agent_id = ?")
     .get(roomId, principal.agentId) as { ok: number } | undefined;
@@ -220,9 +227,10 @@ function agentFromCookie(
   deps: RoomDeps,
   roomId: string,
   cookie: string | undefined,
-): Extract<AuthPrincipal, { kind: "agent" }> | null {
+): Extract<AuthPrincipal, { kind: "agent" }> | "revoked" | null {
   const key = readCookie(cookie, agentCookieName(roomId));
   if (!key) return null;
+  if (isRevokedAgentKey(deps, key)) return "revoked";
   const principal = deps.tokens.authenticate(key);
   if (!principal || principal.kind !== "agent") return null;
   return principal;
@@ -298,6 +306,9 @@ function assertHidden(text: string, secrets: readonly string[]): void {
 }
 
 function htmlFromError(error: unknown): Response {
+  if (error instanceof AgentPostLimited) {
+    return htmlResponse(renderRoomMessage("Try again later."), 429, [], error.retryAfter);
+  }
   if (error instanceof RoomHttpError) {
     const sentence = error.status === 404 ? "This room is not here." : "This invite cannot be used. Ask for a new link.";
     return htmlResponse(renderRoomMessage(sentence), error.status);
@@ -305,13 +316,19 @@ function htmlFromError(error: unknown): Response {
   throw error;
 }
 
-function htmlResponse(body: string, status: number, cookies: readonly string[] = []): Response {
+function htmlResponse(
+  body: string,
+  status: number,
+  cookies: readonly string[] = [],
+  retryAfter?: number,
+): Response {
   const headers = new Headers({
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
     "referrer-policy": "no-referrer",
     "content-security-policy": "default-src 'none'; form-action 'self'; base-uri 'none'",
   });
+  if (retryAfter !== undefined) headers.set("retry-after", String(retryAfter));
   for (const cookie of cookies) headers.append("set-cookie", cookie);
   return new Response(body, { status, headers });
 }

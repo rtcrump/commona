@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { ApiErrorCode, MAX_FILE_BYTES } from "../../contract/index.js";
+import { AgentPostLimited } from "../agent-api/limit.js";
+import { registerAgentApi } from "../agent-api/routes.js";
 import { registerLogRoute } from "../audit/route.js";
 import { registerHostRoute } from "../host/host-room.js";
 import { registerInviteRoutes } from "../join/routes.js";
@@ -29,6 +31,16 @@ export function createHttpApp(deps: RoomDeps): CommonaHono {
     await next();
   });
   app.onError((error, c) => {
+    if (error instanceof AgentPostLimited) {
+      return new Response(JSON.stringify({ error: { code: "validation", message: "Try again later." } }), {
+        status: 429,
+        headers: {
+          "content-type": "application/json",
+          "retry-after": String(error.retryAfter),
+          "cache-control": "no-store",
+        },
+      });
+    }
     if (error instanceof RoomHttpError) return c.json(error.body(), error.status as 400);
     const statusCode = statusOf(error);
     if (statusCode === 400 || statusCode === 413) return c.json(RoomHttpError.badRequest().body(), 400);
@@ -41,6 +53,7 @@ export function createHttpApp(deps: RoomDeps): CommonaHono {
   registerRoomRoutes(app, deps);
   registerInviteRoutes(app, deps);
   registerRoomPage(app, deps);
+  registerAgentApi(app, deps);
   registerLogRoute(app, { db: deps.db, audit: deps.audit, clock: deps.clock });
   registerNoticeRoute(app, { db: deps.db, tokens: deps.tokens, audit: deps.audit, clock: deps.clock });
   return app;

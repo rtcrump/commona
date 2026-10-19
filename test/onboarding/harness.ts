@@ -87,6 +87,7 @@ export interface Hit {
   location: string | null;
   setCookies: string[];
   contentType: string;
+  retryAfter: string | null;
 }
 
 export async function call(
@@ -114,6 +115,7 @@ export async function call(
     location: response.headers.get("location"),
     setCookies: response.headers.getSetCookie(),
     contentType: response.headers.get("content-type") ?? "",
+    retryAfter: response.headers.get("retry-after"),
   };
 }
 
