@@ -7,7 +7,7 @@ import { readCookie, serializeCookie } from "../join/cookies.js";
 import { ensureInviteSchema } from "../join/schema.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { newSecret } from "../onboarding/account.js";
-import { grantDefaultRoomPosts } from "../onboarding/room-default-share.js";
+import { grantDefaultRoomPosts } from "../sharing/room-default-share.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost } from "../room/posts.js";

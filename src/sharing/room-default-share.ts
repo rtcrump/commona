@@ -1,6 +1,6 @@
 import { AuditAction, AuditResult, formatTimestamp, ownerActorId } from "../../contract/index.js";
 import type { RoomDeps } from "../room/deps.js";
-import { writePolicyMessages } from "../sharing/index.js";
+import { writePolicyMessages } from "./index.js";
 
 /** Audit owner for the room's invite default. Not a person and not a member. */
 export const ROOM_DEFAULT_POLICY_OWNER = "policy";

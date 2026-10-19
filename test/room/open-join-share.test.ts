@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { SharingLevel } from "../../contract/index.js";
-import { ROOM_DEFAULT_POLICY_OWNER } from "../../src/onboarding/room-default-share.js";
+import { ROOM_DEFAULT_POLICY_OWNER } from "../../src/sharing/room-default-share.js";
 import { agentCookieName } from "../../src/room-page/routes.js";
 import { call, cookieValue, createInvite, startJoinHarness, type JoinHarness } from "../onboarding/harness.js";
 

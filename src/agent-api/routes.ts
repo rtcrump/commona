@@ -10,7 +10,7 @@ import {
 import type { CommonaHono } from "../http/types.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { ensureInviteSchema } from "../join/schema.js";
-import { grantDefaultRoomPosts } from "../onboarding/room-default-share.js";
+import { grantDefaultRoomPosts } from "../sharing/room-default-share.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost } from "../room/posts.js";
