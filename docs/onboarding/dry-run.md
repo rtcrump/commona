@@ -75,15 +75,13 @@ The Worker does not read `COMMONA_DB`. It keeps the room in a SQLite Durable Obj
 
 Stop the server window with Ctrl+C. Leave the tunnel window open. Create `.dev.vars` in the project folder. That file stays on this computer. Git ignores it, so `.dev.vars` stays out of git. Do not commit it. Do not print the secret line.
 
-This is a fake example. Do not use these values.
+This is a fake example. Do not use this value.
 
 ```
 COMMONA_PUBLIC_ORIGIN=https://example.invalid
-COMMONA_HOST_SECRET=fake-host-secret-not-real
-COMMONA_CONNECT_URL=https://example.invalid/mcp
 ```
 
-Copy that shape. On the origin line, replace `https://example.invalid` with `https://` plus the host from step 3, with no path and no slash at the end. Replace `fake-host-secret-not-real` with a long random string of letters, digits, underscores, and hyphens that you make up. Leave the `COMMONA_CONNECT_URL` line out until step 6. You do not have that address yet.
+Copy that shape. On the origin line, replace `https://example.invalid` with `https://` plus the host from step 3, with no path and no slash at the end. Add a second line named `COMMONA_HOST_SECRET`. The value is a long random string of letters, digits, underscores, and hyphens that you make up. This page has no example value. Leave `COMMONA_CONNECT_URL` out until step 6. You do not have that address yet.
 
 Start the server again from that same folder:
 
@@ -283,7 +281,7 @@ Do not click **Copy my link** or **Get a new link**.
 
 Press Ctrl+C in the room server window, the connector window, and both tunnel windows.
 
-Delete the host credential file from step 6. Do not open it first. Leave the host secret file in place. Each server start replaces that secret with a new one, so you do not delete it here. After this stop, the file still holds the last secret until the next start. Do not open it, and do not share it.
+Delete the host credential file from step 6. Do not open it first. The host secret is `COMMONA_HOST_SECRET` in `.dev.vars`. It does not change when the server starts. Do not print it, and do not share it.
 
 macOS Terminal:
 
@@ -305,4 +303,4 @@ del /f /q "%USERPROFILE%\commona-host-credential"
 
 The https addresses are now dead. Opening one should fail. The exact words the browser shows were not checked here. **(unverified)**
 
-Do not reuse those addresses at the lunch. A new tunnel is a new address. Put the new `COMMONA_PUBLIC_ORIGIN` and `COMMONA_CONNECT_URL` in `.dev.vars`, and use **Copy my link** only after that. The old link dies with the old address.
+Do not reuse those addresses at the lunch. A new tunnel is a new address. Change or remove `COMMONA_HOST_SECRET` in `.dev.vars`, along with `COMMONA_PUBLIC_ORIGIN` and `COMMONA_CONNECT_URL`. Use **Copy my link** only after that. The old link dies with the old address.
