@@ -19,15 +19,14 @@ export interface DeletedRoom {
  * Owner auth is the same check as key revoke: the caller’s owner id is the room creator.
  * An agent key of that owner counts. Anyone else is 401 before this runs, or 403 here.
  *
- * The Worker keeps every room in one SQLite Durable Object. `wipeStorage` is
- * `deleteAlarm` plus `deleteAll`. That clears the dry run when this room is the
- * only one. It would also destroy every other room and the audit chain, so it
- * runs only then. Another room stays. This room’s rows are removed, and the
- * audit row stays in the log.
+ * The Worker keeps every room in one SQLite Durable Object. When this room is
+ * the only one, the delete clears the alarm and calls `deleteAll`, then writes
+ * the audit chain back into the empty object. Room rows stay gone. The log does
+ * not. That critical section also stops a second room from appearing between
+ * the check and the wipe. When another room is already there, only this room's
+ * rows are removed and the audit row stays in the log.
  *
- * There is no second index object. A wipe removes the log, so the sealed record
- * is returned to the caller. A row delete returns that same record and leaves it
- * in the log.
+ * There is no second index object. The response also returns the sealed record.
  */
 export async function deleteOwnedRoom(deps: RoomDeps, principal: AuthPrincipal, roomId: string): Promise<DeletedRoom> {
   if (!isRoomId(roomId)) throw RoomHttpError.badRequest();
@@ -54,11 +53,9 @@ export async function deleteOwnedRoom(deps: RoomDeps, principal: AuthPrincipal, 
     result: AuditResult.Ok,
     detail: { itemId: roomId },
   };
-  const rooms = deps.db.prepare("SELECT id FROM rooms").all() as { id: string }[];
-  if (rooms.length === 1 && rooms[0]?.id === roomId && deps.wipeStorage) {
-    const audit = deps.audit.append(input);
-    await deps.wipeStorage();
-    return { deleted: true, audit };
+  if (deps.wipeIfSoleRoom) {
+    const audit = await deps.wipeIfSoleRoom(roomId, () => deps.audit.append(input));
+    if (audit) return { deleted: true, audit };
   }
   const write = deps.db.transaction(() => {
     purgeRoom(deps.db, roomId);

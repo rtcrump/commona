@@ -17,7 +17,7 @@ describe("worker room delete", () => {
     const room = await createHostRoom("Host (demo)");
     const stranger = await createHostRoom("Guest (demo)");
     const directory = env.DIRECTORY.get(env.DIRECTORY.idFromName("global"));
-    await runInDurableObject(directory, (instance) => instance.scheduleAlarm(Date.now() + 60_000));
+    await runInDurableObject(directory, (instance) => alarmStorage(instance).setAlarm(Date.now() + 60_000));
 
     const missing = await SELF.fetch(`https://room.example.test/rooms/${room.roomId}`, { method: "DELETE" });
     expect(missing.status).toBe(401);
@@ -56,15 +56,12 @@ describe("worker room delete", () => {
     });
     expect(JSON.stringify(rows)).not.toContain(room.credential);
     expect(JSON.stringify(rows)).not.toContain(stranger.credential);
-    expect(await runInDurableObject(directory, (instance) => instance.scheduledAlarm())).not.toBeNull();
+    expect(await runInDurableObject(directory, (instance) => alarmStorage(instance).getAlarm())).not.toBeNull();
     expect(await runInDurableObject(directory, (instance) => instance.inviteRecord(room.inviteId))).not.toBeNull();
 
-    const ownerId = await runInDurableObject(directory, (instance) => instance.roomOwnerId(room.roomId));
-    expect(ownerId).toMatch(/^owner_/);
-    const ownerToken = await runInDurableObject(directory, (instance) => instance.ownerBearer(ownerId ?? ""));
     const deleted = await SELF.fetch(`https://room.example.test/rooms/${room.roomId}`, {
       method: "DELETE",
-      headers: { authorization: `Bearer ${ownerToken}` },
+      headers: { authorization: `Bearer ${room.credential}` },
     });
     const deletedText = await deleted.text();
     expect(deleted.status).toBe(200);
@@ -78,12 +75,11 @@ describe("worker room delete", () => {
       action: "setting_change",
       result: "ok",
       room: room.roomId,
-      ownerId,
-      agentId: `owner:${ownerId}`,
+      agentId: room.agentId,
       detail: { itemId: room.roomId },
     });
+    expect(body.audit?.ownerId).toMatch(/^owner_/);
     expect(body.audit?.hash).toMatch(/^[0-9a-f]{64}$/);
-    expect(deletedText).not.toContain(ownerToken);
     expect(deletedText).not.toContain(room.credential);
     expect(deletedText).not.toContain(room.secret);
 
@@ -94,7 +90,7 @@ describe("worker room delete", () => {
     expect(after.some((row) => row.action === "setting_change_refused" && row.room === room.roomId)).toBe(true);
     expect(await runInDurableObject(directory, (instance) => instance.inviteRecord(room.inviteId))).toBeNull();
     expect(await runInDurableObject(directory, (instance) => instance.inviteRecord(stranger.inviteId))).not.toBeNull();
-    expect(await runInDurableObject(directory, (instance) => instance.scheduledAlarm())).not.toBeNull();
+    expect(await runInDurableObject(directory, (instance) => alarmStorage(instance).getAlarm())).not.toBeNull();
 
     await expectGone(room);
     const stillThere = await SELF.fetch(`https://room.example.test/j/${stranger.inviteId}/${stranger.secret}`);
@@ -102,6 +98,16 @@ describe("worker room delete", () => {
     expect(await stillThere.text()).not.toContain(stranger.secret);
   });
 });
+
+function alarmStorage(instance: { ctx: { storage: unknown } }): {
+  setAlarm(ms: number): Promise<void>;
+  getAlarm(): Promise<number | null>;
+} {
+  return instance.ctx.storage as {
+    setAlarm(ms: number): Promise<void>;
+    getAlarm(): Promise<number | null>;
+  };
+}
 
 async function expectGone(room: CreatedRoom): Promise<void> {
   const invite = await SELF.fetch(`https://room.example.test/j/${room.inviteId}/${room.secret}`);

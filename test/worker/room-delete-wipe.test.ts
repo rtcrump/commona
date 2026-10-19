@@ -4,6 +4,16 @@ import { HOST_SECRET_HEADER } from "../../src/host/host-room.js";
 
 const hostSecret = "host-test-secret";
 
+function alarmStorage(instance: { ctx: { storage: unknown } }): {
+  setAlarm(ms: number): Promise<void>;
+  getAlarm(): Promise<number | null>;
+} {
+  return instance.ctx.storage as {
+    setAlarm(ms: number): Promise<void>;
+    getAlarm(): Promise<number | null>;
+  };
+}
+
 describe("worker room delete wipe", () => {
   it("clears Durable Object storage and the alarm when the owner deletes the only room", async () => {
     const response = await SELF.fetch("https://room.example.test/host/room", {
@@ -35,8 +45,8 @@ describe("worker room delete wipe", () => {
     const directory = env.DIRECTORY.get(env.DIRECTORY.idFromName("global"));
     const before = await runInDurableObject(directory, (instance) => instance.auditSnapshot());
     expect(before.length).toBeGreaterThan(0);
-    await runInDurableObject(directory, (instance) => instance.scheduleAlarm(Date.now() + 60_000));
-    expect(await runInDurableObject(directory, (instance) => instance.scheduledAlarm())).not.toBeNull();
+    await runInDurableObject(directory, (instance) => alarmStorage(instance).setAlarm(Date.now() + 60_000));
+    expect(await runInDurableObject(directory, (instance) => alarmStorage(instance).getAlarm())).not.toBeNull();
 
     const deleted = await SELF.fetch(`https://room.example.test/rooms/${roomId}`, {
       method: "DELETE",
@@ -60,14 +70,20 @@ describe("worker room delete wipe", () => {
     expect(deletedText).not.toContain(secret);
     expect(deletedText).not.toContain(hostSecret);
 
-    expect(await runInDurableObject(directory, (instance) => instance.auditSnapshot())).toEqual([]);
-    expect(await runInDurableObject(directory, (instance) => instance.scheduledAlarm())).toBeNull();
+    const kept = await runInDurableObject(directory, (instance) => instance.auditSnapshot());
+    expect(kept).toHaveLength(before.length + 1);
+    expect(kept.some((row) => row.action === "setting_change" && row.result === "ok" && row.room === roomId)).toBe(true);
+    expect(kept.some((row) => row.action === before[0]?.action && row.room === before[0]?.room)).toBe(true);
+    expect(await runInDurableObject(directory, (instance) => instance.ownerDisplayNames())).toEqual([]);
+    expect(await runInDurableObject(directory, (instance) => alarmStorage(instance).getAlarm())).toBeNull();
     expect(await runInDurableObject(directory, (instance) => instance.inviteRecord(inviteId))).toBeNull();
 
     await evictDurableObject(directory);
 
-    expect(await runInDurableObject(directory, (instance) => instance.auditSnapshot())).toEqual([]);
-    expect(await runInDurableObject(directory, (instance) => instance.scheduledAlarm())).toBeNull();
+    const keptAfterRestart = await runInDurableObject(directory, (instance) => instance.auditSnapshot());
+    expect(keptAfterRestart).toEqual(kept);
+    expect(await runInDurableObject(directory, (instance) => alarmStorage(instance).getAlarm())).toBeNull();
+    expect(await runInDurableObject(directory, (instance) => instance.ownerDisplayNames())).toEqual([]);
 
     const invite = await SELF.fetch(`https://room.example.test/j/${inviteId}/${secret}`);
     expect(invite.status).toBe(404);

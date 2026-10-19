@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type {
   AuditLog,
+  AuditRecord,
   Clock,
   ContentGuard,
   OwnerNotifier,
@@ -29,8 +30,10 @@ export interface RoomDeps {
   /** Set when COMMONA_SMTP_HOST and COMMONA_SMTP_PORT are both present, or a test injects one. */
   smtp?: SmtpEndpoint;
   /**
-   * Wipe the Durable Object that holds this database, including its alarm.
-   * Set only in the Worker. The Node server deletes one room's rows instead.
+   * When this object holds only `roomId`, clear its alarm, delete all storage,
+   * and write the audit chain back. Returns the appended record.
+   * Returns null when another room is present. Set only in the Worker.
+   * The check and the wipe run in one critical section.
    */
-  wipeStorage?: () => Promise<void>;
+  wipeIfSoleRoom?: (roomId: string, append: () => AuditRecord) => Promise<AuditRecord | null>;
 }

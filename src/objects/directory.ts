@@ -1,5 +1,5 @@
 import { DurableObject, type DurableObjectState } from "cloudflare:workers";
-import { systemClock } from "../../contract/index.js";
+import { systemClock, type AuditRecord } from "../../contract/index.js";
 import { createAuditLog } from "../audit/log.js";
 import { createTokenStore } from "../auth/store.js";
 import { createSqliteDatabase } from "../db/adapter.js";
@@ -56,31 +56,61 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
       sharing: createSharingDirectory(db),
       guard,
       notices: createOwnerNotifier(db, clock),
-      wipeStorage: () => this.wipeStorage(),
+      wipeIfSoleRoom: (roomId, append) => this.wipeIfSoleRoom(roomId, append),
     };
     this.deps = deps;
     this.app = createHttpApp(deps);
   }
 
   /**
-   * Clear the alarm and delete every row in this object.
-   * The next request sees an empty database, so the deleted room is 404.
+   * Clear storage when `roomId` is the only room.
+   * Other requests wait, so a room cannot appear between the check and the wipe.
+   * `deleteAll` removes the log with the room. The chain is written back before
+   * this returns, including the delete record `append` just sealed.
    */
-  private async wipeStorage(): Promise<void> {
-    const storage = this.storage();
-    await storage.deleteAlarm();
-    await storage.deleteAll();
-    this.boot();
+  private async wipeIfSoleRoom(roomId: string, append: () => AuditRecord): Promise<AuditRecord | null> {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const rooms = this.deps.db.prepare("SELECT id FROM rooms").all() as { id: string }[];
+      if (rooms.length !== 1 || rooms[0]?.id !== roomId) return null;
+      const audit = append();
+      const preserved = this.readAuditChain();
+      const storage = this.storage();
+      await storage.deleteAlarm();
+      await storage.deleteAll();
+      this.boot();
+      this.restoreAudit(preserved);
+      return audit;
+    });
   }
 
-  /** Alarm time for a test. Null when none is set. */
-  async scheduledAlarm(): Promise<number | null> {
-    return this.storage().getAlarm();
+  private readAuditChain(): PreservedAudit {
+    const rows = this.deps.db
+      .prepare(
+        `SELECT seq, id, ts, room, agent_id, owner_id, action, result, detail_json, prev_hash, hash
+         FROM audit_log ORDER BY seq ASC`,
+      )
+      .all() as PreservedAuditRow[];
+    const tip = this.deps.db.prepare("SELECT seq, hash FROM audit_chain_tip WHERE id = 1").get() as
+      | { seq: number; hash: string }
+      | undefined;
+    return {
+      rows: rows.map((row) => ({ ...row, seq: Number(row.seq) })),
+      tip: tip ? { seq: Number(tip.seq), hash: tip.hash } : null,
+    };
   }
 
-  /** Set an alarm for a test. The owner delete clears it. */
-  async scheduleAlarm(atMs: number): Promise<void> {
-    await this.storage().setAlarm(atMs);
+  private restoreAudit(chain: PreservedAudit): void {
+    const insert = this.deps.db.prepare(
+      `INSERT INTO audit_log (seq, id, ts, room, agent_id, owner_id, action, result, detail_json, prev_hash, hash)
+       VALUES (@seq, @id, @ts, @room, @agent_id, @owner_id, @action, @result, @detail_json, @prev_hash, @hash)`,
+    );
+    const write = this.deps.db.transaction(() => {
+      for (const row of chain.rows) insert.run(row);
+      if (chain.tip) {
+        this.deps.db.prepare("INSERT INTO audit_chain_tip (id, seq, hash) VALUES (1, ?, ?)").run(chain.tip.seq, chain.tip.hash);
+      }
+    });
+    write();
   }
 
   private storage(): DurableRoomStorage {
@@ -102,22 +132,6 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     }
     applyPublicBindings(this.env);
     return useHostSecret(this.env.COMMONA_HOST_SECRET, () => Promise.resolve(this.app.fetch(request)));
-  }
-
-  /** Room creator for a test. */
-  roomOwnerId(roomId: string): string | null {
-    const row = this.deps.db.prepare("SELECT created_by_owner_id FROM rooms WHERE id = ?").get(roomId) as
-      | { created_by_owner_id: string }
-      | undefined;
-    return row?.created_by_owner_id ?? null;
-  }
-
-  /**
-   * Owner bearer for a test. Replaces that owner's hash.
-   * The raw token is returned once and is not stored.
-   */
-  ownerBearer(ownerId: string): string {
-    return this.deps.tokens.issueOwnerToken(ownerId);
   }
 
   /**
@@ -217,6 +231,25 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
       detailJson: row.detail_json,
     }));
   }
+}
+
+interface PreservedAuditRow {
+  seq: number;
+  id: string;
+  ts: string;
+  room: string;
+  agent_id: string;
+  owner_id: string;
+  action: string;
+  result: string;
+  detail_json: string;
+  prev_hash: string;
+  hash: string;
+}
+
+interface PreservedAudit {
+  rows: PreservedAuditRow[];
+  tip: { seq: number; hash: string } | null;
 }
 
 function applyPublicBindings(env: CommonaEnv): void {
