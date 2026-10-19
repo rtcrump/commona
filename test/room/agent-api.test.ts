@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { hashToken } from "../../contract/index.js";
 import { claimAgentHandoff, issueAgentHandoff } from "../../src/onboarding/handoff.js";
+import { agentCookieName } from "../../src/room-page/routes.js";
 import { call, cookieValue, createInvite, startJoinHarness, type JoinHarness } from "../onboarding/harness.js";
 
 const NOTE = "Bring napkins";
@@ -116,8 +117,9 @@ describe("agent json api", () => {
     const secret = secretOf(invite.openPath);
     const opened = await call(room.baseUrl, "GET", `/r/${room.roomId}?t=${secret}`);
     expect(opened.status).toBe(303);
-    const key = cookieValue(opened.setCookies, "commona_agent");
-    const landed = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `commona_agent=${key}` });
+    const cookieName = agentCookieName(room.roomId);
+    const key = cookieValue(opened.setCookies, cookieName);
+    const landed = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `${cookieName}=${key}` });
     const nonce = nonceOf(landed.body);
     const agent = room.db.prepare("SELECT id FROM agents WHERE token_hash = ?").get(hashToken(key)) as { id: string };
 
@@ -168,12 +170,12 @@ describe("agent json api", () => {
     expect(feed.status).toBe(401);
 
     const form = await call(room.baseUrl, "POST", `/r/${room.roomId}`, {
-      cookie: `commona_agent=${key}`,
+      cookie: `${cookieName}=${key}`,
       form: { nonce, text: NOTE },
     });
     expect(form.status).toBe(401);
     expect(form.body).toContain("This key was revoked.");
-    const page = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `commona_agent=${key}` });
+    const page = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `${cookieName}=${key}` });
     expect(page.status).toBe(401);
 
     const audit = room.db
@@ -190,8 +192,9 @@ describe("agent json api", () => {
     const invite = await createInvite(room);
     const opened = await call(room.baseUrl, "GET", `/r/${room.roomId}?t=${secretOf(invite.openPath)}`);
     expect(opened.status).toBe(303);
-    const key = cookieValue(opened.setCookies, "commona_agent");
-    const landed = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `commona_agent=${key}` });
+    const cookieName = agentCookieName(room.roomId);
+    const key = cookieValue(opened.setCookies, cookieName);
+    const landed = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `${cookieName}=${key}` });
     const nonce = nonceOf(landed.body);
     const agent = room.db.prepare("SELECT id FROM agents WHERE token_hash = ?").get(hashToken(key)) as { id: string };
 
@@ -203,15 +206,15 @@ describe("agent json api", () => {
       expect(posted.status).toBe(201);
     }
     const form = await call(room.baseUrl, "POST", `/r/${room.roomId}`, {
-      cookie: `commona_agent=${key}`,
+      cookie: `${cookieName}=${key}`,
       form: { nonce, text: NOTE },
     });
     expect(form.status).toBe(303);
     expect(hitCount(room, agent.id)).toBe(30);
 
-    const page = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `commona_agent=${key}` });
+    const page = await call(room.baseUrl, "GET", `/r/${room.roomId}`, { cookie: `${cookieName}=${key}` });
     const limitedForm = await call(room.baseUrl, "POST", `/r/${room.roomId}`, {
-      cookie: `commona_agent=${key}`,
+      cookie: `${cookieName}=${key}`,
       form: { nonce: nonceOf(page.body), text: NOTE },
     });
     expect(limitedForm.status).toBe(429);

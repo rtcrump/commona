@@ -2,6 +2,7 @@ import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "../../contract/index.js";
 import { HOST_SECRET_HEADER } from "../../src/host/host-room.js";
+import { agentCookieName } from "../../src/room-page/routes.js";
 
 const hostSecret = "host-test-secret";
 const note = "Bring napkins";
@@ -82,7 +83,7 @@ describe("worker agent json api", () => {
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded",
-        cookie: `commona_agent=${joined.agentKey}`,
+        cookie: `${agentCookieName(created.roomId)}=${joined.agentKey}`,
       },
       body: new URLSearchParams({ nonce: "unused", text: note }),
     });

@@ -1,5 +1,8 @@
 import type Database from "better-sqlite3";
 
+/** Keyset index for the plain room page: unheld posts in one room, newest first. */
+export const POSTS_RECENT_INDEX = "posts_room_held_recent";
+
 const applied = new WeakSet<Database.Database>();
 
 /**
@@ -20,6 +23,10 @@ CREATE TABLE IF NOT EXISTS room_key_flash (
   room_id TEXT NOT NULL REFERENCES rooms(id),
   agent_key TEXT NOT NULL
 );
+
+-- Newest unheld posts in one room, for the keyset on (created_at, id).
+CREATE INDEX IF NOT EXISTS ${POSTS_RECENT_INDEX}
+ON posts (room_id, held, created_at, id);
 `;
 
 /** Apply the room page table. Safe to call more than once on the same database. */

@@ -2,6 +2,7 @@ import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "../../contract/index.js";
 import { HOST_SECRET_HEADER } from "../../src/host/host-room.js";
+import { agentCookieName } from "../../src/room-page/routes.js";
 
 const hostSecret = "host-test-secret";
 const markup = 'Bring napkins <script>alert(1)</script> & "forks"';
@@ -20,15 +21,17 @@ describe("worker room page", () => {
     expect(openedBody.includes(created.credential)).toBe(false);
     expect(openedBody.includes(hostSecret)).toBe(false);
 
-    const header = opened.headers.getSetCookie().find((value) => value.startsWith("commona_agent=")) ?? "";
-    const key = cookieValue(header);
+    const cookieName = agentCookieName(created.roomId);
+    const header = opened.headers.getSetCookie().find((value) => value.startsWith(`${cookieName}=`)) ?? "";
+    const key = cookieValue(header, cookieName);
     expect(header).toContain("HttpOnly");
     expect(header).toContain("Secure");
     expect(header).toContain("SameSite=Strict");
+    expect(header).toContain(`Path=/r/${created.roomId}`);
     expect(openedBody.includes(key)).toBe(false);
 
     const landed = await SELF.fetch(`https://room.example.test/r/${created.roomId}`, {
-      headers: { cookie: `commona_agent=${key}` },
+      headers: { cookie: `${cookieName}=${key}` },
     });
     const page = await landed.text();
     expect(landed.status).toBe(200);
@@ -46,7 +49,7 @@ describe("worker room page", () => {
       redirect: "manual",
       headers: {
         "content-type": "application/x-www-form-urlencoded",
-        cookie: `commona_agent=${key}`,
+        cookie: `${cookieName}=${key}`,
       },
       body: new URLSearchParams({ nonce, text: markup }),
     });
@@ -55,7 +58,7 @@ describe("worker room page", () => {
     await posted.arrayBuffer();
 
     const after = await SELF.fetch(`https://room.example.test/r/${created.roomId}`, {
-      headers: { cookie: `commona_agent=${key}` },
+      headers: { cookie: `${cookieName}=${key}` },
     });
     const shown = await after.text();
     expect(after.status).toBe(200);
@@ -144,10 +147,10 @@ async function hostRoom(title: string): Promise<{ roomId: string; id: string; se
   };
 }
 
-function cookieValue(header: string): string {
+function cookieValue(header: string, name: string): string {
   const end = header.indexOf(";");
   const pair = end === -1 ? header : header.slice(0, end);
-  return pair.slice("commona_agent=".length);
+  return pair.slice(name.length + 1);
 }
 
 function nonceOf(html: string): string {
