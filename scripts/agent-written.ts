@@ -6,8 +6,16 @@ import { readFileSync, writeFileSync } from "node:fs";
  * Lines are insertions from `git log --numstat`. Commits are classified only
  * from Authored-by-agent and Authored-by trailers. A blank line between
  * trailer paragraphs still counts as one block, the same way
- * scripts/check_conventions.py does. A commit with neither trailer, or with
- * both, is unattributed. Merge commits are skipped.
+ * scripts/check_conventions.py does. The counter reads every trailer
+ * paragraph in the message, not only the last block. A GitHub squash keeps
+ * each Authored-by-agent line above its own message and ends with a
+ * Co-authored-by footer after a divider, so the last block has no
+ * authorship. A commit with at least one Authored-by-agent trailer and no
+ * Authored-by trailer is agent-written, unless the footer after the squash
+ * divider credits a person. That footer is the merger. A person credited
+ * inside a squashed commit is not the merger. A normal agent commit may
+ * still credit a person with Co-authored-by. A commit with neither
+ * authorship trailer, or with both, is unattributed. Merge commits are skipped.
  */
 
 const START = "<!-- agent-written-badge:start -->";
@@ -40,13 +48,74 @@ export function percent(part: number, whole: number): number {
 }
 
 export function classifyTrailers(message: string): { kind: CommitStat["kind"]; qa: string | null } {
-  const trailers = parseTrailerBlock(message);
+  const trailers = authorshipTrailers(message);
   const agent = trailers.filter(([key]) => key === "Authored-by-agent").length;
   const human = trailers.filter(([key]) => key === "Authored-by").length;
-  const qa = trailers.find(([key]) => key === "QA")?.[1] ?? null;
-  if (agent === 1 && human === 0) return { kind: "agent", qa };
+  const qa = parseTrailerBlock(message).find(([key]) => key === "QA")?.[1] ?? null;
+  if (agent >= 1 && human === 0 && !squashCreditsAPerson(message)) return { kind: "agent", qa };
   if (human === 1 && agent === 0) return { kind: "human", qa };
   return { kind: "unattributed", qa };
+}
+
+/** GitHub writes this divider before the squash footer's Co-authored-by lines. */
+const SQUASH_DIVIDER = "---------";
+
+const AGENT_COAUTHOR_EMAILS = new Set(["cursoragent@cursor.com", "commona-bot@users.noreply.github.com"]);
+
+/** True when the footer after the squash divider credits a person, such as rtcrump. */
+function squashCreditsAPerson(message: string): boolean {
+  const footer = squashFooter(message);
+  if (footer === null) return false;
+  return coauthorValues(footer, false).some((value) => !isAgentCoauthor(value));
+}
+
+/**
+ * Lines after the last exact divider. An indented line is not the divider.
+ * A Markdown rule inside a squashed commit is not the footer.
+ * Null when this message is not a squash.
+ */
+function squashFooter(message: string): string | null {
+  const lines = message.replaceAll("\r\n", "\n").split("\n");
+  const at = lines.findLastIndex((line) => line === SQUASH_DIVIDER);
+  if (at === -1) return null;
+  return lines.slice(at + 1).join("\n");
+}
+
+function isAgentCoauthor(value: string): boolean {
+  const email = /<([^>]+)>/.exec(value)?.[1]?.trim().toLowerCase() ?? "";
+  if (AGENT_COAUTHOR_EMAILS.has(email)) return true;
+  const name = value.replace(/<[^>]*>/g, "").trim();
+  return name === "Cursor Agent" || /^(cursor|grok)\/[A-Za-z0-9._-]+$/.test(name);
+}
+
+function coauthorValues(message: string, skipFirst = true): string[] {
+  const found: string[] = [];
+  const paras = paragraphs(message);
+  for (let i = skipFirst ? 1 : 0; i < paras.length; i += 1) {
+    const para = paras[i] ?? [];
+    if (!pureAllowed(para)) continue;
+    for (const trailer of parseTrailerLines(para)) {
+      if (trailer[0] === "Co-authored-by") found.push(trailer[1]);
+    }
+  }
+  return found;
+}
+
+/**
+ * Authorship lines from every trailer paragraph.
+ * Body text and the squash divider are skipped. They do not hide trailers above them.
+ */
+function authorshipTrailers(message: string): [string, string][] {
+  const found: [string, string][] = [];
+  const paras = paragraphs(message);
+  for (let i = 1; i < paras.length; i += 1) {
+    const para = paras[i] ?? [];
+    if (!pureAllowed(para)) continue;
+    for (const trailer of parseTrailerLines(para)) {
+      if (trailer[0] === "Authored-by-agent" || trailer[0] === "Authored-by") found.push(trailer);
+    }
+  }
+  return found;
 }
 
 const TRAILER_RE = /^([A-Za-z][A-Za-z-]*): (.+)$/;
