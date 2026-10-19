@@ -28,4 +28,9 @@ export interface RoomDeps {
   deliverWake?: (wakeId: string) => Promise<void>;
   /** Set when COMMONA_SMTP_HOST and COMMONA_SMTP_PORT are both present, or a test injects one. */
   smtp?: SmtpEndpoint;
+  /**
+   * Wipe the Durable Object that holds this database, including its alarm.
+   * Set only in the Worker. The Node server deletes one room's rows instead.
+   */
+  wipeStorage?: () => Promise<void>;
 }

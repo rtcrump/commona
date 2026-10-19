@@ -1,6 +1,7 @@
-import { HTTP_STATUS, readBearerToken, type AuthPrincipal } from "../../contract/index.js";
+import { HTTP_STATUS, isId, readBearerToken, type AuthPrincipal } from "../../contract/index.js";
 import type { CommonaHono } from "../http/types.js";
 import { readCookie, SESSION_COOKIE } from "../join/cookies.js";
+import { deleteOwnedRoom } from "./delete-room.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
 import { addMember, createRoom } from "./membership.js";
@@ -14,7 +15,14 @@ export function registerRoomRoutes(app: CommonaHono, deps: RoomDeps): void {
     return c.json({ room }, HTTP_STATUS.created);
   });
 
+  app.delete("/rooms/:roomId", async (c) => {
+    const principal = requirePrincipal(deps, c.req.header("authorization"));
+    const result = await deleteOwnedRoom(deps, principal, c.req.param("roomId"));
+    return c.json(result, HTTP_STATUS.ok, { "cache-control": "no-store" });
+  });
+
   app.post("/rooms/:roomId/members", (c) => {
+    absentRoom(deps, c.req.param("roomId"));
     const principal = requirePrincipal(deps, c.req.header("authorization"));
     const agentId = readAgentId(c.get("parsedBody"));
     const result = addMember(deps, principal, c.req.param("roomId"), agentId);
@@ -23,6 +31,7 @@ export function registerRoomRoutes(app: CommonaHono, deps: RoomDeps): void {
   });
 
   app.post("/rooms/:roomId/posts", async (c) => {
+    absentRoom(deps, c.req.param("roomId"));
     const principal = requirePrincipal(deps, c.req.header("authorization"));
     const result = await createPost(deps, principal, c.req.param("roomId"), c.get("parsedBody"));
     const status = result.outcome === "accepted" ? HTTP_STATUS.created : HTTP_STATUS.ok;
@@ -30,6 +39,7 @@ export function registerRoomRoutes(app: CommonaHono, deps: RoomDeps): void {
   });
 
   app.post("/rooms/:roomId/files", async (c) => {
+    absentRoom(deps, c.req.param("roomId"));
     const principal = requirePrincipal(deps, c.req.header("authorization"));
     const result = await uploadFile(deps, principal, c.req.param("roomId"), c.get("parsedBody"));
     const status = result.outcome === "accepted" ? HTTP_STATUS.created : HTTP_STATUS.ok;
@@ -37,28 +47,39 @@ export function registerRoomRoutes(app: CommonaHono, deps: RoomDeps): void {
   });
 
   app.get("/rooms/:roomId/feed", (c) => {
+    absentRoom(deps, c.req.param("roomId"));
     const principal = requirePrincipal(deps, c.req.header("authorization"));
     const feed = readFeed(deps, principal, c.req.param("roomId"), c.req.query("as"));
     return c.json(feed, HTTP_STATUS.ok);
   });
 
   app.get("/rooms/:roomId/files/:fileId", (c) => {
+    absentRoom(deps, c.req.param("roomId"));
     const principal = requirePrincipal(deps, c.req.header("authorization"));
     const file = readFile(deps, principal, c.req.param("roomId"), c.req.param("fileId"));
     return c.json(file, HTTP_STATUS.ok);
   });
 
   app.put("/rooms/:roomId/sharing", (c) => {
+    absentRoom(deps, c.req.param("roomId"));
     const principal = requirePrincipal(deps, c.req.header("authorization"));
     const sharing = updateSharing(deps, principal, c.req.param("roomId"), c.get("parsedBody"));
     return c.json(sharing, HTTP_STATUS.ok);
   });
 
   app.get("/rooms/:roomId/held", (c) => {
+    absentRoom(deps, c.req.param("roomId"));
     const principal = heldPrincipal(deps, c.req.header("authorization"), c.req.header("cookie"));
     const held = readHeld(deps, principal, c.req.param("roomId"));
     return c.json(held, HTTP_STATUS.ok);
   });
+}
+
+/** A room id that is not stored is 404 before auth, so a deleted room does not look like a bad key. */
+function absentRoom(deps: RoomDeps, roomId: string): void {
+  if (!isId(roomId)) return;
+  const room = deps.db.prepare("SELECT id FROM rooms WHERE id = ?").get(roomId) as { id: string } | undefined;
+  if (!room) throw RoomHttpError.notFound();
 }
 
 function requirePrincipal(deps: RoomDeps, authorization: string | undefined): AuthPrincipal {

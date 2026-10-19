@@ -16,6 +16,7 @@
     "m1": "node --experimental-sqlite --import tsx scripts/m1.ts",
     "demo:lunch": "node --experimental-sqlite --import tsx scripts/demo-lunch.ts",
     "room:new": "tsx scripts/room-new.ts",
+    "room:delete": "tsx scripts/room-delete.ts",
     "stats": "tsx scripts/agent-written.ts --write",
     "stats:check": "tsx scripts/agent-written.ts --check",
     "check:fake-data": "bash scripts/check-fake-data.sh",

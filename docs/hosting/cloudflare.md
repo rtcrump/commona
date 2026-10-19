@@ -29,6 +29,8 @@ The connector in `connectors/mcp-server` stays on your computer. It is not part 
 
 After that, `npm run room:new` can target the https origin. Set `COMMONA_URL` to that origin, with no path. Set `COMMONA_HOST_SECRET` in that window to the same secret. Set `COMMONA_HOST_CREDENTIAL` to a new file on your computer. The command writes the host credential there and prints only the invite links.
 
+`npm run room:delete` deletes that room. It reads the same credential file and does not print it. When the Durable Object holds only that room, the delete clears its SQLite storage and any alarm. The response carries the audit record, because that clear removes the log. There is no second index to store it.
+
 ## Local secret file
 
 For `npm start` on this computer, put the origin and the secret in `.dev.vars` in the project folder:

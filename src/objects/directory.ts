@@ -16,18 +16,31 @@ import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createSharingDirectory } from "../sharing/index.js";
 
+interface DurableRoomStorage extends DurableSqlStorage {
+  deleteAll(): Promise<void>;
+  deleteAlarm(): Promise<void>;
+  getAlarm(): Promise<number | null>;
+  setAlarm(scheduledTime: number): Promise<void>;
+}
+
 /**
  * One SQLite Durable Object for the whole server.
  * Rooms, keys, invites, and the audit chain stay in one database, which is
  * what the Node server did. The free plan only offers this SQLite kind.
  */
+
 export class DirectoryObject extends DurableObject<CommonaEnv> {
-  private readonly deps: RoomDeps;
-  private readonly app: CommonaHono;
+  private deps!: RoomDeps;
+  private app!: CommonaHono;
 
   constructor(ctx: DurableObjectState, env: CommonaEnv) {
     super(ctx, env);
-    const db = createSqliteDatabase(new DurableSqlDriver(ctx.storage as unknown as DurableSqlStorage));
+    this.boot();
+  }
+
+  /** Open SQLite, then build the HTTP app. Called again after the storage is wiped. */
+  private boot(): void {
+    const db = createSqliteDatabase(new DurableSqlDriver(this.storage()));
     try {
       db.pragma("foreign_keys = ON");
     } catch {
@@ -35,7 +48,7 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     }
     prepareDatabase(db);
     const clock = systemClock;
-    this.deps = {
+    const deps: RoomDeps = {
       db,
       clock,
       tokens: createTokenStore(db),
@@ -43,8 +56,35 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
       sharing: createSharingDirectory(db),
       guard,
       notices: createOwnerNotifier(db, clock),
+      wipeStorage: () => this.wipeStorage(),
     };
-    this.app = createHttpApp(this.deps);
+    this.deps = deps;
+    this.app = createHttpApp(deps);
+  }
+
+  /**
+   * Clear the alarm and delete every row in this object.
+   * The next request sees an empty database, so the deleted room is 404.
+   */
+  private async wipeStorage(): Promise<void> {
+    const storage = this.storage();
+    await storage.deleteAlarm();
+    await storage.deleteAll();
+    this.boot();
+  }
+
+  /** Alarm time for a test. Null when none is set. */
+  async scheduledAlarm(): Promise<number | null> {
+    return this.storage().getAlarm();
+  }
+
+  /** Set an alarm for a test. The owner delete clears it. */
+  async scheduleAlarm(atMs: number): Promise<void> {
+    await this.storage().setAlarm(atMs);
+  }
+
+  private storage(): DurableRoomStorage {
+    return this.ctx.storage as DurableRoomStorage;
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -62,6 +102,22 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     }
     applyPublicBindings(this.env);
     return useHostSecret(this.env.COMMONA_HOST_SECRET, () => Promise.resolve(this.app.fetch(request)));
+  }
+
+  /** Room creator for a test. */
+  roomOwnerId(roomId: string): string | null {
+    const row = this.deps.db.prepare("SELECT created_by_owner_id FROM rooms WHERE id = ?").get(roomId) as
+      | { created_by_owner_id: string }
+      | undefined;
+    return row?.created_by_owner_id ?? null;
+  }
+
+  /**
+   * Owner bearer for a test. Replaces that owner's hash.
+   * The raw token is returned once and is not stored.
+   */
+  ownerBearer(ownerId: string): string {
+    return this.deps.tokens.issueOwnerToken(ownerId);
   }
 
   /**

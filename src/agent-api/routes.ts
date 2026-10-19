@@ -130,6 +130,9 @@ function handleRevoke(
   agentId: string,
   authorization: string | undefined,
 ): Response {
+  if (!isId(roomId) || !roomExists(deps, roomId)) {
+    return json(RoomHttpError.notFound().body(), HTTP_STATUS.notFound);
+  }
   const principal = requireBearer(deps, authorization);
   revokeAgentKey(deps, principal, roomId, agentId);
   return json({ revoked: true }, HTTP_STATUS.ok);

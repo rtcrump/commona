@@ -284,6 +284,34 @@ Do not click **Copy my link** or **Get a new link**.
 
 ## 8. Shut down
 
+Delete the dry-run room while `npm start` is still running. That clears the room from the SQLite Durable Object. Stopping the server does not.
+
+`COMMONA_URL` and `COMMONA_HOST_CREDENTIAL` are the same values as step 6. The command sends the host credential. It does not print that credential. A pass prints `deleted`.
+
+macOS Terminal:
+
+```
+export COMMONA_URL="http://127.0.0.1:3000"
+export COMMONA_HOST_CREDENTIAL="$HOME/commona-host-credential"
+npm run room:delete
+```
+
+Windows PowerShell:
+
+```
+$env:COMMONA_URL = "http://127.0.0.1:3000"
+$env:COMMONA_HOST_CREDENTIAL = "$env:USERPROFILE\commona-host-credential"
+npm run room:delete
+```
+
+Windows Command Prompt:
+
+```
+set COMMONA_URL=http://127.0.0.1:3000
+set COMMONA_HOST_CREDENTIAL=%USERPROFILE%\commona-host-credential
+npm run room:delete
+```
+
 Press Ctrl+C in the room server window, the connector window, and both tunnel windows.
 
 Delete the host credential file from step 6. Do not open it first. Leave the host secret file in place. Each server start replaces that secret with a new one, so you do not delete it here. After this stop, the file still holds the last secret until the next start. Do not open it, and do not share it.
