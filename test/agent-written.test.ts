@@ -189,6 +189,64 @@ describe("agent-written stats", () => {
     expect(classifyTrailers(message).kind).toBe("agent");
   });
 
+  it("treats a nine-hyphen line as the squash divider only when Co-authored-by lines follow", () => {
+    const proseAfterRule = [
+      "feat(room): mention the rule",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "That rule is part of the commit body.",
+      "",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(proseAfterRule).kind).toBe("agent");
+
+    const otherTrailerAfter = [
+      "feat(room): mention the rule",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "QA: chatgpt round 1 pass",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(otherTrailerAfter).kind).toBe("agent");
+
+    const realFooter = [
+      "feat(room): serve the room (#37)",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(realFooter).kind).toBe("unattributed");
+  });
+
+  it("counts human Authored-by trailers when no agent trailer is present", () => {
+    expect(
+      classifyTrailers("fix(docs): two people\n\nAuthored-by: human/alice\nAuthored-by: human/bob\n").kind,
+    ).toBe("human");
+    expect(
+      classifyTrailers("fix(docs): two people\n\nAuthored-by: human/alice\n\nAuthored-by: human/bob\n").kind,
+    ).toBe("human");
+    expect(
+      classifyTrailers(
+        "fix(docs): mixed\n\nAuthored-by: human/alice\nAuthored-by: human/bob\n\nAuthored-by-agent: cursor/example\nModel: test\n",
+      ).kind,
+    ).toBe("unattributed");
+  });
+
   it("does not count a squash co-authored by a person", () => {
     const message = [
       "feat(room): serve the room (#37)",

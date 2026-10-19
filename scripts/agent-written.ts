@@ -10,12 +10,15 @@ import { readFileSync, writeFileSync } from "node:fs";
  * paragraph in the message, not only the last block. A GitHub squash keeps
  * each Authored-by-agent line above its own message and ends with a
  * Co-authored-by footer after a divider, so the last block has no
- * authorship. A commit with at least one Authored-by-agent trailer and no
- * Authored-by trailer is agent-written, unless the footer after the squash
- * divider credits a person. That footer is the merger. A person credited
- * inside a squashed commit is not the merger. A normal agent commit may
- * still credit a person with Co-authored-by. A commit with neither
- * authorship trailer, or with both, is unattributed. Merge commits are skipped.
+ * authorship. The divider is an exact, unindented nine-hyphen line, and only
+ * when nothing but Co-authored-by lines follow it. A commit with at least
+ * one Authored-by-agent trailer and no Authored-by trailer is agent-written,
+ * unless that footer credits a person. That footer is the merger. A person
+ * credited inside a squashed commit is not the merger. A normal agent commit
+ * may still credit a person with Co-authored-by. A commit with one or more
+ * Authored-by trailers and no Authored-by-agent trailer is human. A commit
+ * with neither authorship trailer, or with both, is unattributed. Merge
+ * commits are skipped.
  */
 
 const START = "<!-- agent-written-badge:start -->";
@@ -53,7 +56,7 @@ export function classifyTrailers(message: string): { kind: CommitStat["kind"]; q
   const human = trailers.filter(([key]) => key === "Authored-by").length;
   const qa = parseTrailerBlock(message).find(([key]) => key === "QA")?.[1] ?? null;
   if (agent >= 1 && human === 0 && !squashCreditsAPerson(message)) return { kind: "agent", qa };
-  if (human === 1 && agent === 0) return { kind: "human", qa };
+  if (human >= 1 && agent === 0) return { kind: "human", qa };
   return { kind: "unattributed", qa };
 }
 
@@ -69,16 +72,31 @@ function squashCreditsAPerson(message: string): boolean {
   return coauthorValues(footer, false).some((value) => !isAgentCoauthor(value));
 }
 
+const COAUTHOR_LINE = /^Co-authored-by: .+$/;
+
 /**
- * Lines after the last exact divider. An indented line is not the divider.
- * A Markdown rule inside a squashed commit is not the footer.
- * Null when this message is not a squash.
+ * Lines after the last divider that is followed only by Co-authored-by lines.
+ * An indented line is not the divider. A Markdown rule followed by body text,
+ * or by any other trailer, is not the footer. Null when this message is not a squash.
  */
 function squashFooter(message: string): string | null {
   const lines = message.replaceAll("\r\n", "\n").split("\n");
-  const at = lines.findLastIndex((line) => line === SQUASH_DIVIDER);
+  let at = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i] === SQUASH_DIVIDER && followedOnlyByCoauthors(lines, i)) at = i;
+  }
   if (at === -1) return null;
   return lines.slice(at + 1).join("\n");
+}
+
+/** Blank lines may separate the footer. Any other line means this rule is not the divider. */
+function followedOnlyByCoauthors(lines: readonly string[], at: number): boolean {
+  for (let i = at + 1; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (line === "") continue;
+    if (!COAUTHOR_LINE.test(line)) return false;
+  }
+  return true;
 }
 
 function isAgentCoauthor(value: string): boolean {
