@@ -138,6 +138,7 @@ function showForCookie(
     posts,
     nonce,
     agentKey,
+    agentId: agentKey === null ? null : principal.agentId,
   });
   assertHidden(page, hidden);
   return htmlResponse(page, 200);
