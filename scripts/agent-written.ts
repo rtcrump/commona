@@ -11,7 +11,8 @@ import { readFileSync, writeFileSync } from "node:fs";
  * each Authored-by-agent line above its own message and ends with a
  * Co-authored-by footer after a divider, so the last block has no
  * authorship. The divider is an exact, unindented nine-hyphen line, and only
- * when nothing but Co-authored-by lines follow it. A commit with at least
+ * when every line after it is an allowed trailer. Body text after it is not
+ * the footer. A commit with at least
  * one Authored-by-agent trailer and no Authored-by trailer is agent-written,
  * unless that footer credits a person. That footer is the merger. A person
  * credited inside a squashed commit is not the merger. A normal agent commit
@@ -72,31 +73,19 @@ function squashCreditsAPerson(message: string): boolean {
   return coauthorValues(footer, false).some((value) => !isAgentCoauthor(value));
 }
 
-const COAUTHOR_LINE = /^Co-authored-by: .+$/;
-
 /**
- * Lines after the last divider that is followed only by Co-authored-by lines.
- * An indented line is not the divider. A Markdown rule followed by body text,
- * or by any other trailer, is not the footer. Null when this message is not a squash.
+ * Lines after the last divider that is followed only by allowed trailer lines.
+ * An indented line is not the divider. Body text after a nine-hyphen line
+ * means that line is not the footer. Null when this message is not a squash.
  */
 function squashFooter(message: string): string | null {
   const lines = message.replaceAll("\r\n", "\n").split("\n");
   let at = -1;
   for (let i = 0; i < lines.length; i += 1) {
-    if (lines[i] === SQUASH_DIVIDER && followedOnlyByCoauthors(lines, i)) at = i;
+    if (lines[i] === SQUASH_DIVIDER && followedOnlyByAllowedTrailers(lines, i)) at = i;
   }
   if (at === -1) return null;
   return lines.slice(at + 1).join("\n");
-}
-
-/** Blank lines may separate the footer. Any other line means this rule is not the divider. */
-function followedOnlyByCoauthors(lines: readonly string[], at: number): boolean {
-  for (let i = at + 1; i < lines.length; i += 1) {
-    const line = lines[i] ?? "";
-    if (line === "") continue;
-    if (!COAUTHOR_LINE.test(line)) return false;
-  }
-  return true;
 }
 
 function isAgentCoauthor(value: string): boolean {
@@ -146,6 +135,17 @@ const ALLOWED_TRAILERS = new Set([
   "Co-authored-by",
   "Refs",
 ]);
+
+/** Blank lines may separate the footer. Body text means this rule is not the divider. */
+function followedOnlyByAllowedTrailers(lines: readonly string[], at: number): boolean {
+  for (let i = at + 1; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (line === "") continue;
+    const match = TRAILER_RE.exec(line);
+    if (!match?.[1] || !ALLOWED_TRAILERS.has(match[1])) return false;
+  }
+  return true;
+}
 
 function paragraphs(message: string): string[][] {
   const paras: string[][] = [];

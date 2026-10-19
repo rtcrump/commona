@@ -189,7 +189,7 @@ describe("agent-written stats", () => {
     expect(classifyTrailers(message).kind).toBe("agent");
   });
 
-  it("treats a nine-hyphen line as the squash divider only when Co-authored-by lines follow", () => {
+  it("treats a nine-hyphen line as the squash divider only when allowed trailers follow", () => {
     const proseAfterRule = [
       "feat(room): mention the rule",
       "",
@@ -217,7 +217,7 @@ describe("agent-written stats", () => {
       "QA: chatgpt round 1 pass",
       "",
     ].join("\n");
-    expect(classifyTrailers(otherTrailerAfter).kind).toBe("agent");
+    expect(classifyTrailers(otherTrailerAfter).kind).toBe("unattributed");
 
     const realFooter = [
       "feat(room): serve the room (#37)",
@@ -231,6 +231,40 @@ describe("agent-written stats", () => {
       "",
     ].join("\n");
     expect(classifyTrailers(realFooter).kind).toBe("unattributed");
+  });
+
+  it("counts a person in a squash footer that also has QA and Approved-by", () => {
+    const message = [
+      "feat(room): serve the room (#37)",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "QA: chatgpt round 1 pass",
+      "Approved-by: trafford",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(message).kind).toBe("agent");
+    expect(classifyTrailers(message).qa).toBe("chatgpt round 1 pass");
+
+    const withPerson = [
+      "feat(room): serve the room (#37)",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "QA: chatgpt round 1 pass",
+      "Approved-by: trafford",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(withPerson).kind).toBe("unattributed");
   });
 
   it("counts human Authored-by trailers when no agent trailer is present", () => {
