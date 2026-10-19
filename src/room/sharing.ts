@@ -9,7 +9,7 @@ import {
   type PutSharingResponse,
   type SharingLevel as SharingLevelName,
 } from "../../contract/index.js";
-import { clearRoomDefaultPostShare } from "../onboarding/room-default-share.js";
+import { clearRoomDefaultPostShare } from "../sharing/room-default-share.js";
 import { actorId, nowStamp, refuse, requireRoom } from "./access.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";

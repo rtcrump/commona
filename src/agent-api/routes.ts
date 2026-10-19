@@ -10,7 +10,7 @@ import {
 import type { CommonaHono } from "../http/types.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { ensureInviteSchema } from "../join/schema.js";
-import { grantDefaultRoomPosts } from "../onboarding/room-default-share.js";
+import { grantDefaultRoomPosts } from "../sharing/room-default-share.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost } from "../room/posts.js";
@@ -89,20 +89,31 @@ function redeemAndReturn(deps: RoomDeps, roomId: string, inviteId: string | null
     ownerId: redeemed.owner.id,
   };
   const agentKey = deps.tokens.issueAgentToken(redeemed.agent.id);
-  if (!/^[A-Za-z0-9_-]+$/.test(agentKey)) throw new Error("refusing to send a secret");
+  const ownerToken = redeemed.sessionToken;
+  if (!/^[A-Za-z0-9_-]+$/.test(agentKey) || !/^[A-Za-z0-9_-]+$/.test(ownerToken)) {
+    throw new Error("refusing to send a secret");
+  }
   const body = {
     roomId,
     agentId: principal.agentId,
+    ownerId: principal.ownerId,
     title: roomTitle(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
     agentKey,
+    ownerToken,
   };
-  assertHidden(JSON.stringify({ roomId: body.roomId, agentId: body.agentId, title: body.title, posts: body.posts }), [
-    secret,
-    agentKey,
-  ]);
+  assertHidden(
+    JSON.stringify({
+      roomId: body.roomId,
+      agentId: body.agentId,
+      ownerId: body.ownerId,
+      title: body.title,
+      posts: body.posts,
+    }),
+    [secret, agentKey, ownerToken],
+  );
   const encoded = JSON.stringify(body);
-  assertHidden(encoded, [secret]);
+  assertHidden(encoded, [secret, hashToken(agentKey), hashToken(ownerToken)]);
   return json(body, HTTP_STATUS.ok);
 }
 

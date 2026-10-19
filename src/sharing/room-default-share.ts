@@ -1,9 +1,9 @@
-import { AuditAction, AuditResult, formatTimestamp, ownerActorId } from "../../contract/index.js";
+import { AuditAction, AuditResult, formatTimestamp } from "../../contract/index.js";
 import type { RoomDeps } from "../room/deps.js";
-import { writePolicyMessages } from "../sharing/index.js";
+import { writePolicyMessages } from "./index.js";
 
-/** Audit owner for the room's invite default. Not a person and not a member. */
-export const ROOM_DEFAULT_POLICY_OWNER = "policy";
+/** Audit actor for the room's invite default. Not an owner, and not a member. */
+export const ROOM_DEFAULT_POLICY_ACTOR = "policy";
 
 const SCHEMA = `CREATE TABLE IF NOT EXISTS room_default_post_share (
   room_id TEXT NOT NULL,
@@ -26,7 +26,8 @@ export function clearRoomDefaultPostShare(db: RoomDeps["db"], roomId: string, ow
  * An agent that joins by invite shares its own posts with the room.
  * People already here share their posts back only when they joined by invite
  * under this default and their owner has not narrowed it.
- * Files are not granted. The audit actor is the room policy, with the joining invite.
+ * Files are not granted. The audit actor is policy, and the row is filed under
+ * the owner whose posts were opened, with the joining invite.
  */
 export function grantDefaultRoomPosts(deps: RoomDeps, roomId: string, ownerId: string, inviteId: string): void {
   ensureRoomDefaultSchema(deps.db);
@@ -75,8 +76,8 @@ function auditPolicy(
   deps.audit.append({
     ts: formatTimestamp(deps.clock.now()),
     room: roomId,
-    agentId: ownerActorId(ROOM_DEFAULT_POLICY_OWNER),
-    ownerId: ROOM_DEFAULT_POLICY_OWNER,
+    agentId: ROOM_DEFAULT_POLICY_ACTOR,
+    ownerId: fromOwnerId,
     action: AuditAction.SettingChange,
     result: AuditResult.Ok,
     detail: {

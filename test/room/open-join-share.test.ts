@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { SharingLevel } from "../../contract/index.js";
-import { ROOM_DEFAULT_POLICY_OWNER } from "../../src/onboarding/room-default-share.js";
-import { agentCookieName } from "../../src/room-page/routes.js";
+import { hashToken, SharingLevel } from "../../contract/index.js";
+import { setInviteLog } from "../../src/join/log.js";
+import { ROOM_DEFAULT_POLICY_ACTOR } from "../../src/sharing/room-default-share.js";
+import { agentCookieName, ownerCookieName } from "../../src/room-page/routes.js";
 import { call, cookieValue, createInvite, startJoinHarness, type JoinHarness } from "../onboarding/harness.js";
 
 const HTML_POST = "Grok Bot: bring forks";
@@ -35,6 +36,11 @@ describe("open-join default post sharing", () => {
       cookie: `${agentCookieName(room.roomId)}=${html.key}`,
       form: { nonce: html.nonce, text: HTML_POST },
     });
+    const replayed = await call(room.baseUrl, "GET", `/r/${room.roomId}`, {
+      cookie: `${agentCookieName(room.roomId)}=${html.key}; ${ownerCookieName(room.roomId)}=${html.ownerToken}`,
+    });
+    expect(replayed.status).toBe(200);
+    expect(replayed.body.includes(html.ownerToken)).toBe(false);
     const ownerAgent = room.tokens.issueAgentToken("A1");
     const ownerFeed = await call(room.baseUrl, "GET", `/rooms/${room.roomId}/feed`, { token: ownerAgent });
     expect(ownerFeed.status).toBe(200);
@@ -48,8 +54,8 @@ describe("open-join default post sharing", () => {
     expect(room.sharing.level(room.roomId, htmlOwner, dotsOwner)).toBe(SharingLevel.Messages);
     expect(room.sharing.level(room.roomId, dotsOwner, htmlOwner)).toBe(SharingLevel.Messages);
     expect(room.sharing.level(room.roomId, "O1", dotsOwner)).toBe(SharingLevel.None);
-    expect(policyGrants(room).every((row) => row.ownerId === ROOM_DEFAULT_POLICY_OWNER)).toBe(true);
-    expect(policyGrants(room).some((row) => row.agentId !== `owner:${ROOM_DEFAULT_POLICY_OWNER}`)).toBe(false);
+    expect(policyGrants(room).every((row) => row.agentId === ROOM_DEFAULT_POLICY_ACTOR)).toBe(true);
+    expect(policyGrants(room).every((row) => row.ownerId === row.fromOwnerId)).toBe(true);
     expect(
       policyGrants(room).some(
         (row) => row.itemId === dots.inviteId && row.fromOwnerId === htmlOwner && row.toOwnerId === dotsOwner,
@@ -101,12 +107,13 @@ describe("open-join default post sharing", () => {
     expect(room.sharing.level(room.roomId, htmlOwner, dotsOwner)).toBe(SharingLevel.Messages);
     expect(stillOnDefault(room, htmlOwner)).toBe(true);
 
-    const ownerToken = room.tokens.issueOwnerToken(htmlOwner);
+    const issuedBeforeNarrow = room.issued.length;
     const narrowed = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
-      token: ownerToken,
+      token: html.ownerToken,
       json: { fromOwnerId: htmlOwner, toOwnerId: dotsOwner, level: "none" },
     });
     expect(narrowed.status).toBe(200);
+    expect(room.issued.length).toBe(issuedBeforeNarrow);
     expect(room.sharing.level(room.roomId, htmlOwner, dotsOwner)).toBe(SharingLevel.None);
     expect(room.sharing.level(room.roomId, dotsOwner, htmlOwner)).toBe(SharingLevel.Messages);
     expect(stillOnDefault(room, htmlOwner)).toBe(false);
@@ -136,7 +143,30 @@ describe("open-join default post sharing", () => {
       policyGrants(room).some((row) => row.itemId === muse.inviteId && row.fromOwnerId === htmlOwner),
     ).toBe(false);
     expect(
-      policyGrants(room).filter((row) => row.itemId === muse.inviteId).every((row) => row.ownerId === ROOM_DEFAULT_POLICY_OWNER),
+      policyGrants(room)
+        .filter((row) => row.itemId === muse.inviteId)
+        .every((row) => row.ownerId === row.fromOwnerId && row.agentId === ROOM_DEFAULT_POLICY_ACTOR),
+    ).toBe(true);
+    const htmlLog = await call(room.baseUrl, "GET", `/log?owner=${htmlOwner}`, { token: html.ownerToken });
+    expect(htmlLog.status).toBe(200);
+    const htmlEntries = (JSON.parse(htmlLog.body) as { entries: LogEntry[] }).entries.filter(
+      (entry) => entry.action === "setting_change" && entry.detail.level === "messages",
+    );
+    expect(htmlEntries.some((entry) => entry.detail.fromOwnerId === htmlOwner && entry.agentId === ROOM_DEFAULT_POLICY_ACTOR)).toBe(
+      true,
+    );
+    expect(htmlEntries.some((entry) => entry.detail.fromOwnerId === dotsOwner)).toBe(false);
+    const dotsLog = await call(room.baseUrl, "GET", `/log?owner=${dotsOwner}`, { token: dots.ownerToken });
+    expect(dotsLog.status).toBe(200);
+    const dotsEntries = (JSON.parse(dotsLog.body) as { entries: LogEntry[] }).entries;
+    expect(
+      dotsEntries.some(
+        (entry) =>
+          entry.action === "setting_change" &&
+          entry.ownerId === dotsOwner &&
+          entry.agentId === ROOM_DEFAULT_POLICY_ACTOR &&
+          entry.detail.fromOwnerId === dotsOwner,
+      ),
     ).toBe(true);
 
     const museFile = await call(room.baseUrl, "GET", `/rooms/${room.roomId}/files/${fileId}`, {
@@ -154,6 +184,64 @@ describe("open-join default post sharing", () => {
     });
     expect(htmlAfter.body).toContain(LATER_POST);
     expect(htmlAfter.body).toContain(HTML_POST);
+    expect(htmlAfter.body.includes(html.ownerToken)).toBe(false);
+    const htmlOwnerRow = room.db.prepare("SELECT token_hash FROM owners WHERE id = ?").get(htmlOwner) as {
+      token_hash: string;
+    };
+    expect(htmlOwnerRow.token_hash).toBe(hashToken(html.ownerToken));
+    expect(storedText(room).includes(html.ownerToken)).toBe(false);
+    expect(storedText(room).includes(dots.ownerToken)).toBe(false);
+  });
+
+  it("narrows sharing with the owner token the json join returned", async () => {
+    room = await startJoinHarness();
+    const lines: string[] = [];
+    setInviteLog((line) => {
+      lines.push(line);
+    });
+    try {
+      const first = await joinJson(room);
+      const second = await joinJson(room);
+      expect(first.ownerToken).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+      expect(first.ownerId).toMatch(/^owner_/);
+      expect(second.ownerId).not.toBe(first.ownerId);
+
+      const denied = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
+        token: first.agentKey,
+        json: { fromOwnerId: first.ownerId, toOwnerId: second.ownerId, level: "none" },
+      });
+      expect(denied.status).toBe(403);
+      expect(room.sharing.level(room.roomId, first.ownerId, second.ownerId)).toBe(SharingLevel.Messages);
+
+      const issuedBeforeNarrow = room.issued.length;
+      const narrowed = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
+        token: first.ownerToken,
+        json: { fromOwnerId: first.ownerId, toOwnerId: second.ownerId, level: "none" },
+      });
+      expect(narrowed.status).toBe(200);
+      expect(room.issued.length).toBe(issuedBeforeNarrow);
+      expect(room.sharing.level(room.roomId, first.ownerId, second.ownerId)).toBe(SharingLevel.None);
+      expect(stillOnDefault(room, first.ownerId)).toBe(false);
+
+      const stored = room.db.prepare("SELECT token_hash FROM owners WHERE id = ?").get(first.ownerId) as {
+        token_hash: string;
+      };
+      expect(stored.token_hash).toBe(hashToken(first.ownerToken));
+      expect(stored.token_hash.includes(first.ownerToken)).toBe(false);
+      expect(storedText(room).includes(first.ownerToken)).toBe(false);
+      expect(storedText(room).includes(second.ownerToken)).toBe(false);
+      const audit = room.db.prepare("SELECT detail_json FROM audit_log").all() as { detail_json: string }[];
+      expect(JSON.stringify(audit).includes(first.ownerToken)).toBe(false);
+      expect(lines.join("\n").includes(first.ownerToken)).toBe(false);
+      expect(lines.join("\n").includes(second.ownerToken)).toBe(false);
+
+      const again = await call(room.baseUrl, "GET", `/api/r/${room.roomId}`, { token: first.agentKey });
+      expect(again.status).toBe(200);
+      expect(again.body.includes(first.ownerToken)).toBe(false);
+      expect(again.body.includes(first.agentKey)).toBe(false);
+    } finally {
+      setInviteLog(() => {});
+    }
   });
 });
 
@@ -168,33 +256,77 @@ function seedOwnerPost(room: JoinHarness, text: string): void {
     .run("post_owner_created", room.roomId, text, "post_owner_created", "2026-04-01T12:00:00.000Z");
 }
 
-async function joinHtml(
-  room: JoinHarness,
-): Promise<{ key: string; nonce: string; agentId: string; page: string; inviteId: string }> {
+async function joinHtml(room: JoinHarness): Promise<{
+  key: string;
+  nonce: string;
+  agentId: string;
+  ownerId: string;
+  ownerToken: string;
+  page: string;
+  inviteId: string;
+}> {
   const invite = await createInvite(room);
   const secret = invite.openPath.split("/")[3] ?? "";
   const opened = await call(room.baseUrl, "GET", `/r/${room.roomId}?t=${secret}`);
   expect(opened.status).toBe(303);
   const key = cookieValue(opened.setCookies, agentCookieName(room.roomId));
+  const ownerToken = cookieValue(opened.setCookies, ownerCookieName(room.roomId));
+  expect(ownerToken).toMatch(/^[A-Za-z0-9_-]{20,}$/);
   const page = await call(room.baseUrl, "GET", `/r/${room.roomId}`, {
-    cookie: `${agentCookieName(room.roomId)}=${key}`,
+    cookie: `${agentCookieName(room.roomId)}=${key}; ${ownerCookieName(room.roomId)}=${ownerToken}`,
   });
   expect(page.status).toBe(200);
+  expect(page.body).toContain(`<pre>${ownerToken}</pre>`);
+  expect(page.setCookies.some((value) => value.startsWith(`${ownerCookieName(room.roomId)}=`) && value.includes("Max-Age=0"))).toBe(
+    true,
+  );
   const nonce = page.body.match(/name="nonce" value="([^"]+)"/)?.[1] ?? "";
+  const ownerId = page.body.match(/Owner id: ([A-Za-z0-9_-]+)/)?.[1] ?? "";
   const principal = room.tokens.authenticate(key);
   if (!principal || principal.kind !== "agent") throw new Error("missing agent");
-  return { key, nonce, agentId: principal.agentId, page: page.body, inviteId: invite.id };
+  expect(ownerId).toBe(principal.ownerId);
+  return { key, nonce, agentId: principal.agentId, ownerId, ownerToken, page: page.body, inviteId: invite.id };
 }
 
-async function joinJson(
-  room: JoinHarness,
-): Promise<{ agentKey: string; agentId: string; posts: { text: string }[]; inviteId: string }> {
+async function joinJson(room: JoinHarness): Promise<{
+  agentKey: string;
+  agentId: string;
+  ownerId: string;
+  ownerToken: string;
+  posts: { text: string }[];
+  inviteId: string;
+}> {
   const invite = await createInvite(room);
   const secret = invite.openPath.split("/")[3] ?? "";
   const opened = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?t=${secret}`);
   expect(opened.status).toBe(200);
-  const body = JSON.parse(opened.body) as { agentKey: string; agentId: string; posts: { text: string }[] };
+  const body = JSON.parse(opened.body) as {
+    agentKey: string;
+    agentId: string;
+    ownerId: string;
+    ownerToken: string;
+    posts: { text: string }[];
+  };
+  expect(body.ownerToken).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+  expect(opened.body.includes(hashToken(body.ownerToken))).toBe(false);
   return { ...body, inviteId: invite.id };
+}
+
+function storedText(room: JoinHarness): string {
+  const names = room.db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+    .all() as { name: string }[];
+  return names
+    .filter((table) => /^[A-Za-z0-9_]+$/.test(table.name))
+    .map((table) => JSON.stringify(room.db.prepare(`SELECT * FROM "${table.name}"`).all()))
+    .join("\n");
+}
+
+interface LogEntry {
+  action: string;
+  ownerId: string;
+  agentId: string;
+  detail: { level?: string; fromOwnerId?: string };
 }
 
 function ownerOf(room: JoinHarness, agentId: string): string {

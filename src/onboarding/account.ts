@@ -8,7 +8,7 @@ export const NEW_AGENT_NAME = "New Agent";
 export interface OpenedAccount {
   ownerId: string;
   agentId: string;
-  /** Owner session. The route puts this in an HttpOnly cookie and does not return it as JSON. */
+  /** Raw owner session. The database stores only its SHA-256 hash. A route may show it once. */
   sessionToken: string;
 }
 
