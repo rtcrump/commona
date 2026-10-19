@@ -268,18 +268,6 @@ function grantSeeing(deps: RoomDeps, roomId: string, ownerId: string, level: Sha
   }
 }
 
-/**
- * Open-join default. Posts are shared both ways with people already in the room.
- * Each write is one new edge at Messages. An existing owner's other pairs stay as they are.
- * Files stay on the current level, which is none for a pair the redeem just created.
- */
-export function grantDefaultRoomPosts(deps: RoomDeps, roomId: string, ownerId: string): void {
-  grantSeeing(deps, roomId, ownerId, SharingLevel.Messages);
-  for (const other of otherOwners(deps, roomId, ownerId)) {
-    grantEdge(deps, roomId, other, ownerId, SharingLevel.Messages);
-  }
-}
-
 function otherOwners(deps: RoomDeps, roomId: string, ownerId: string): string[] {
   const rows = deps.db
     .prepare("SELECT DISTINCT owner_id FROM memberships WHERE room_id = ? AND owner_id <> ?")

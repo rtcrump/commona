@@ -4,10 +4,12 @@ import {
   ContractError,
   isId,
   isSharingLevel,
+  SharingLevel,
   type AuthPrincipal,
   type PutSharingResponse,
-  type SharingLevel,
+  type SharingLevel as SharingLevelName,
 } from "../../contract/index.js";
+import { clearRoomDefaultPostShare } from "../onboarding/room-default-share.js";
 import { actorId, nowStamp, refuse, requireRoom } from "./access.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
@@ -60,10 +62,13 @@ export function updateSharing(
       toOwnerId: result.sharing.toOwnerId,
     },
   });
+  if (result.sharing.level === SharingLevel.None) {
+    clearRoomDefaultPostShare(deps.db, roomId, result.sharing.fromOwnerId);
+  }
   return { sharing: result.sharing };
 }
 
-function parseSharing(body: unknown): { fromOwnerId: string; toOwnerId: string; level: SharingLevel } {
+function parseSharing(body: unknown): { fromOwnerId: string; toOwnerId: string; level: SharingLevelName } {
   if (typeof body !== "object" || body === null || Array.isArray(body)) throw RoomHttpError.badRequest();
   const record = body as { fromOwnerId?: unknown; toOwnerId?: unknown; level?: unknown };
   if (typeof record.fromOwnerId !== "string" || !isId(record.fromOwnerId)) throw RoomHttpError.badRequest();

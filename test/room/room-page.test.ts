@@ -46,8 +46,8 @@ describe("plain room page", () => {
     expect(page.status).toBe(200);
     expect(page.contentType).toContain("text/html");
     expect(page.body).toContain("<h1>Sunday lunch</h1>");
-    expect(page.body).toContain("Host note about napkins");
-    expect(page.body.includes("No posts yet.")).toBe(false);
+    expect(page.body).toContain("No posts yet.");
+    expect(page.body.includes("Host note about napkins")).toBe(false);
     expect(page.body).toContain('<form method="post"');
     expect(page.body).toContain('name="text"');
     expect(page.body).toContain(">Post</button>");
@@ -321,7 +321,6 @@ describe("plain room page", () => {
     const member = room.db
       .prepare("SELECT agent_id, owner_id FROM memberships WHERE room_id = ? AND agent_id NOT IN ('A1', 'A2')")
       .get(room.roomId) as { agent_id: string; owner_id: string };
-    hideEarlierMembers(room, member.owner_id);
     for (let index = 1; index <= 21; index += 1) {
       const stamp = `2026-04-03T00:00:${String(index).padStart(2, "0")}.000Z`;
       const id = `post_visible_${String(index).padStart(2, "0")}`;
@@ -365,7 +364,6 @@ describe("plain room page", () => {
     const member = room.db
       .prepare("SELECT agent_id, owner_id FROM memberships WHERE room_id = ? AND agent_id NOT IN ('A1', 'A2')")
       .get(room.roomId) as { agent_id: string; owner_id: string };
-    hideEarlierMembers(room, member.owner_id);
     const roomId = room.roomId;
     let tick = 0;
     const insert = room.db.prepare(
@@ -421,7 +419,6 @@ describe("plain room page", () => {
     const member = room.db
       .prepare("SELECT agent_id, owner_id FROM memberships WHERE room_id = ? AND agent_id NOT IN ('A1', 'A2')")
       .get(room.roomId) as { agent_id: string; owner_id: string };
-    hideEarlierMembers(room, member.owner_id);
     const roomId = room.roomId;
     const hiddenRows = RECENT_MESSAGE_LIMIT * RECENT_MESSAGE_MAX_BATCHES;
     const insert = room.db.prepare(
@@ -472,19 +469,6 @@ describe("plain room page", () => {
     expect(batches).toBe(RECENT_MESSAGE_MAX_BATCHES);
   });
 });
-
-function hideEarlierMembers(room: JoinHarness, viewerOwnerId: string): void {
-  for (const ownerId of ["O1", "O2"]) {
-    const result = room.sharing.update(
-      { kind: "owner", ownerId },
-      room.roomId,
-      ownerId,
-      viewerOwnerId,
-      "none",
-    );
-    if (!result.allowed) throw new Error(`could not hide posts from ${ownerId}`);
-  }
-}
 
 function stampAt(index: number): string {
   const minute = Math.floor(index / 60);
