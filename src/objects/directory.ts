@@ -1,5 +1,5 @@
 import { DurableObject, type DurableObjectState } from "cloudflare:workers";
-import { systemClock, type AuditRecord } from "../../contract/index.js";
+import { systemClock } from "../../contract/index.js";
 import { createAuditLog } from "../audit/log.js";
 import { createTokenStore } from "../auth/store.js";
 import { createSqliteDatabase } from "../db/adapter.js";
@@ -17,7 +17,6 @@ import { RoomHttpError } from "../room/http.js";
 import { createSharingDirectory } from "../sharing/index.js";
 
 interface DurableRoomStorage extends DurableSqlStorage {
-  deleteAll(): Promise<void>;
   deleteAlarm(): Promise<void>;
   getAlarm(): Promise<number | null>;
   setAlarm(scheduledTime: number): Promise<void>;
@@ -38,7 +37,7 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     this.boot();
   }
 
-  /** Open SQLite, then build the HTTP app. Called again after the storage is wiped. */
+  /** Open SQLite, then build the HTTP app. */
   private boot(): void {
     const db = createSqliteDatabase(new DurableSqlDriver(this.storage()));
     try {
@@ -56,61 +55,22 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
       sharing: createSharingDirectory(db),
       guard,
       notices: createOwnerNotifier(db, clock),
-      wipeIfSoleRoom: (roomId, append) => this.wipeIfSoleRoom(roomId, append),
+      clearAlarmIfEmpty: () => this.clearAlarmIfEmpty(),
     };
     this.deps = deps;
     this.app = createHttpApp(deps);
   }
 
   /**
-   * Clear storage when `roomId` is the only room.
-   * Other requests wait, so a room cannot appear between the check and the wipe.
-   * `deleteAll` removes the log with the room. The chain is written back before
-   * this returns, including the delete record `append` just sealed.
+   * The alarm belongs to the whole object. Clear it only when no rooms remain,
+   * and hold other requests so a new room cannot set one in between.
    */
-  private async wipeIfSoleRoom(roomId: string, append: () => AuditRecord): Promise<AuditRecord | null> {
-    return this.ctx.blockConcurrencyWhile(async () => {
-      const rooms = this.deps.db.prepare("SELECT id FROM rooms").all() as { id: string }[];
-      if (rooms.length !== 1 || rooms[0]?.id !== roomId) return null;
-      const audit = append();
-      const preserved = this.readAuditChain();
-      const storage = this.storage();
-      await storage.deleteAlarm();
-      await storage.deleteAll();
-      this.boot();
-      this.restoreAudit(preserved);
-      return audit;
+  private async clearAlarmIfEmpty(): Promise<void> {
+    await this.ctx.blockConcurrencyWhile(async () => {
+      const row = this.deps.db.prepare("SELECT COUNT(*) AS n FROM rooms").get() as { n: number } | undefined;
+      if (Number(row?.n ?? 0) !== 0) return;
+      await this.storage().deleteAlarm();
     });
-  }
-
-  private readAuditChain(): PreservedAudit {
-    const rows = this.deps.db
-      .prepare(
-        `SELECT seq, id, ts, room, agent_id, owner_id, action, result, detail_json, prev_hash, hash
-         FROM audit_log ORDER BY seq ASC`,
-      )
-      .all() as PreservedAuditRow[];
-    const tip = this.deps.db.prepare("SELECT seq, hash FROM audit_chain_tip WHERE id = 1").get() as
-      | { seq: number; hash: string }
-      | undefined;
-    return {
-      rows: rows.map((row) => ({ ...row, seq: Number(row.seq) })),
-      tip: tip ? { seq: Number(tip.seq), hash: tip.hash } : null,
-    };
-  }
-
-  private restoreAudit(chain: PreservedAudit): void {
-    const insert = this.deps.db.prepare(
-      `INSERT INTO audit_log (seq, id, ts, room, agent_id, owner_id, action, result, detail_json, prev_hash, hash)
-       VALUES (@seq, @id, @ts, @room, @agent_id, @owner_id, @action, @result, @detail_json, @prev_hash, @hash)`,
-    );
-    const write = this.deps.db.transaction(() => {
-      for (const row of chain.rows) insert.run(row);
-      if (chain.tip) {
-        this.deps.db.prepare("INSERT INTO audit_chain_tip (id, seq, hash) VALUES (1, ?, ?)").run(chain.tip.seq, chain.tip.hash);
-      }
-    });
-    write();
   }
 
   private storage(): DurableRoomStorage {
@@ -231,25 +191,6 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
       detailJson: row.detail_json,
     }));
   }
-}
-
-interface PreservedAuditRow {
-  seq: number;
-  id: string;
-  ts: string;
-  room: string;
-  agent_id: string;
-  owner_id: string;
-  action: string;
-  result: string;
-  detail_json: string;
-  prev_hash: string;
-  hash: string;
-}
-
-interface PreservedAudit {
-  rows: PreservedAuditRow[];
-  tip: { seq: number; hash: string } | null;
 }
 
 function applyPublicBindings(env: CommonaEnv): void {

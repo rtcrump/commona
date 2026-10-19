@@ -15,7 +15,7 @@ function alarmStorage(instance: { ctx: { storage: unknown } }): {
 }
 
 describe("worker room delete wipe", () => {
-  it("clears Durable Object storage and the alarm when the owner deletes the only room", async () => {
+  it("keeps the audit chain and clears the alarm when the owner deletes the only room", async () => {
     const response = await SELF.fetch("https://room.example.test/host/room", {
       method: "POST",
       headers: {
@@ -74,7 +74,7 @@ describe("worker room delete wipe", () => {
     expect(kept).toHaveLength(before.length + 1);
     expect(kept.some((row) => row.action === "setting_change" && row.result === "ok" && row.room === roomId)).toBe(true);
     expect(kept.some((row) => row.action === before[0]?.action && row.room === before[0]?.room)).toBe(true);
-    expect(await runInDurableObject(directory, (instance) => instance.ownerDisplayNames())).toEqual([]);
+    expect(await runInDurableObject(directory, (instance) => instance.ownerDisplayNames())).toEqual(["Host (demo)"]);
     expect(await runInDurableObject(directory, (instance) => alarmStorage(instance).getAlarm())).toBeNull();
     expect(await runInDurableObject(directory, (instance) => instance.inviteRecord(inviteId))).toBeNull();
 
@@ -83,7 +83,7 @@ describe("worker room delete wipe", () => {
     const keptAfterRestart = await runInDurableObject(directory, (instance) => instance.auditSnapshot());
     expect(keptAfterRestart).toEqual(kept);
     expect(await runInDurableObject(directory, (instance) => alarmStorage(instance).getAlarm())).toBeNull();
-    expect(await runInDurableObject(directory, (instance) => instance.ownerDisplayNames())).toEqual([]);
+    expect(await runInDurableObject(directory, (instance) => instance.ownerDisplayNames())).toEqual(["Host (demo)"]);
 
     const invite = await SELF.fetch(`https://room.example.test/j/${inviteId}/${secret}`);
     expect(invite.status).toBe(404);

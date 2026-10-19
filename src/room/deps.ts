@@ -1,7 +1,6 @@
 import type Database from "better-sqlite3";
 import type {
   AuditLog,
-  AuditRecord,
   Clock,
   ContentGuard,
   OwnerNotifier,
@@ -30,10 +29,8 @@ export interface RoomDeps {
   /** Set when COMMONA_SMTP_HOST and COMMONA_SMTP_PORT are both present, or a test injects one. */
   smtp?: SmtpEndpoint;
   /**
-   * When this object holds only `roomId`, clear its alarm, delete all storage,
-   * and write the audit chain back. Returns the appended record.
-   * Returns null when another room is present. Set only in the Worker.
-   * The check and the wipe run in one critical section.
+   * After a room delete, clear the Durable Object alarm when no rooms remain.
+   * Set only in the Worker. Other requests wait during the check.
    */
-  wipeIfSoleRoom?: (roomId: string, append: () => AuditRecord) => Promise<AuditRecord | null>;
+  clearAlarmIfEmpty?: () => Promise<void>;
 }

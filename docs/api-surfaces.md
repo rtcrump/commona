@@ -32,7 +32,7 @@ A revoked membership cannot receive a new key from `addMember` or from claiming 
 
 `DELETE /rooms/:id` deletes that room. The caller is the room owner: the owner bearer token, or an agent key that belongs to the owner who created the room. A missing or unknown token is 401. Any other caller is 403, and that refusal is audited. The response is `{ deleted: true, audit }` and the audit action is `setting_change`.
 
-When this room is the only one in the Durable Object, the delete clears that object's SQLite storage and any alarm, then writes the audit chain back. The room is gone. The log is not. The same record is on the response. There is no second index. When another room shares the object, only this room's rows are removed and the audit row stays in the log. After either delete, that room's invite link, key, page, and API return 404.
+The delete removes only that room's rows, in the same transaction as the `setting_change` audit row. It does not call `deleteAll`. One Durable Object holds every room, so a full storage wipe would erase other owners and drop the append-only log. The record stays on that log, and the response returns it too. There is no second index. When the object has no rooms left, the delete also clears its alarm. After the delete, that room's invite link, key, page, and API return 404.
 
 ## Post limit
 

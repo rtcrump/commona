@@ -19,12 +19,10 @@ export interface DeletedRoom {
  * Owner auth is the same check as key revoke: the caller’s owner id is the room creator.
  * An agent key of that owner counts. Anyone else is 401 before this runs, or 403 here.
  *
- * The Worker keeps every room in one SQLite Durable Object. When this room is
- * the only one, the delete clears the alarm and calls `deleteAll`, then writes
- * the audit chain back into the empty object. Room rows stay gone. The log does
- * not. That critical section also stops a second room from appearing between
- * the check and the wipe. When another room is already there, only this room's
- * rows are removed and the audit row stays in the log.
+ * The Worker keeps every room in one SQLite Durable Object. The delete removes
+ * only this room's rows, in the same transaction as the audit append, so the
+ * append-only log is never cleared. When no rooms remain, the Worker clears
+ * the object's alarm. Other owners' rows stay.
  *
  * There is no second index object. The response also returns the sealed record.
  */
@@ -53,15 +51,13 @@ export async function deleteOwnedRoom(deps: RoomDeps, principal: AuthPrincipal, 
     result: AuditResult.Ok,
     detail: { itemId: roomId },
   };
-  if (deps.wipeIfSoleRoom) {
-    const audit = await deps.wipeIfSoleRoom(roomId, () => deps.audit.append(input));
-    if (audit) return { deleted: true, audit };
-  }
   const write = deps.db.transaction(() => {
     purgeRoom(deps.db, roomId);
     return deps.audit.append(input);
   });
-  return { deleted: true, audit: write() };
+  const audit = write();
+  if (deps.clearAlarmIfEmpty) await deps.clearAlarmIfEmpty();
+  return { deleted: true, audit };
 }
 
 function isRoomId(value: string): boolean {
