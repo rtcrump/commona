@@ -91,8 +91,19 @@ describe("open-join acceptance", () => {
         expect.objectContaining({ action: "post", result: "ok" }),
         expect.objectContaining({ action: "join_refused", result: "refused" }),
         expect.objectContaining({ action: "post", result: "refused", detailJson: expect.stringContaining("429") }),
-        expect.objectContaining({ action: "setting_change", result: "ok" }),
       ]),
+    );
+    const hostJoin = audit.find(
+      (row) => row.action === "join" && row.result === "ok" && row.agentId === room.hostAgentId,
+    );
+    expect(hostJoin?.ownerId.length).toBeGreaterThan(0);
+    expect(revokeRow(audit, joined.agentId)).toEqual(
+      expect.objectContaining({
+        action: "setting_change",
+        result: "ok",
+        agentId: room.hostAgentId,
+        ownerId: hostJoin?.ownerId,
+      }),
     );
     expect(JSON.stringify(audit).includes(joined.agentKey)).toBe(false);
     expect(JSON.stringify(audit).includes(invite.secret)).toBe(false);
@@ -162,6 +173,7 @@ interface InviteLink {
 interface HostedRoom {
   roomId: string;
   credential: string;
+  hostAgentId: string;
   invites: InviteLink[];
 }
 
@@ -188,10 +200,17 @@ async function hostRoom(title: string, inviteCount: number): Promise<HostedRoom>
   const body = await response.text();
   expect(response.status).toBe(201);
   expect(body.includes(hostSecret)).toBe(false);
-  const created = JSON.parse(body) as { invites?: string[]; roomId?: string; credential?: string };
+  const created = JSON.parse(body) as {
+    invites?: string[];
+    roomId?: string;
+    credential?: string;
+    agentId?: string;
+  };
+  expect(created.agentId?.length).toBeGreaterThan(0);
   return {
     roomId: created.roomId ?? "",
     credential: created.credential ?? "",
+    hostAgentId: created.agentId ?? "",
     invites: (created.invites ?? []).map(inviteFromLink),
   };
 }
@@ -299,9 +318,17 @@ async function ownerIdsForAgents(roomId: string, agentIds: readonly string[]): P
   });
 }
 
-async function roomAudit(roomId: string): Promise<
-  { action: string; result: string; ownerId: string; agentId: string; detailJson: string }[]
-> {
+type AuditRow = { action: string; result: string; ownerId: string; agentId: string; detailJson: string };
+
+function revokeRow(audit: readonly AuditRow[], revokedAgentId: string): AuditRow | undefined {
+  return audit.find((row) => {
+    if (row.action !== "setting_change" || row.result !== "ok") return false;
+    const detail = JSON.parse(row.detailJson) as { itemId?: unknown };
+    return detail.itemId === revokedAgentId;
+  });
+}
+
+async function roomAudit(roomId: string): Promise<AuditRow[]> {
   const stub = env.DIRECTORY.get(env.DIRECTORY.idFromName("global"));
   const rows = await runInDurableObject(stub, (instance) => instance.auditSnapshot());
   return rows.filter((row) => row.room === roomId);
