@@ -303,4 +303,4 @@ del /f /q "%USERPROFILE%\commona-host-credential"
 
 The https addresses are now dead. Opening one should fail. The exact words the browser shows were not checked here. **(unverified)**
 
-Do not reuse those addresses at the lunch. A new tunnel is a new address. Change or remove `COMMONA_HOST_SECRET` in `.dev.vars`, along with `COMMONA_PUBLIC_ORIGIN` and `COMMONA_CONNECT_URL`. Use **Copy my link** only after that. The old link dies with the old address.
+Do not reuse those addresses at the lunch. A new tunnel is a new address. Put new values for `COMMONA_HOST_SECRET`, `COMMONA_PUBLIC_ORIGIN`, and `COMMONA_CONNECT_URL` in `.dev.vars`. Never remove those lines. Use **Copy my link** only after that. The old link dies with the old address.
