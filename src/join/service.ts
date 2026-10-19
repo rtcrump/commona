@@ -18,7 +18,7 @@ import { RoomHttpError } from "../room/http.js";
 import { inviteLog } from "./log.js";
 import { ensureInviteSchema } from "./schema.js";
 
-export const DEFAULT_INVITE_TTL_SECONDS = 24 * 60 * 60;
+export const DEFAULT_INVITE_TTL_SECONDS = 48 * 60 * 60;
 export const MAX_INVITE_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /** Anonymous audit actor for a redeem that has no account yet. */

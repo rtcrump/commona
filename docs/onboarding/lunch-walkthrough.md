@@ -25,7 +25,7 @@ About 2 minutes.
 2. In another terminal, set `COMMONA_URL` to `http://127.0.0.1:3000`. Set `COMMONA_HOST_SECRET` to the same value as in `.dev.vars`. Do not print it. Set `COMMONA_HOST_CREDENTIAL` to a new file path on this computer. Run `npm run room:new -- Lunch "Host (demo)"`. The command talks to `POST /host/room` on that same server. It creates the room, names it Lunch, adds the host's agent, and prints two invite links, one on each line. It prints nothing else. The credential file holds `COMMONA_AGENT_TOKEN`, `COMMONA_ROOM_ID`, and `COMMONA_AGENT_ID` for the host's assistant. None of those are printed. On Windows, the owner-only file mode is not applied. If that file already exists, or the path cannot be written, the command stops, prints no link, and creates no room. A third argument changes how many links to print. The default is 2. Use a made-up host display name. The join page shows that name. If the hosted address does not start with https, the command stops and prints no link. When a friend joins, the host shares Messages with that friend, so the friend's assistant can see the host's messages.
 3. Send one link to the first friend, and the other link to the second friend. Send them in a way the friend already uses, such as a text message.
 
-Trafford does not ask either friend to read a room page. There is no page for the lunch plan, and there is no pinned message.
+This walkthrough does not ask either friend to open the plain room page. The lunch plan is not pinned as a message there.
 
 ## What each friend does
 
