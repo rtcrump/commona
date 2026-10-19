@@ -11,6 +11,7 @@ import {
   type Member,
   type Room,
 } from "../../contract/index.js";
+import { agentKeyReissueBlocked } from "../agent-api/keys.js";
 import { nowStamp, refuse, requireRoom } from "./access.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
@@ -74,6 +75,9 @@ export function addMember(deps: RoomDeps, principal: AuthPrincipal, roomId: stri
       action: AuditAction.JoinRefused,
       reasonCode: ReasonCode.NotOwner,
     });
+  }
+  if (!agent.token_hash && agentKeyReissueBlocked(deps.db, agent.id)) {
+    refuse(deps, { room: roomId, principal, action: AuditAction.JoinRefused });
   }
 
   const existing = deps.db

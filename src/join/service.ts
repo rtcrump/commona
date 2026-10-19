@@ -12,13 +12,14 @@ import {
   type AuditDetail,
   type AuthPrincipal,
 } from "../../contract/index.js";
+import { clearRoomReissueBlock } from "../agent-api/keys.js";
 import { NEW_AGENT_NAME, NEW_OWNER_NAME, openAccount, newSecret } from "../onboarding/account.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { inviteLog } from "./log.js";
 import { ensureInviteSchema } from "./schema.js";
 
-export const DEFAULT_INVITE_TTL_SECONDS = 24 * 60 * 60;
+export const DEFAULT_INVITE_TTL_SECONDS = 48 * 60 * 60;
 export const MAX_INVITE_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /** Anonymous audit actor for a redeem that has no account yet. */
@@ -157,6 +158,10 @@ export function createInvite(deps: RoomDeps, principal: AuthPrincipal, roomId: s
       expiresAt,
       now,
     );
+  const room = deps.db.prepare("SELECT created_by_owner_id FROM rooms WHERE id = ?").get(roomId) as
+    | { created_by_owner_id: string }
+    | undefined;
+  if (room && principal.ownerId === room.created_by_owner_id) clearRoomReissueBlock(deps.db, roomId);
   deps.audit.append({
     ts: now,
     room: roomId,

@@ -24,6 +24,7 @@ import {
   type RoomFile,
   type UploadFileResponse,
 } from "../../contract/index.js";
+import { reserveAgentPost } from "../agent-api/limit.js";
 import { decodeUtf8Text } from "../guard/index.js";
 import { recordBlock, recordLoopStop } from "../notices/events.js";
 import { nowStamp, refuse, requireMember, requireRoom } from "./access.js";
@@ -71,6 +72,7 @@ export function createPost(
   requireMember(deps, principal, roomId);
   if (principal.kind !== "agent") throw RoomHttpError.forbidden();
   const parent = resolveParent(deps, roomId, request.replyToId);
+  reserveAgentPost(deps, principal, roomId);
   const id = newId("post");
   const round = roundAfterOtherAgent(deps, roomId, principal.agentId);
   const threadId = parent?.threadId ?? id;

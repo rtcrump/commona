@@ -98,7 +98,122 @@ describe("agent-written stats", () => {
       classifyTrailers(
         "feat(room): x\n\nAuthored-by-agent: cursor/commona-build\n\nA body paragraph sits between the trailers.\n\nModel: cursor\n",
       ).kind,
-    ).toBe("unattributed");
+    ).toBe("agent");
+  });
+
+  it("counts a squash whose trailers all name agents", () => {
+    const message = [
+      "feat(room): serve the room (#37)",
+      "",
+      "* feat(room): first slice",
+      "",
+      "The first slice lands.",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "* fix(room): second slice",
+      "",
+      "The second slice lands.",
+      "",
+      "Authored-by-agent: cursor/other",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "",
+    ].join("\n");
+    expect(parseTrailerBlock(message)).toEqual([["Co-authored-by", "Cursor Agent <cursoragent@cursor.com>"]]);
+    expect(classifyTrailers(message).kind).toBe("agent");
+
+    const mixed = message.replace(
+      "Authored-by-agent: cursor/other\nModel: test",
+      "Authored-by-agent: cursor/other\nModel: test\n\nAuthored-by: human/tester",
+    );
+    expect(classifyTrailers(mixed).kind).toBe("unattributed");
+  });
+
+  it("counts a squash whose footer credits only the merger", () => {
+    const message = [
+      "feat(room): serve the room (#37)",
+      "",
+      "* feat(room): first slice",
+      "",
+      "The first slice lands.",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "",
+      "* fix(room): second slice",
+      "",
+      "The second slice lands.",
+      "",
+      "Authored-by-agent: cursor/other",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(message).kind).toBe("agent");
+  });
+
+  it("ignores a Markdown rule inside a squashed commit", () => {
+    const message = [
+      "feat(room): serve the room (#37)",
+      "",
+      "* feat(room): first slice",
+      "",
+      "The first slice lands.",
+      "",
+      "    ---------",
+      "",
+      "---------",
+      "",
+      "That rule is part of the commit body.",
+      "",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(message).kind).toBe("agent");
+  });
+
+  it("does not count a squash co-authored by a person", () => {
+    const message = [
+      "feat(room): serve the room (#37)",
+      "",
+      "* feat(room): first slice",
+      "",
+      "The first slice lands.",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "* fix(room): second slice",
+      "",
+      "The second slice lands.",
+      "",
+      "Authored-by-agent: cursor/other",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(message).kind).toBe("unattributed");
   });
 
   it("reads a throwaway repository the same way", () => {
