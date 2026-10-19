@@ -7,6 +7,7 @@ import { readCookie, serializeCookie } from "../join/cookies.js";
 import { ensureInviteSchema } from "../join/schema.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { newSecret } from "../onboarding/account.js";
+import { grantDefaultRoomPosts } from "../onboarding/join-flow.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost } from "../room/posts.js";
@@ -111,6 +112,7 @@ function redeemAndRedirect(deps: RoomDeps, roomId: string, inviteId: string | nu
     }
     throw error;
   }
+  grantDefaultRoomPosts(deps, roomId, redeemed.owner.id);
   const key = deps.tokens.issueAgentToken(redeemed.agent.id);
   if (!/^[A-Za-z0-9_-]+$/.test(key)) throw new Error("refusing to send a secret");
   saveKeyFlash(deps, redeemed.agent.id, roomId, key);
