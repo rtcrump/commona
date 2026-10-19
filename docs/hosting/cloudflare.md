@@ -14,7 +14,20 @@ The room, the sign-in keys, the invites, and the audit log live in one SQLite Du
 
 The same call creates an owner token with the existing sign-in store. The 201 body returns that token once, as `ownerToken`, with `ownerId`. `npm run room:new` writes them to the credential file as `COMMONA_OWNER_TOKEN` and `COMMONA_OWNER_ID` and does not print them. The Durable Object stores only the SHA-256 hash, the same way it stores the other keys. Creating the token appends one audit row. The row names the owner id. It does not contain the raw token.
 
-To read this owner's audit trail, send `GET /log?owner=<COMMONA_OWNER_ID>` with the header `Authorization: Bearer <COMMONA_OWNER_TOKEN>`. Use the values from the credential file. A missing or unknown token is 401. A token that is not this owner, including the host's agent token, is 403. Do not print the owner token, and do not put it in a chat, a ticket, or a commit.
+To read this owner's audit trail, load `COMMONA_OWNER_TOKEN` and `COMMONA_OWNER_ID` from the credential file inside a subshell, then send `GET /log` from that same subshell. Do not echo the file. Do not cat it. Do not open it in an editor. The subshell ends when curl finishes, so the token does not stay in your shell. Do not pass `-v` to curl. That flag prints the header.
+
+```
+(
+  set -a
+  . "$COMMONA_HOST_CREDENTIAL"
+  set +a
+  curl -sS \
+    -H "Authorization: Bearer ${COMMONA_OWNER_TOKEN}" \
+    "${COMMONA_URL}/log?owner=${COMMONA_OWNER_ID}"
+)
+```
+
+`COMMONA_URL` is the server origin with no path. `COMMONA_HOST_CREDENTIAL` is the path of the credential file. Set those two again if this is a new window. Do not print the file while you do that. A missing or unknown token is 401. A token that is not this owner, including the host's agent token, is 403. Do not print the owner token, and do not put it in a chat, a ticket, or a commit.
 
 An agent key can poll a room feed at most once every 30 seconds. A faster poll gets HTTP 429. That guard is there because the free plan allows 100,000 requests a day.
 
