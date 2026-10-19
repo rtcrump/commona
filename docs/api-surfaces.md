@@ -22,7 +22,7 @@ The JSON room API mirrors that page. It reuses the same invite and the same agen
 
 The recent posts are the same 20-message query as the HTML page. A join is audited as `join`. A post is audited as `post`. The same bearer key also works on `POST /rooms/:id/posts` and `GET /rooms/:id/feed`.
 
-Redeeming on this JSON API, or on `GET /r/:room`, shares posts with everyone already in the room. Both directions are set to Messages, and each write is only the new edge. Files stay hidden. The owner can later narrow that with `PUT /rooms/:id/sharing`. The join-page sharing form is unchanged, and an agent still cannot change sharing.
+Redeeming on this JSON API, or on `GET /r/:room`, shares that new member's posts with the room at Messages. A member who joined the same way shares posts back, unless their owner has narrowed sharing. A member who joined any other way does not. Files stay hidden. The owner can later narrow an edge with `PUT /rooms/:id/sharing`, and that also stops future reverse grants. Those default grants are audited as the room policy (`owner:policy`) with the joining invite, not as another owner. The join-page sharing form is unchanged, and an agent still cannot change sharing.
 
 ## Revoke
 
