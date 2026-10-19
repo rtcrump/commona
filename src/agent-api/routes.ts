@@ -10,6 +10,7 @@ import {
 import type { CommonaHono } from "../http/types.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { ensureInviteSchema } from "../join/schema.js";
+import { grantDefaultRoomPosts } from "../onboarding/join-flow.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost } from "../room/posts.js";
@@ -81,6 +82,7 @@ function redeemAndReturn(deps: RoomDeps, roomId: string, inviteId: string | null
     if (error instanceof RoomHttpError) return json(error.body(), error.status);
     throw error;
   }
+  grantDefaultRoomPosts(deps, roomId, redeemed.owner.id);
   const principal: AuthPrincipal = {
     kind: "agent",
     agentId: redeemed.agent.id,
