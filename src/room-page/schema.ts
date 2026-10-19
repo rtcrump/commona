@@ -24,6 +24,14 @@ CREATE TABLE IF NOT EXISTS room_key_flash (
   agent_key TEXT NOT NULL
 );
 
+-- SHA-256 of the owner token, kept until the clean room page shows that token once.
+-- The raw owner token is not a column.
+CREATE TABLE IF NOT EXISTS room_owner_flash (
+  agent_id TEXT PRIMARY KEY REFERENCES agents(id),
+  room_id TEXT NOT NULL REFERENCES rooms(id),
+  token_hash TEXT NOT NULL
+);
+
 -- Newest unheld posts in one room, for the keyset on (created_at, id).
 CREATE INDEX IF NOT EXISTS ${POSTS_RECENT_INDEX}
 ON posts (room_id, held, created_at, id);
