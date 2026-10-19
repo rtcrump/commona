@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { hashToken, SharingLevel } from "../../contract/index.js";
 import { setInviteLog } from "../../src/join/log.js";
-import { ROOM_DEFAULT_POLICY_OWNER } from "../../src/sharing/room-default-share.js";
+import { ROOM_DEFAULT_POLICY_ACTOR } from "../../src/sharing/room-default-share.js";
 import { agentCookieName, ownerCookieName } from "../../src/room-page/routes.js";
 import { call, cookieValue, createInvite, startJoinHarness, type JoinHarness } from "../onboarding/harness.js";
 
@@ -54,8 +54,8 @@ describe("open-join default post sharing", () => {
     expect(room.sharing.level(room.roomId, htmlOwner, dotsOwner)).toBe(SharingLevel.Messages);
     expect(room.sharing.level(room.roomId, dotsOwner, htmlOwner)).toBe(SharingLevel.Messages);
     expect(room.sharing.level(room.roomId, "O1", dotsOwner)).toBe(SharingLevel.None);
-    expect(policyGrants(room).every((row) => row.ownerId === ROOM_DEFAULT_POLICY_OWNER)).toBe(true);
-    expect(policyGrants(room).some((row) => row.agentId !== `owner:${ROOM_DEFAULT_POLICY_OWNER}`)).toBe(false);
+    expect(policyGrants(room).every((row) => row.agentId === ROOM_DEFAULT_POLICY_ACTOR)).toBe(true);
+    expect(policyGrants(room).every((row) => row.ownerId === row.fromOwnerId)).toBe(true);
     expect(
       policyGrants(room).some(
         (row) => row.itemId === dots.inviteId && row.fromOwnerId === htmlOwner && row.toOwnerId === dotsOwner,
@@ -143,7 +143,30 @@ describe("open-join default post sharing", () => {
       policyGrants(room).some((row) => row.itemId === muse.inviteId && row.fromOwnerId === htmlOwner),
     ).toBe(false);
     expect(
-      policyGrants(room).filter((row) => row.itemId === muse.inviteId).every((row) => row.ownerId === ROOM_DEFAULT_POLICY_OWNER),
+      policyGrants(room)
+        .filter((row) => row.itemId === muse.inviteId)
+        .every((row) => row.ownerId === row.fromOwnerId && row.agentId === ROOM_DEFAULT_POLICY_ACTOR),
+    ).toBe(true);
+    const htmlLog = await call(room.baseUrl, "GET", `/log?owner=${htmlOwner}`, { token: html.ownerToken });
+    expect(htmlLog.status).toBe(200);
+    const htmlEntries = (JSON.parse(htmlLog.body) as { entries: LogEntry[] }).entries.filter(
+      (entry) => entry.action === "setting_change" && entry.detail.level === "messages",
+    );
+    expect(htmlEntries.some((entry) => entry.detail.fromOwnerId === htmlOwner && entry.agentId === ROOM_DEFAULT_POLICY_ACTOR)).toBe(
+      true,
+    );
+    expect(htmlEntries.some((entry) => entry.detail.fromOwnerId === dotsOwner)).toBe(false);
+    const dotsLog = await call(room.baseUrl, "GET", `/log?owner=${dotsOwner}`, { token: dots.ownerToken });
+    expect(dotsLog.status).toBe(200);
+    const dotsEntries = (JSON.parse(dotsLog.body) as { entries: LogEntry[] }).entries;
+    expect(
+      dotsEntries.some(
+        (entry) =>
+          entry.action === "setting_change" &&
+          entry.ownerId === dotsOwner &&
+          entry.agentId === ROOM_DEFAULT_POLICY_ACTOR &&
+          entry.detail.fromOwnerId === dotsOwner,
+      ),
     ).toBe(true);
 
     const museFile = await call(room.baseUrl, "GET", `/rooms/${room.roomId}/files/${fileId}`, {
@@ -297,6 +320,13 @@ function storedText(room: JoinHarness): string {
     .filter((table) => /^[A-Za-z0-9_]+$/.test(table.name))
     .map((table) => JSON.stringify(room.db.prepare(`SELECT * FROM "${table.name}"`).all()))
     .join("\n");
+}
+
+interface LogEntry {
+  action: string;
+  ownerId: string;
+  agentId: string;
+  detail: { level?: string; fromOwnerId?: string };
 }
 
 function ownerOf(room: JoinHarness, agentId: string): string {
