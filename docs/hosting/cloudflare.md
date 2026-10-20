@@ -14,7 +14,11 @@ The room, the sign-in keys, the invites, and the audit log live in one SQLite Du
 
 The same call creates an owner token with the existing sign-in store. The 201 body returns that token once, as `ownerToken`, with `ownerId`. `npm run room:new` writes them to the credential file as `COMMONA_OWNER_TOKEN` and `COMMONA_OWNER_ID` and does not print them. The Durable Object stores only the SHA-256 hash, the same way it stores the other keys. Creating the token appends one audit row. The row names the owner id. It does not contain the raw token.
 
-To read this owner's audit trail, load `COMMONA_OWNER_TOKEN` and `COMMONA_OWNER_ID` from the credential file inside a subshell, then send `GET /log` from that same subshell. Do not echo the file. Do not cat it. Do not open it in an editor. The subshell ends when curl finishes, so the token does not stay in your shell. Do not pass `-v` to curl. That flag prints the header.
+To read this owner's audit trail, load `COMMONA_OWNER_TOKEN` and `COMMONA_OWNER_ID` from the credential file and send `GET /log`. Do not echo the file. Do not cat it. Do not open it in an editor. Do not pass `-v` to curl. That flag prints the header. Do not use `Write-Output`. Do not echo the token.
+
+The credential file is one `NAME=value` line for each secret, separated by a Unix newline. The value is the text after the first `=`. PowerShell and Command Prompt read that text for `COMMONA_OWNER_TOKEN` and `COMMONA_OWNER_ID`, then give it to curl on standard input (`--config -`). It is not a curl argument, so it is not on the curl command line. The text you paste does not contain the token, so the shell history does not either.
+
+Bash. The subshell ends when curl finishes, so the token does not stay in your shell.
 
 ```
 (
@@ -25,6 +29,48 @@ To read this owner's audit trail, load `COMMONA_OWNER_TOKEN` and `COMMONA_OWNER_
     -H "Authorization: Bearer ${COMMONA_OWNER_TOKEN}" \
     "${COMMONA_URL}/log?owner=${COMMONA_OWNER_ID}"
 )
+```
+
+Windows PowerShell. Paste this into Windows PowerShell.
+
+```
+$ownerToken = $null
+$ownerId = $null
+try {
+  foreach ($line in [System.IO.File]::ReadAllLines($env:COMMONA_HOST_CREDENTIAL)) {
+    $eq = $line.IndexOf('=')
+    if ($eq -lt 1) { continue }
+    $name = $line.Substring(0, $eq)
+    $value = $line.Substring($eq + 1)
+    if ($name -eq 'COMMONA_OWNER_TOKEN') { $ownerToken = $value }
+    elseif ($name -eq 'COMMONA_OWNER_ID') { $ownerId = $value }
+  }
+  if ([string]::IsNullOrEmpty($ownerToken) -or [string]::IsNullOrEmpty($ownerId)) {
+    throw 'The credential file has no owner token.'
+  }
+  $cfg = @(
+    'silent'
+    'show-error'
+    ('header = "Authorization: Bearer {0}"' -f $ownerToken)
+    ('url = "{0}/log?owner={1}"' -f $env:COMMONA_URL, $ownerId)
+  ) -join "`n"
+  $cfg | & curl.exe --config -
+} finally {
+  Remove-Variable ownerToken, ownerId, cfg, line, name, value -ErrorAction SilentlyContinue
+}
+```
+
+Windows Command Prompt. Paste this into Command Prompt, not into a batch file. In a batch file, `%A` and `%B` would be `%%A` and `%%B`. Leave `@echo off` in place so the prompt does not display the lines it runs. Do not run `echo %OWNER_TOKEN%`. The backslashes before the quotes are required.
+
+```
+@echo off
+set "OWNER_TOKEN="
+set "OWNER_ID="
+for /f "usebackq tokens=1* delims==" %A in ("%COMMONA_HOST_CREDENTIAL%") do @if "%A"=="COMMONA_OWNER_TOKEN" set "OWNER_TOKEN=%B"
+for /f "usebackq tokens=1* delims==" %A in ("%COMMONA_HOST_CREDENTIAL%") do @if "%A"=="COMMONA_OWNER_ID" set "OWNER_ID=%B"
+powershell -NoProfile -Command "$cfg = @('silent','show-error',('header = \"Authorization: Bearer {0}\"' -f $env:OWNER_TOKEN),('url = \"{0}/log?owner={1}\"' -f $env:COMMONA_URL,$env:OWNER_ID)) -join [char]10; $cfg | curl.exe --config -; Remove-Variable cfg"
+set "OWNER_TOKEN="
+set "OWNER_ID="
 ```
 
 `COMMONA_URL` is the server origin with no path. `COMMONA_HOST_CREDENTIAL` is the path of the credential file. Set those two again if this is a new window. Do not print the file while you do that. A missing or unknown token is 401. A token that is not this owner, including the host's agent token, is 403. Do not print the owner token, and do not put it in a chat, a ticket, or a commit.

@@ -222,7 +222,7 @@ set COMMONA_HOST_CREDENTIAL=%USERPROFILE%\commona-host-credential
 npm run room:new -- Lunch "Host (demo)"
 ```
 
-`Lunch` is the room title. `Host (demo)` is a made-up name for you. The join page shows that name. The command sends `POST /host/room` on port 3000. It creates the room, adds the host's agent, and prints two invite links, one on each line. It prints nothing else. A third argument changes how many links to print. The default is 2. On macOS the credential file is owner-only (mode 0600). On Windows that mode is not applied. Do not open the credential file in an editor. Do not cat it, do not echo it, and do not paste it into a chat or a note. To read the audit log, load `COMMONA_OWNER_TOKEN` and `COMMONA_OWNER_ID` from that file in a subshell with `set -a`, as [docs/hosting/cloudflare.md](../hosting/cloudflare.md) shows. Do not print them.
+`Lunch` is the room title. `Host (demo)` is a made-up name for you. The join page shows that name. The command sends `POST /host/room` on port 3000. It creates the room, adds the host's agent, and prints two invite links, one on each line. It prints nothing else. A third argument changes how many links to print. The default is 2. On macOS the credential file is owner-only (mode 0600). On Windows that mode is not applied. Do not open the credential file in an editor. Do not cat it, do not echo it, and do not paste it into a chat or a note. To read the audit log, load `COMMONA_OWNER_TOKEN` and `COMMONA_OWNER_ID` from that file with the Bash, PowerShell, or Command Prompt block in [docs/hosting/cloudflare.md](../hosting/cloudflare.md). Do not print them.
 
 If the public address does not start with https, the command stops and prints no link. If the credential path already exists, the command stops. Use a new path. If npm says `Missing script: "room:new"`, this folder does not have that command yet. Stop. This page was not run with that command on this checkout. **(unverified)**
 
@@ -286,7 +286,7 @@ Do not click **Copy my link** or **Get a new link**.
 
 Press Ctrl+C in the room server window, the connector window, and both tunnel windows.
 
-Delete the host credential file from step 6. Do not cat it or open it in an editor. Load it only in the subshell the hosting page shows, and do not print the token. Leave the host secret file in place. Each server start replaces that secret with a new one, so you do not delete it here. After this stop, the host secret file still holds the last secret until the next start. Do not open the host secret file, and do not share it.
+Delete the host credential file from step 6. Do not cat it or open it in an editor. Load it only with the shell block on the hosting page, and do not print the token. Leave the host secret file in place. Each server start replaces that secret with a new one, so you do not delete it here. After this stop, the host secret file still holds the last secret until the next start. Do not open the host secret file, and do not share it.
 
 macOS Terminal:
 
