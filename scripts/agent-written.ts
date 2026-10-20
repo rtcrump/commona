@@ -6,8 +6,20 @@ import { readFileSync, writeFileSync } from "node:fs";
  * Lines are insertions from `git log --numstat`. Commits are classified only
  * from Authored-by-agent and Authored-by trailers. A blank line between
  * trailer paragraphs still counts as one block, the same way
- * scripts/check_conventions.py does. A commit with neither trailer, or with
- * both, is unattributed. Merge commits are skipped.
+ * scripts/check_conventions.py does. The counter reads every trailer
+ * paragraph in the message, not only the last block. A GitHub squash keeps
+ * each Authored-by-agent line above its own message and ends with a
+ * Co-authored-by footer after a divider, so the last block has no
+ * authorship. The divider is an exact, unindented nine-hyphen line, and only
+ * when every line after it is an allowed trailer. Body text after it is not
+ * the footer. A commit with at least
+ * one Authored-by-agent trailer and no Authored-by trailer is agent-written,
+ * unless that footer credits a person. That footer is the merger. A person
+ * credited inside a squashed commit is not the merger. A normal agent commit
+ * may still credit a person with Co-authored-by. A commit with one or more
+ * Authored-by trailers and no Authored-by-agent trailer is human. A commit
+ * with neither authorship trailer, or with both, is unattributed. Merge
+ * commits are skipped.
  */
 
 const START = "<!-- agent-written-badge:start -->";
@@ -40,13 +52,77 @@ export function percent(part: number, whole: number): number {
 }
 
 export function classifyTrailers(message: string): { kind: CommitStat["kind"]; qa: string | null } {
-  const trailers = parseTrailerBlock(message);
+  const trailers = authorshipTrailers(message);
   const agent = trailers.filter(([key]) => key === "Authored-by-agent").length;
   const human = trailers.filter(([key]) => key === "Authored-by").length;
-  const qa = trailers.find(([key]) => key === "QA")?.[1] ?? null;
-  if (agent === 1 && human === 0) return { kind: "agent", qa };
-  if (human === 1 && agent === 0) return { kind: "human", qa };
+  const qa = parseTrailerBlock(message).find(([key]) => key === "QA")?.[1] ?? null;
+  if (agent >= 1 && human === 0 && !squashCreditsAPerson(message)) return { kind: "agent", qa };
+  if (human >= 1 && agent === 0) return { kind: "human", qa };
   return { kind: "unattributed", qa };
+}
+
+/** GitHub writes this divider before the squash footer's Co-authored-by lines. */
+const SQUASH_DIVIDER = "---------";
+
+const AGENT_COAUTHOR_EMAILS = new Set(["cursoragent@cursor.com", "commona-bot@users.noreply.github.com"]);
+
+/** True when the footer after the squash divider credits a person, such as rtcrump. */
+function squashCreditsAPerson(message: string): boolean {
+  const footer = squashFooter(message);
+  if (footer === null) return false;
+  return coauthorValues(footer, false).some((value) => !isAgentCoauthor(value));
+}
+
+/**
+ * Lines after the last divider that is followed only by allowed trailer lines.
+ * An indented line is not the divider. Body text after a nine-hyphen line
+ * means that line is not the footer. Null when this message is not a squash.
+ */
+function squashFooter(message: string): string | null {
+  const lines = message.replaceAll("\r\n", "\n").split("\n");
+  let at = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i] === SQUASH_DIVIDER && followedOnlyByAllowedTrailers(lines, i)) at = i;
+  }
+  if (at === -1) return null;
+  return lines.slice(at + 1).join("\n");
+}
+
+function isAgentCoauthor(value: string): boolean {
+  const email = /<([^>]+)>/.exec(value)?.[1]?.trim().toLowerCase() ?? "";
+  if (AGENT_COAUTHOR_EMAILS.has(email)) return true;
+  const name = value.replace(/<[^>]*>/g, "").trim();
+  return name === "Cursor Agent" || /^(cursor|grok)\/[A-Za-z0-9._-]+$/.test(name);
+}
+
+function coauthorValues(message: string, skipFirst = true): string[] {
+  const found: string[] = [];
+  const paras = paragraphs(message);
+  for (let i = skipFirst ? 1 : 0; i < paras.length; i += 1) {
+    const para = paras[i] ?? [];
+    if (!pureAllowed(para)) continue;
+    for (const trailer of parseTrailerLines(para)) {
+      if (trailer[0] === "Co-authored-by") found.push(trailer[1]);
+    }
+  }
+  return found;
+}
+
+/**
+ * Authorship lines from every trailer paragraph.
+ * Body text and the squash divider are skipped. They do not hide trailers above them.
+ */
+function authorshipTrailers(message: string): [string, string][] {
+  const found: [string, string][] = [];
+  const paras = paragraphs(message);
+  for (let i = 1; i < paras.length; i += 1) {
+    const para = paras[i] ?? [];
+    if (!pureAllowed(para)) continue;
+    for (const trailer of parseTrailerLines(para)) {
+      if (trailer[0] === "Authored-by-agent" || trailer[0] === "Authored-by") found.push(trailer);
+    }
+  }
+  return found;
 }
 
 const TRAILER_RE = /^([A-Za-z][A-Za-z-]*): (.+)$/;
@@ -59,6 +135,17 @@ const ALLOWED_TRAILERS = new Set([
   "Co-authored-by",
   "Refs",
 ]);
+
+/** Blank lines may separate the footer. Body text means this rule is not the divider. */
+function followedOnlyByAllowedTrailers(lines: readonly string[], at: number): boolean {
+  for (let i = at + 1; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (line === "") continue;
+    const match = TRAILER_RE.exec(line);
+    if (!match?.[1] || !ALLOWED_TRAILERS.has(match[1])) return false;
+  }
+  return true;
+}
 
 function paragraphs(message: string): string[][] {
   const paras: string[][] = [];
@@ -167,6 +254,37 @@ export function renderBadge(stats: AgentWrittenStats): string {
   ].join("\n");
 }
 
+/**
+ * The badge lives inside the commit it describes, so that commit's lines
+ * change the percentages. Treat the staged diff as one more commit of `kind`
+ * and return the stats `stats:check` will see after that commit lands.
+ * Zero added lines means there is no pending commit.
+ */
+export function withPendingCommit(
+  stats: AgentWrittenStats,
+  added: number,
+  kind: CommitStat["kind"],
+): AgentWrittenStats {
+  if (added <= 0) return stats;
+  const agent = kind === "agent";
+  const human = kind === "human";
+  const agentAdded = stats.agentAdded + (agent ? added : 0);
+  const totalAdded = stats.added + added;
+  const agentCommits = stats.agentCommits + (agent ? 1 : 0);
+  const totalCommits = stats.totalCommits + 1;
+  return {
+    ...stats,
+    totalCommits,
+    agentCommits,
+    humanCommits: stats.humanCommits + (human ? 1 : 0),
+    unattributedCommits: stats.unattributedCommits + (!agent && !human ? 1 : 0),
+    added: totalAdded,
+    agentAdded,
+    linePercent: percent(agentAdded, totalAdded),
+    commitPercent: percent(agentCommits, totalCommits),
+  };
+}
+
 export function readBadge(readme: string): string | null {
   const start = readme.indexOf(START);
   const end = readme.indexOf(END);
@@ -223,20 +341,13 @@ function main(): void {
   const includeWorkdir = process.argv.includes("--include-workdir");
   if (write) {
     const readmePath = `${cwd}/README.md`;
+    // Repeat until the badge text stops changing the staged insertions.
+    // The pending commit counts as agent-written, which is true only when
+    // that commit carries Authored-by-agent and Model and no Authored-by.
     for (let attempt = 0; attempt < 6; attempt++) {
       const stats = collect(cwd);
-      if (includeWorkdir) {
-        const extra = stagedAdditions(cwd);
-        if (extra > 0) {
-          stats.totalCommits += 1;
-          stats.agentCommits += 1;
-          stats.added += extra;
-          stats.agentAdded += extra;
-          stats.linePercent = percent(stats.agentAdded, stats.added);
-          stats.commitPercent = percent(stats.agentCommits, stats.totalCommits);
-        }
-      }
-      const next = renderBadge(stats);
+      const extra = includeWorkdir ? stagedAdditions(cwd) : 0;
+      const next = renderBadge(withPendingCommit(stats, extra, "agent"));
       const readme = readFileSync(readmePath, "utf8");
       if (readBadge(readme) === next) break;
       writeFileSync(readmePath, writeBadge(readme, next));

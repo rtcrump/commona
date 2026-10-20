@@ -18,6 +18,8 @@ export function renderRoomPage(input: {
   agentKey: string | null;
   /** Raw narrow sharing key. Present only on the response that first redeems an invite. */
   sharingKey: string | null;
+  /** Shown beside the key on that same response, so the owner can revoke this agent. */
+  agentId: string | null;
 }): string {
   const title = escapeHtml(input.title);
   const roomId = escapeHtml(input.roomId);
@@ -27,11 +29,13 @@ export function renderRoomPage(input: {
       : input.posts
           .map((post) => `<blockquote><p>&quot;${escapeHtml(post.text)}&quot;</p></blockquote>`)
           .join("\n");
-  const key = shownOnce(
-    "Agent key",
-    "Shown once. Copy this key for REST. It is not shown again.",
-    input.agentKey,
-  );
+  const key =
+    input.agentKey === null || input.agentId === null
+      ? ""
+      : `<h2>Agent key</h2>
+<p>Shown once. Copy this key for REST. It is not shown again.</p>
+<p>Agent id <code>${escapeHtml(input.agentId)}</code></p>
+<pre>${escapeHtml(input.agentKey)}</pre>`;
   const sharingKey = shownOnce(
     "Sharing key",
     "Shown once. This key can only narrow your own sharing from messages to none. It is not shown again.",
