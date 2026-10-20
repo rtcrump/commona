@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { hashToken, SharingLevel } from "../../contract/index.js";
 import { setInviteLog } from "../../src/join/log.js";
 import { ROOM_DEFAULT_POLICY_ACTOR } from "../../src/sharing/room-default-share.js";
-import { agentCookieName, ownerCookieName } from "../../src/room-page/routes.js";
+import { agentCookieName, sharingCookieName } from "../../src/room-page/routes.js";
 import { call, cookieValue, createInvite, startJoinHarness, type JoinHarness } from "../onboarding/harness.js";
 
 const HTML_POST = "Grok Bot: bring forks";
@@ -37,10 +37,11 @@ describe("open-join default post sharing", () => {
       form: { nonce: html.nonce, text: HTML_POST },
     });
     const replayed = await call(room.baseUrl, "GET", `/r/${room.roomId}`, {
-      cookie: `${agentCookieName(room.roomId)}=${html.key}; ${ownerCookieName(room.roomId)}=${html.ownerToken}`,
+      cookie: `${agentCookieName(room.roomId)}=${html.key}; ${sharingCookieName(room.roomId)}=${html.sharingKey}`,
     });
     expect(replayed.status).toBe(200);
-    expect(replayed.body.includes(html.ownerToken)).toBe(false);
+    expect(replayed.body.includes(html.sharingKey)).toBe(false);
+    expect(replayed.body.includes(html.session)).toBe(false);
     const ownerAgent = room.tokens.issueAgentToken("A1");
     const ownerFeed = await call(room.baseUrl, "GET", `/rooms/${room.roomId}/feed`, { token: ownerAgent });
     expect(ownerFeed.status).toBe(200);
@@ -109,7 +110,7 @@ describe("open-join default post sharing", () => {
 
     const issuedBeforeNarrow = room.issued.length;
     const narrowed = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
-      token: html.ownerToken,
+      token: html.sharingKey,
       json: { fromOwnerId: htmlOwner, toOwnerId: dotsOwner, level: "none" },
     });
     expect(narrowed.status).toBe(200);
@@ -147,27 +148,10 @@ describe("open-join default post sharing", () => {
         .filter((row) => row.itemId === muse.inviteId)
         .every((row) => row.ownerId === row.fromOwnerId && row.agentId === ROOM_DEFAULT_POLICY_ACTOR),
     ).toBe(true);
-    const htmlLog = await call(room.baseUrl, "GET", `/log?owner=${htmlOwner}`, { token: html.ownerToken });
-    expect(htmlLog.status).toBe(200);
-    const htmlEntries = (JSON.parse(htmlLog.body) as { entries: LogEntry[] }).entries.filter(
-      (entry) => entry.action === "setting_change" && entry.detail.level === "messages",
-    );
-    expect(htmlEntries.some((entry) => entry.detail.fromOwnerId === htmlOwner && entry.agentId === ROOM_DEFAULT_POLICY_ACTOR)).toBe(
-      true,
-    );
-    expect(htmlEntries.some((entry) => entry.detail.fromOwnerId === dotsOwner)).toBe(false);
-    const dotsLog = await call(room.baseUrl, "GET", `/log?owner=${dotsOwner}`, { token: dots.ownerToken });
-    expect(dotsLog.status).toBe(200);
-    const dotsEntries = (JSON.parse(dotsLog.body) as { entries: LogEntry[] }).entries;
-    expect(
-      dotsEntries.some(
-        (entry) =>
-          entry.action === "setting_change" &&
-          entry.ownerId === dotsOwner &&
-          entry.agentId === ROOM_DEFAULT_POLICY_ACTOR &&
-          entry.detail.fromOwnerId === dotsOwner,
-      ),
-    ).toBe(true);
+    const htmlLog = await call(room.baseUrl, "GET", `/log?owner=${htmlOwner}`, { token: html.sharingKey });
+    expect(htmlLog.status).toBe(403);
+    const dotsLog = await call(room.baseUrl, "GET", `/log?owner=${dotsOwner}`, { token: dots.sharingKey });
+    expect(dotsLog.status).toBe(403);
 
     const museFile = await call(room.baseUrl, "GET", `/rooms/${room.roomId}/files/${fileId}`, {
       token: muse.agentKey,
@@ -184,16 +168,23 @@ describe("open-join default post sharing", () => {
     });
     expect(htmlAfter.body).toContain(LATER_POST);
     expect(htmlAfter.body).toContain(HTML_POST);
-    expect(htmlAfter.body.includes(html.ownerToken)).toBe(false);
+    expect(htmlAfter.body.includes(html.sharingKey)).toBe(false);
+    expect(htmlAfter.body.includes(html.session)).toBe(false);
     const htmlOwnerRow = room.db.prepare("SELECT token_hash FROM owners WHERE id = ?").get(htmlOwner) as {
       token_hash: string;
     };
-    expect(htmlOwnerRow.token_hash).toBe(hashToken(html.ownerToken));
-    expect(storedText(room).includes(html.ownerToken)).toBe(false);
-    expect(storedText(room).includes(dots.ownerToken)).toBe(false);
+    const htmlNarrow = room.db.prepare("SELECT token_hash FROM owner_narrow_tokens WHERE owner_id = ?").get(htmlOwner) as {
+      token_hash: string;
+    };
+    expect(htmlOwnerRow.token_hash).toBe(hashToken(html.session));
+    expect(htmlNarrow.token_hash).toBe(hashToken(html.sharingKey));
+    expect(storedText(room).includes(html.sharingKey)).toBe(false);
+    expect(storedText(room).includes(html.session)).toBe(false);
+    expect(storedText(room).includes(dots.sharingKey)).toBe(false);
+    expect(storedText(room).includes(dots.session)).toBe(false);
   });
 
-  it("narrows sharing with the owner token the json join returned", async () => {
+  it("lowers one edge with the sharing key and refuses every other owner action", async () => {
     room = await startJoinHarness();
     const lines: string[] = [];
     setInviteLog((line) => {
@@ -202,9 +193,10 @@ describe("open-join default post sharing", () => {
     try {
       const first = await joinJson(room);
       const second = await joinJson(room);
-      expect(first.ownerToken).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+      expect(first.sharingKey).toMatch(/^[A-Za-z0-9_-]{20,}$/);
       expect(first.ownerId).toMatch(/^owner_/);
       expect(second.ownerId).not.toBe(first.ownerId);
+      expect(first.sharingKey).not.toBe(first.session);
 
       const denied = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
         token: first.agentKey,
@@ -213,9 +205,30 @@ describe("open-join default post sharing", () => {
       expect(denied.status).toBe(403);
       expect(room.sharing.level(room.roomId, first.ownerId, second.ownerId)).toBe(SharingLevel.Messages);
 
+      const raised = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
+        token: first.sharingKey,
+        json: { fromOwnerId: first.ownerId, toOwnerId: second.ownerId, level: "messages_files" },
+      });
+      expect(raised.status).toBe(403);
+      expect(room.sharing.level(room.roomId, first.ownerId, second.ownerId)).toBe(SharingLevel.Messages);
+
+      const same = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
+        token: first.sharingKey,
+        json: { fromOwnerId: first.ownerId, toOwnerId: second.ownerId, level: "messages" },
+      });
+      expect(same.status).toBe(403);
+      expect(room.sharing.level(room.roomId, first.ownerId, second.ownerId)).toBe(SharingLevel.Messages);
+
+      const wrongOwner = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
+        token: first.sharingKey,
+        json: { fromOwnerId: second.ownerId, toOwnerId: first.ownerId, level: "none" },
+      });
+      expect(wrongOwner.status).toBe(403);
+      expect(room.sharing.level(room.roomId, second.ownerId, first.ownerId)).toBe(SharingLevel.Messages);
+
       const issuedBeforeNarrow = room.issued.length;
       const narrowed = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
-        token: first.ownerToken,
+        token: first.sharingKey,
         json: { fromOwnerId: first.ownerId, toOwnerId: second.ownerId, level: "none" },
       });
       expect(narrowed.status).toBe(200);
@@ -223,25 +236,147 @@ describe("open-join default post sharing", () => {
       expect(room.sharing.level(room.roomId, first.ownerId, second.ownerId)).toBe(SharingLevel.None);
       expect(stillOnDefault(room, first.ownerId)).toBe(false);
 
+      for (const level of ["messages", "messages_files"] as const) {
+        const again = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
+          token: first.sharingKey,
+          json: { fromOwnerId: first.ownerId, toOwnerId: second.ownerId, level },
+        });
+        expect(again.status).toBe(403);
+        expect(room.sharing.level(room.roomId, first.ownerId, second.ownerId)).toBe(SharingLevel.None);
+      }
+
+      const openedFiles = room.sharing.update(
+        { kind: "owner", ownerId: first.ownerId },
+        room.roomId,
+        first.ownerId,
+        "O1",
+        SharingLevel.MessagesFiles,
+      );
+      expect(openedFiles.allowed).toBe(true);
+      for (const level of ["none", "messages", "messages_files"] as const) {
+        const files = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
+          token: first.sharingKey,
+          json: { fromOwnerId: first.ownerId, toOwnerId: "O1", level },
+        });
+        expect(files.status).toBe(403);
+        expect(room.sharing.level(room.roomId, first.ownerId, "O1")).toBe(SharingLevel.MessagesFiles);
+      }
+
+      const invite = await createInvite(room);
+      const roomsBefore = countRows(room, "rooms");
+      const invitesBefore = countRows(room, "invites");
+      const agentHash = room.db.prepare("SELECT token_hash FROM agents WHERE id = 'A1'").get() as { token_hash: string };
+      const ownerRoutes: { method: string; path: string; json?: unknown }[] = [
+        { method: "POST", path: "/rooms", json: {} },
+        { method: "POST", path: `/rooms/${room.roomId}/members`, json: { agentId: first.agentId } },
+        { method: "GET", path: `/rooms/${room.roomId}/held` },
+        { method: "GET", path: `/log?owner=${first.ownerId}` },
+        { method: "GET", path: "/notices" },
+        { method: "POST", path: `/rooms/${room.roomId}/invites`, json: {} },
+        { method: "DELETE", path: `/rooms/${room.roomId}/invites/${invite.id}` },
+        { method: "DELETE", path: `/api/r/${room.roomId}/agents/${first.agentId}` },
+      ];
+      for (const route of ownerRoutes) {
+        const refused = await call(room.baseUrl, route.method, route.path, {
+          token: first.sharingKey,
+          ...(route.json === undefined ? {} : { json: route.json }),
+        });
+        expect(refused.status).toBe(403);
+      }
+      expect(countRows(room, "rooms")).toBe(roomsBefore);
+      expect(countRows(room, "invites")).toBe(invitesBefore);
+      const inviteRow = room.db.prepare("SELECT revoked_at FROM invites WHERE id = ?").get(invite.id) as {
+        revoked_at: string | null;
+      };
+      expect(inviteRow.revoked_at).toBeNull();
+      const hostKey = room.tokens.issueNarrowToken("O1");
+      const hostRevoke = await call(room.baseUrl, "DELETE", `/api/r/${room.roomId}/agents/A1`, { token: hostKey });
+      expect(hostRevoke.status).toBe(403);
+      const hostInvite = await call(room.baseUrl, "POST", `/rooms/${room.roomId}/invites`, {
+        token: hostKey,
+        json: {},
+      });
+      expect(hostInvite.status).toBe(403);
+      const afterHash = room.db.prepare("SELECT token_hash FROM agents WHERE id = 'A1'").get() as { token_hash: string };
+      expect(afterHash.token_hash).toBe(agentHash.token_hash);
+      expect(countRows(room, "invites")).toBe(invitesBefore);
+
       const stored = room.db.prepare("SELECT token_hash FROM owners WHERE id = ?").get(first.ownerId) as {
         token_hash: string;
       };
-      expect(stored.token_hash).toBe(hashToken(first.ownerToken));
-      expect(stored.token_hash.includes(first.ownerToken)).toBe(false);
-      expect(storedText(room).includes(first.ownerToken)).toBe(false);
-      expect(storedText(room).includes(second.ownerToken)).toBe(false);
+      const narrow = room.db.prepare("SELECT token_hash FROM owner_narrow_tokens WHERE owner_id = ?").get(first.ownerId) as {
+        token_hash: string;
+      };
+      expect(stored.token_hash).toBe(hashToken(first.session));
+      expect(narrow.token_hash).toBe(hashToken(first.sharingKey));
+      expect(storedText(room).includes(first.sharingKey)).toBe(false);
+      expect(storedText(room).includes(first.session)).toBe(false);
+      expect(storedText(room).includes(second.sharingKey)).toBe(false);
+      expect(storedText(room).includes(second.session)).toBe(false);
       const audit = room.db.prepare("SELECT detail_json FROM audit_log").all() as { detail_json: string }[];
-      expect(JSON.stringify(audit).includes(first.ownerToken)).toBe(false);
-      expect(lines.join("\n").includes(first.ownerToken)).toBe(false);
-      expect(lines.join("\n").includes(second.ownerToken)).toBe(false);
+      expect(JSON.stringify(audit).includes(first.sharingKey)).toBe(false);
+      expect(JSON.stringify(audit).includes(first.session)).toBe(false);
+      expect(lines.join("\n").includes(first.sharingKey)).toBe(false);
+      expect(lines.join("\n").includes(first.session)).toBe(false);
 
       const again = await call(room.baseUrl, "GET", `/api/r/${room.roomId}`, { token: first.agentKey });
       expect(again.status).toBe(200);
-      expect(again.body.includes(first.ownerToken)).toBe(false);
+      expect(again.body.includes(first.sharingKey)).toBe(false);
+      expect(again.body.includes(first.session)).toBe(false);
       expect(again.body.includes(first.agentKey)).toBe(false);
+      expect(again.body.includes("ownerToken")).toBe(false);
     } finally {
       setInviteLog(() => {});
     }
+  });
+
+  it("sets the HttpOnly owner cookie on the human join page and narrows with it", async () => {
+    room = await startJoinHarness();
+    const created = await createInvite(room);
+    const welcome = await call(room.baseUrl, "GET", created.openPath, { accept: "text/html" });
+    const invite = cookieValue(welcome.setCookies, "commona_invite");
+    const welcomeNonce = cookieValue(welcome.setCookies, "commona_form");
+    const continued = await call(room.baseUrl, "POST", `/j/${created.id}/continue`, {
+      cookie: `commona_invite=${invite}; commona_form=${welcomeNonce}`,
+      form: { nonce: welcomeNonce, firstName: "Alex" },
+    });
+    expect(continued.status).toBe(303);
+    const sharing = await call(room.baseUrl, "GET", `/j/${created.id}/sharing`, {
+      accept: "text/html",
+      cookie: `commona_invite=${invite}`,
+    });
+    const shareNonce = cookieValue(sharing.setCookies, "commona_form");
+    const before = room.issued.length;
+    const finished = await call(room.baseUrl, "POST", `/j/${created.id}/finish`, {
+      cookie: `commona_invite=${invite}; commona_form=${shareNonce}`,
+      form: { nonce: shareNonce, seeing: "Messages" },
+    });
+    expect(finished.status).toBe(303);
+    const sessionHeader = finished.setCookies.find((value) => value.startsWith("commona_session=")) ?? "";
+    const session = cookieValue(finished.setCookies, "commona_session");
+    expect(sessionHeader).toContain("HttpOnly");
+    expect(sessionHeader).toContain("Secure");
+    expect(sessionHeader).toContain("SameSite=Strict");
+    expect(finished.body.includes(session)).toBe(false);
+    expect((finished.location ?? "").includes(session)).toBe(false);
+    const minted = room.issued.slice(before).filter((item) => item.kind === "owner");
+    expect(minted.map((item) => item.token)).toEqual([session]);
+    const owner = room.db.prepare("SELECT id FROM owners WHERE display_name = ?").get("Alex") as { id: string };
+    expect(room.tokens.authenticate(session)).toEqual({ kind: "owner", ownerId: owner.id });
+    expect(room.sharing.level(room.roomId, owner.id, "O1")).toBe(SharingLevel.Messages);
+    const done = await call(room.baseUrl, "GET", `/j/${created.id}/done`, {
+      accept: "text/html",
+      cookie: `commona_session=${session}`,
+    });
+    expect(done.status).toBe(200);
+    expect(done.body.includes(session)).toBe(false);
+    const narrowed = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
+      cookie: `commona_session=${session}`,
+      json: { fromOwnerId: owner.id, toOwnerId: "O1", level: "none" },
+    });
+    expect(narrowed.status).toBe(200);
+    expect(room.sharing.level(room.roomId, owner.id, "O1")).toBe(SharingLevel.None);
+    expect(room.sharing.level(room.roomId, owner.id, "O2")).toBe(SharingLevel.Messages);
   });
 });
 
@@ -261,55 +396,86 @@ async function joinHtml(room: JoinHarness): Promise<{
   nonce: string;
   agentId: string;
   ownerId: string;
-  ownerToken: string;
+  sharingKey: string;
+  session: string;
   page: string;
   inviteId: string;
 }> {
   const invite = await createInvite(room);
   const secret = invite.openPath.split("/")[3] ?? "";
+  const before = room.issued.length;
   const opened = await call(room.baseUrl, "GET", `/r/${room.roomId}?t=${secret}`);
   expect(opened.status).toBe(303);
+  const session = oneMinted(room, before, "owner");
   const key = cookieValue(opened.setCookies, agentCookieName(room.roomId));
-  const ownerToken = cookieValue(opened.setCookies, ownerCookieName(room.roomId));
-  expect(ownerToken).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+  const sharingKey = cookieValue(opened.setCookies, sharingCookieName(room.roomId));
+  expect(sharingKey).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+  expect(sharingKey).not.toBe(session);
+  expect(opened.setCookies.join("\n").includes(session)).toBe(false);
+  expect(opened.setCookies.some((value) => value.startsWith("commona_owner_"))).toBe(false);
+  expect((opened.location ?? "").includes(session)).toBe(false);
   const page = await call(room.baseUrl, "GET", `/r/${room.roomId}`, {
-    cookie: `${agentCookieName(room.roomId)}=${key}; ${ownerCookieName(room.roomId)}=${ownerToken}`,
+    cookie: `${agentCookieName(room.roomId)}=${key}; ${sharingCookieName(room.roomId)}=${sharingKey}`,
   });
   expect(page.status).toBe(200);
-  expect(page.body).toContain(`<pre>${ownerToken}</pre>`);
-  expect(page.setCookies.some((value) => value.startsWith(`${ownerCookieName(room.roomId)}=`) && value.includes("Max-Age=0"))).toBe(
-    true,
-  );
+  expect(page.body).toContain("<h2>Sharing key</h2>");
+  expect(page.body).toContain(`<pre>${sharingKey}</pre>`);
+  expect(page.body.includes("Owner token")).toBe(false);
+  expect(page.body.includes(session)).toBe(false);
+  expect(
+    page.setCookies.some((value) => value.startsWith(`${sharingCookieName(room.roomId)}=`) && value.includes("Max-Age=0")),
+  ).toBe(true);
   const nonce = page.body.match(/name="nonce" value="([^"]+)"/)?.[1] ?? "";
   const ownerId = page.body.match(/Owner id: ([A-Za-z0-9_-]+)/)?.[1] ?? "";
   const principal = room.tokens.authenticate(key);
   if (!principal || principal.kind !== "agent") throw new Error("missing agent");
   expect(ownerId).toBe(principal.ownerId);
-  return { key, nonce, agentId: principal.agentId, ownerId, ownerToken, page: page.body, inviteId: invite.id };
+  expect(room.tokens.authenticate(sharingKey)).toEqual({ kind: "narrow", ownerId });
+  return { key, nonce, agentId: principal.agentId, ownerId, sharingKey, session, page: page.body, inviteId: invite.id };
 }
 
 async function joinJson(room: JoinHarness): Promise<{
   agentKey: string;
   agentId: string;
   ownerId: string;
-  ownerToken: string;
+  sharingKey: string;
+  session: string;
   posts: { text: string }[];
   inviteId: string;
 }> {
   const invite = await createInvite(room);
   const secret = invite.openPath.split("/")[3] ?? "";
+  const before = room.issued.length;
   const opened = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?t=${secret}`);
   expect(opened.status).toBe(200);
+  const session = oneMinted(room, before, "owner");
   const body = JSON.parse(opened.body) as {
     agentKey: string;
     agentId: string;
     ownerId: string;
-    ownerToken: string;
+    sharingKey: string;
+    ownerToken?: string;
     posts: { text: string }[];
   };
-  expect(body.ownerToken).toMatch(/^[A-Za-z0-9_-]{20,}$/);
-  expect(opened.body.includes(hashToken(body.ownerToken))).toBe(false);
-  return { ...body, inviteId: invite.id };
+  expect(body.sharingKey).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+  expect(body.ownerToken).toBeUndefined();
+  expect(opened.body.includes(session)).toBe(false);
+  expect(opened.body.includes(hashToken(body.sharingKey))).toBe(false);
+  expect(opened.body.includes(hashToken(session))).toBe(false);
+  expect(room.tokens.authenticate(body.sharingKey)).toEqual({ kind: "narrow", ownerId: body.ownerId });
+  expect(room.tokens.authenticate(session)).toEqual({ kind: "owner", ownerId: body.ownerId });
+  return { ...body, session, inviteId: invite.id };
+}
+
+function oneMinted(room: JoinHarness, before: number, kind: "owner" | "agent" | "narrow"): string {
+  const minted = room.issued.slice(before).filter((item) => item.kind === kind);
+  if (minted.length !== 1 || !minted[0]) throw new Error(`expected one ${kind} token`);
+  return minted[0].token;
+}
+
+function countRows(room: JoinHarness, table: string): number {
+  const row = room.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
+  return row.n;
 }
 
 function storedText(room: JoinHarness): string {
@@ -320,13 +486,6 @@ function storedText(room: JoinHarness): string {
     .filter((table) => /^[A-Za-z0-9_]+$/.test(table.name))
     .map((table) => JSON.stringify(room.db.prepare(`SELECT * FROM "${table.name}"`).all()))
     .join("\n");
-}
-
-interface LogEntry {
-  action: string;
-  ownerId: string;
-  agentId: string;
-  detail: { level?: string; fromOwnerId?: string };
 }
 
 function ownerOf(room: JoinHarness, agentId: string): string {

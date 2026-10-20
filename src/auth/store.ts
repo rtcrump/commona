@@ -27,6 +27,17 @@ export function createTokenStore(db: Sqlite): TokenStore {
       return token;
     },
 
+    issueNarrowToken(ownerId: string): string {
+      const owner = db.prepare("SELECT id FROM owners WHERE id = ?").get(ownerId) as { id: string } | undefined;
+      if (!owner) throw new Error(`unknown owner: ${ownerId}`);
+      const token = newToken();
+      db.prepare(
+        `INSERT INTO owner_narrow_tokens (owner_id, token_hash) VALUES (?, ?)
+         ON CONFLICT(owner_id) DO UPDATE SET token_hash = excluded.token_hash`,
+      ).run(ownerId, hashToken(token));
+      return token;
+    },
+
     authenticate(token: string): AuthPrincipal | null {
       if (!token) return null;
       const hash = hashToken(token);
@@ -35,8 +46,12 @@ export function createTokenStore(db: Sqlite): TokenStore {
       const agent = db.prepare("SELECT id, owner_id FROM agents WHERE token_hash = ?").get(hash) as
         | { id: string; owner_id: string }
         | undefined;
-      if (!agent) return null;
-      return { kind: "agent", ownerId: agent.owner_id, agentId: agent.id };
+      if (agent) return { kind: "agent", ownerId: agent.owner_id, agentId: agent.id };
+      const narrow = db.prepare("SELECT owner_id FROM owner_narrow_tokens WHERE token_hash = ?").get(hash) as
+        | { owner_id: string }
+        | undefined;
+      if (!narrow) return null;
+      return { kind: "narrow", ownerId: narrow.owner_id };
     },
   };
 }

@@ -7,6 +7,7 @@ import {
   isId,
   newId,
   ownerActorId,
+  principalActor,
   ReasonCode,
   UNSCOPED_ROOM,
   type AuditDetail,
@@ -58,12 +59,8 @@ export interface RedeemedInvite {
   sessionToken: string;
 }
 
-function actorOf(principal: AuthPrincipal): { agentId: string; ownerId: string } {
-  if (principal.kind === "agent") return { agentId: principal.agentId, ownerId: principal.ownerId };
-  return { agentId: ownerActorId(principal.ownerId), ownerId: principal.ownerId };
-}
-
 function isMember(deps: RoomDeps, principal: AuthPrincipal, roomId: string): boolean {
+  if (principal.kind === "narrow") return false;
   if (principal.kind === "agent") {
     const row = deps.db
       .prepare("SELECT 1 AS ok FROM memberships WHERE room_id = ? AND agent_id = ?")
@@ -128,7 +125,14 @@ function readExpires(body: unknown): number {
 
 export function createInvite(deps: RoomDeps, principal: AuthPrincipal, roomId: string, body: unknown): CreatedInvite {
   ensureInviteSchema(deps.db);
-  const actor = actorOf(principal);
+  if (principal.kind === "narrow") {
+    refuse(deps, {
+      room: isId(roomId) ? roomId : UNSCOPED_ROOM,
+      ...principalActor(principal),
+      reasonCode: ReasonCode.NotOwner,
+    });
+  }
+  const actor = principalActor(principal);
   const roomOk = isId(roomId);
   if (!roomOk || !isMember(deps, principal, roomId)) {
     refuse(deps, {
@@ -177,7 +181,14 @@ export function createInvite(deps: RoomDeps, principal: AuthPrincipal, roomId: s
 
 export function revokeInvite(deps: RoomDeps, principal: AuthPrincipal, roomId: string, inviteId: string): void {
   ensureInviteSchema(deps.db);
-  const actor = actorOf(principal);
+  if (principal.kind === "narrow") {
+    refuse(deps, {
+      room: isId(roomId) ? roomId : UNSCOPED_ROOM,
+      ...principalActor(principal),
+      reasonCode: ReasonCode.NotOwner,
+    });
+  }
+  const actor = principalActor(principal);
   if (!isInviteId(inviteId)) {
     refuse(deps, { room: UNSCOPED_ROOM, ...gateActor() });
   }

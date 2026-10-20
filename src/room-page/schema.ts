@@ -24,9 +24,9 @@ CREATE TABLE IF NOT EXISTS room_key_flash (
   agent_key TEXT NOT NULL
 );
 
--- SHA-256 of the owner token, kept until the clean room page shows that token once.
--- The raw owner token is not a column.
-CREATE TABLE IF NOT EXISTS room_owner_flash (
+-- SHA-256 of the narrow sharing key, kept until the clean room page shows that key once.
+-- The raw sharing key is not a column. The owner session token is not stored here.
+CREATE TABLE IF NOT EXISTS room_sharing_flash (
   agent_id TEXT PRIMARY KEY REFERENCES agents(id),
   room_id TEXT NOT NULL REFERENCES rooms(id),
   token_hash TEXT NOT NULL

@@ -4,7 +4,7 @@ import {
   formatTimestamp,
   hashToken,
   isId,
-  ownerActorId,
+  principalActor,
   ReasonCode,
   type AuthPrincipal,
 } from "../../contract/index.js";
@@ -54,7 +54,10 @@ export function revokeAgentKey(deps: RoomDeps, principal: AuthPrincipal, roomId:
     | { created_by_owner_id: string }
     | undefined;
   if (!room) throw RoomHttpError.notFound();
-  const actor = actorOf(principal);
+  const actor = principalActor(principal);
+  if (principal.kind === "narrow") {
+    refuse(deps, roomId, actor, agentId, ReasonCode.NotOwner);
+  }
   if (principal.ownerId !== room.created_by_owner_id) {
     refuse(deps, roomId, actor, agentId, ReasonCode.NotOwner);
   }
@@ -134,7 +137,3 @@ function refuse(
   throw RoomHttpError.forbidden(reasonCode);
 }
 
-function actorOf(principal: AuthPrincipal): { agentId: string; ownerId: string } {
-  if (principal.kind === "agent") return { agentId: principal.agentId, ownerId: principal.ownerId };
-  return { agentId: ownerActorId(principal.ownerId), ownerId: principal.ownerId };
-}

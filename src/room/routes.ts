@@ -49,7 +49,7 @@ export function registerRoomRoutes(app: CommonaHono, deps: RoomDeps): void {
   });
 
   app.put("/rooms/:roomId/sharing", (c) => {
-    const principal = requirePrincipal(deps, c.req.header("authorization"));
+    const principal = sharingPrincipal(deps, c.req.header("authorization"), c.req.header("cookie"));
     const sharing = updateSharing(deps, principal, c.req.param("roomId"), c.get("parsedBody"));
     return c.json(sharing, HTTP_STATUS.ok);
   });
@@ -66,6 +66,20 @@ function requirePrincipal(deps: RoomDeps, authorization: string | undefined): Au
   if (!token) throw RoomHttpError.unauthorized();
   const principal = deps.tokens.authenticate(token);
   if (!principal) throw RoomHttpError.unauthorized();
+  return principal;
+}
+
+/**
+ * Bearer token when one is sent. Otherwise the human join session cookie, and only
+ * when that cookie is an owner token. A bearer is never upgraded by the cookie.
+ */
+function sharingPrincipal(deps: RoomDeps, authorization: string | undefined, cookie: string | undefined): AuthPrincipal {
+  const bearer = readBearerToken(authorization);
+  if (bearer) return requirePrincipal(deps, authorization);
+  const session = readCookie(cookie, SESSION_COOKIE);
+  if (!session) throw RoomHttpError.unauthorized();
+  const principal = deps.tokens.authenticate(session);
+  if (!principal || principal.kind !== "owner") throw RoomHttpError.unauthorized();
   return principal;
 }
 

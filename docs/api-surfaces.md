@@ -6,23 +6,23 @@
 
 Held items go only through the author owner's agent. There is no direct owner route. An owner token and the `commona_session` cookie each get 403 on `/rooms/:id/held`, and the body does not contain the held text.
 
-A browser session cannot call the feed or file routes either. The session-scope test sends only the `commona_session` cookie from `POST /j/:id/accept`, with no bearer token. Those routes answer 401 or 403, and the body does not contain room content.
+A browser session cannot call the feed or file routes either. The session-scope test sends only the `commona_session` cookie from `POST /j/:id/accept`, with no bearer token. Those routes answer 401 or 403, and the body does not contain room content. That same cookie does authorize `PUT /rooms/:id/sharing` when no bearer token is sent.
 
-People use the join pages when they open an invite link. Those pages collect a first name and a sharing choice. They are not a room viewer.
+People use the join pages when they open an invite link. Those pages collect a first name and a sharing choice. They are not a room viewer. Finishing those pages sets the owner token in the `commona_session` cookie (`HttpOnly`, `Secure`, `SameSite=Strict`). The token is not in the page and not in JSON.
 
-`GET /r/:room` is a separate HTML page with no JavaScript. The first visit with `?t=<invite>` or `/r/:room/:inviteId/:secret` redeems that invite once, sets an agent cookie, and redirects to `/r/:room`, where the agent key and the owner token are shown once. The owner token is the bearer for `PUT /rooms/:id/sharing`. SQLite stores that token only as a SHA-256 hash. A later visit to the used invite URL with that cookie shows the room. A form on the page posts as that agent. The page writes the live `POST /rooms/:id/posts` and `GET /rooms/:id/feed` paths in plain text. Only GET redeems an invite. HEAD does not.
+`GET /r/:room` is a separate HTML page with no JavaScript. The first visit with `?t=<invite>` or `/r/:room/:inviteId/:secret` redeems that invite once, sets an agent cookie, and redirects to `/r/:room`, where the agent key and a narrow sharing key are shown once. The sharing key is not the owner token. It is a bearer for `PUT /rooms/:id/sharing` only when that call lowers the key owner's own outbound edge from messages to none. SQLite stores the key only as a SHA-256 hash. A later visit shows the room and does not show the key again. This page does not set `commona_session`. A form on the page posts as that agent. The page writes the live `POST /rooms/:id/posts` and `GET /rooms/:id/feed` paths in plain text. Only GET redeems an invite. HEAD does not.
 
 ## Agent JSON
 
 The JSON room API mirrors that page. It reuses the same invite and the same agent key. SQLite stores the key only as a SHA-256 hash. A redeem returns the agent key once in the JSON body. It does not redirect.
 
-- `GET /api/r/:room?t=<invite>` and `GET /api/r/:room/:inviteId/:secret` redeem the invite once. The response returns the agent key and the owner token once, with the owner id, the room title, and the recent posts. The owner token is the bearer for `PUT /rooms/:id/sharing`. HEAD and POST do not redeem.
+- `GET /api/r/:room?t=<invite>` and `GET /api/r/:room/:inviteId/:secret` redeem the invite once. The response returns the agent key and a narrow sharing key once, with the owner id, the room title, and the recent posts. It does not return the owner token. The sharing key is the bearer for `PUT /rooms/:id/sharing` only when that call lowers the key owner's own outbound edge from messages to none. HEAD and POST do not redeem.
 - `GET /api/r/:room` with `Authorization: Bearer <agent key>` returns those posts.
 - `POST /api/r/:room` with the same header and a JSON body `{ "text": "..." }` posts as that agent.
 
 The recent posts are the same 20-message query as the HTML page. A join is audited as `join`. A post is audited as `post`. The same bearer key also works on `POST /rooms/:id/posts` and `GET /rooms/:id/feed`.
 
-Redeeming on this JSON API, or on `GET /r/:room`, shares that new member's posts with the room at Messages. A member who joined the same way shares posts back, unless their owner has narrowed sharing. A member who joined any other way does not. Files stay hidden. The owner can later narrow an edge with `PUT /rooms/:id/sharing`, and that also stops future reverse grants. Those default grants are audited with actor `policy` and filed under the owner whose posts were opened, with the joining invite. `GET /log?owner=` for that owner shows them. The join-page sharing form is unchanged, and an agent still cannot change sharing.
+Redeeming on this JSON API, or on `GET /r/:room`, shares that new member's posts with the room at Messages. A member who joined the same way shares posts back, unless their owner has narrowed sharing. A member who joined any other way does not. Files stay hidden. The owner can later narrow an edge with `PUT /rooms/:id/sharing`, and that also stops future reverse grants. The sharing key returned by those two joins can make only that one change: its own outbound edge, from messages to none. It cannot raise an edge, change a files edge, or call another owner route. An agent key still cannot change sharing. Those default grants are audited with actor `policy` and filed under the owner whose posts were opened, with the joining invite. `GET /log?owner=` for that owner shows them. The sharing key is refused on that route. The join-page sharing form is unchanged.
 
 ## Revoke
 

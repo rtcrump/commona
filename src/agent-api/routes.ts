@@ -21,6 +21,7 @@ import { ensureAgentApiSchema } from "./schema.js";
 /**
  * JSON room API. It mirrors the plain HTML page: join with one invite, read posts, post a message.
  * The agent key is a bearer token. Only its SHA-256 hash is stored.
+ * The redeem response also returns a narrow sharing key once. It does not return the owner session token.
  * Only GET redeems an invite. Hono would otherwise run HEAD through this GET handler.
  */
 export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
@@ -89,8 +90,9 @@ function redeemAndReturn(deps: RoomDeps, roomId: string, inviteId: string | null
     ownerId: redeemed.owner.id,
   };
   const agentKey = deps.tokens.issueAgentToken(redeemed.agent.id);
-  const ownerToken = redeemed.sessionToken;
-  if (!/^[A-Za-z0-9_-]+$/.test(agentKey) || !/^[A-Za-z0-9_-]+$/.test(ownerToken)) {
+  const sharingKey = deps.tokens.issueNarrowToken(redeemed.owner.id);
+  const sessionToken = redeemed.sessionToken;
+  if (!/^[A-Za-z0-9_-]+$/.test(agentKey) || !/^[A-Za-z0-9_-]+$/.test(sharingKey)) {
     throw new Error("refusing to send a secret");
   }
   const body = {
@@ -100,7 +102,7 @@ function redeemAndReturn(deps: RoomDeps, roomId: string, inviteId: string | null
     title: roomTitle(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
     agentKey,
-    ownerToken,
+    sharingKey,
   };
   assertHidden(
     JSON.stringify({
@@ -110,10 +112,10 @@ function redeemAndReturn(deps: RoomDeps, roomId: string, inviteId: string | null
       title: body.title,
       posts: body.posts,
     }),
-    [secret, agentKey, ownerToken],
+    [secret, agentKey, sharingKey, sessionToken],
   );
   const encoded = JSON.stringify(body);
-  assertHidden(encoded, [secret, hashToken(agentKey), hashToken(ownerToken)]);
+  assertHidden(encoded, [secret, sessionToken, hashToken(agentKey), hashToken(sharingKey), hashToken(sessionToken)]);
   return json(body, HTTP_STATUS.ok);
 }
 
