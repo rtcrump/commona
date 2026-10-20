@@ -378,6 +378,57 @@ describe("open-join default post sharing", () => {
     expect(room.sharing.level(room.roomId, owner.id, "O1")).toBe(SharingLevel.None);
     expect(room.sharing.level(room.roomId, owner.id, "O2")).toBe(SharingLevel.Messages);
   });
+
+  it("rolls back an opt-out when the default marker delete fails, then a later invite stays closed", async () => {
+    room = await startJoinHarness();
+    const first = await joinJson(room);
+    const posted = await call(room.baseUrl, "POST", `/api/r/${room.roomId}`, {
+      token: first.agentKey,
+      json: { text: JSON_POST },
+    });
+    expect(posted.status).toBe(201);
+    const second = await joinJson(room);
+    expect(second.posts.map((post) => post.text)).toContain(JSON_POST);
+    expect(room.sharing.level(room.roomId, first.ownerId, second.ownerId)).toBe(SharingLevel.Messages);
+    expect(stillOnDefault(room, first.ownerId)).toBe(true);
+    const auditsBefore = countRows(room, "audit_log");
+
+    const restore = failBeforeMarkerDelete(room.db);
+    let failed: Awaited<ReturnType<typeof call>>;
+    try {
+      failed = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
+        token: first.sharingKey,
+        json: { fromOwnerId: first.ownerId, toOwnerId: second.ownerId, level: "none" },
+      });
+    } finally {
+      restore();
+    }
+    expect(failed.status).toBe(500);
+    expect(failed.body.includes(first.sharingKey)).toBe(false);
+    expect(failed.body.includes(first.session)).toBe(false);
+    expect(room.sharing.level(room.roomId, first.ownerId, second.ownerId)).toBe(SharingLevel.Messages);
+    expect(stillOnDefault(room, first.ownerId)).toBe(true);
+    expect(countRows(room, "audit_log")).toBe(auditsBefore);
+    expect(noneOptOut(room, first.ownerId, second.ownerId)).toBe(false);
+
+    const narrowed = await call(room.baseUrl, "PUT", `/rooms/${room.roomId}/sharing`, {
+      token: first.sharingKey,
+      json: { fromOwnerId: first.ownerId, toOwnerId: second.ownerId, level: "none" },
+    });
+    expect(narrowed.status).toBe(200);
+    expect(room.sharing.level(room.roomId, first.ownerId, second.ownerId)).toBe(SharingLevel.None);
+    expect(stillOnDefault(room, first.ownerId)).toBe(false);
+    expect(noneOptOut(room, first.ownerId, second.ownerId)).toBe(true);
+
+    const third = await joinJson(room);
+    expect(third.posts.map((post) => post.text)).not.toContain(JSON_POST);
+    expect(room.sharing.level(room.roomId, first.ownerId, third.ownerId)).toBe(SharingLevel.None);
+    expect(room.sharing.level(room.roomId, second.ownerId, third.ownerId)).toBe(SharingLevel.Messages);
+    expect(stillOnDefault(room, first.ownerId)).toBe(false);
+    expect(
+      policyGrants(room).some((row) => row.itemId === third.inviteId && row.fromOwnerId === first.ownerId),
+    ).toBe(false);
+  });
 });
 
 function seedOwnerPost(room: JoinHarness, text: string): void {
@@ -498,6 +549,32 @@ function stillOnDefault(room: JoinHarness, ownerId: string): boolean {
     .prepare("SELECT owner_id FROM room_default_post_share WHERE room_id = ? AND owner_id = ?")
     .get(room.roomId, ownerId) as { owner_id: string } | undefined;
   return row !== undefined;
+}
+
+/** The marker delete is the step after the sharing update. Fail that once, inside the open transaction. */
+function failBeforeMarkerDelete(db: JoinHarness["db"]): () => void {
+  const original = db.prepare;
+  let armed = true;
+  db.prepare = ((sql: string) => {
+    if (armed && sql.includes("DELETE FROM room_default_post_share")) {
+      armed = false;
+      throw new Error("marker delete failed");
+    }
+    return original.call(db, sql);
+  }) as typeof db.prepare;
+  return () => {
+    db.prepare = original;
+  };
+}
+
+function noneOptOut(room: JoinHarness, fromOwnerId: string, toOwnerId: string): boolean {
+  const rows = room.db
+    .prepare("SELECT detail_json FROM audit_log WHERE action = 'setting_change' AND result = 'ok'")
+    .all() as { detail_json: string }[];
+  return rows.some((row) => {
+    const detail = JSON.parse(row.detail_json) as { level?: string; fromOwnerId?: string; toOwnerId?: string };
+    return detail.level === "none" && detail.fromOwnerId === fromOwnerId && detail.toOwnerId === toOwnerId;
+  });
 }
 
 function policyGrants(room: JoinHarness): {

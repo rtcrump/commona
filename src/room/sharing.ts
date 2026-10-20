@@ -18,6 +18,8 @@ import { RoomHttpError } from "./http.js";
  * The room route for `PUT /rooms/:roomId/sharing`.
  * `SharingDirectory.update` decides whether the caller may write.
  * This route writes the audit row. A `ContractError` is HTTP 400 and is not audited.
+ * A successful write, its audit row, and the default-sharing marker deletion commit together.
+ * A refusal is audited outside that transaction, so the refusal row is kept.
  */
 export function updateSharing(
   deps: RoomDeps,
@@ -30,7 +32,27 @@ export function updateSharing(
   requireRoom(deps, roomId);
   let result;
   try {
-    result = deps.sharing.update(principal, roomId, request.fromOwnerId, request.toOwnerId, request.level);
+    result = deps.db.transaction(() => {
+      const updated = deps.sharing.update(principal, roomId, request.fromOwnerId, request.toOwnerId, request.level);
+      if (!updated.allowed) return updated;
+      deps.audit.append({
+        ts: nowStamp(deps),
+        room: roomId,
+        agentId: actorId(principal),
+        ownerId: principal.ownerId,
+        action: AuditAction.SettingChange,
+        result: AuditResult.Ok,
+        detail: {
+          level: updated.sharing.level,
+          fromOwnerId: updated.sharing.fromOwnerId,
+          toOwnerId: updated.sharing.toOwnerId,
+        },
+      });
+      if (updated.sharing.level === SharingLevel.None) {
+        clearRoomDefaultPostShare(deps.db, roomId, updated.sharing.fromOwnerId);
+      }
+      return updated;
+    })();
   } catch (error) {
     if (error instanceof ContractError) throw RoomHttpError.badRequest();
     throw error;
@@ -48,22 +70,6 @@ export function updateSharing(
         toOwnerId: request.toOwnerId,
       },
     });
-  }
-  deps.audit.append({
-    ts: nowStamp(deps),
-    room: roomId,
-    agentId: actorId(principal),
-    ownerId: principal.ownerId,
-    action: AuditAction.SettingChange,
-    result: AuditResult.Ok,
-    detail: {
-      level: result.sharing.level,
-      fromOwnerId: result.sharing.fromOwnerId,
-      toOwnerId: result.sharing.toOwnerId,
-    },
-  });
-  if (result.sharing.level === SharingLevel.None) {
-    clearRoomDefaultPostShare(deps.db, roomId, result.sharing.fromOwnerId);
   }
   return { sharing: result.sharing };
 }
