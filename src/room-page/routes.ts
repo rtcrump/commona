@@ -20,9 +20,9 @@ export function agentCookieName(roomId: string): string {
   return `commona_agent_${roomId}`;
 }
 
-/** Per-room owner cookie. It carries the raw owner token only until the next page read. */
-export function ownerCookieName(roomId: string): string {
-  return `commona_owner_${roomId}`;
+/** Per-room sharing-key cookie. It carries the raw key only until the next page read. */
+export function sharingCookieName(roomId: string): string {
+  return `commona_share_${roomId}`;
 }
 
 function agentCookiePath(roomId: string): string {
@@ -119,18 +119,21 @@ function redeemAndRedirect(deps: RoomDeps, roomId: string, inviteId: string | nu
   }
   grantDefaultRoomPosts(deps, roomId, redeemed.owner.id, id);
   const key = deps.tokens.issueAgentToken(redeemed.agent.id);
-  const ownerToken = redeemed.sessionToken;
-  if (!/^[A-Za-z0-9_-]+$/.test(key) || !/^[A-Za-z0-9_-]+$/.test(ownerToken)) {
+  const sharingKey = deps.tokens.issueNarrowToken(redeemed.owner.id);
+  const sessionToken = redeemed.sessionToken;
+  if (!/^[A-Za-z0-9_-]+$/.test(key) || !/^[A-Za-z0-9_-]+$/.test(sharingKey)) {
     throw new Error("refusing to send a secret");
   }
   saveKeyFlash(deps, redeemed.agent.id, roomId, key);
-  saveOwnerFlash(deps, redeemed.agent.id, roomId, ownerToken);
+  saveSharingFlash(deps, redeemed.agent.id, roomId, sharingKey);
   const location = `/r/${roomId}`;
-  assertHidden(location, [secret, key, ownerToken]);
-  return redirect(location, [
+  assertHidden(location, [secret, key, sharingKey, sessionToken]);
+  const cookies = [
     serializeCookie(agentCookieName(roomId), key, agentCookiePath(roomId)),
-    serializeCookie(ownerCookieName(roomId), ownerToken, agentCookiePath(roomId)),
-  ]);
+    serializeCookie(sharingCookieName(roomId), sharingKey, agentCookiePath(roomId)),
+  ];
+  assertHidden(cookies.join("\n"), [secret, sessionToken, hashToken(sessionToken)]);
+  return redirect(location, cookies);
 }
 
 function showForCookie(
@@ -146,8 +149,8 @@ function showForCookie(
   const nonce = newSecret();
   saveFormToken(deps, principal.agentId, roomId, nonce);
   const agentKey = takeKeyFlash(deps, principal.agentId, roomId);
-  const presentedOwner = readCookie(cookie, ownerCookieName(roomId));
-  const ownerToken = takeOwnerFlash(deps, principal.agentId, roomId, presentedOwner);
+  const presentedKey = readCookie(cookie, sharingCookieName(roomId));
+  const sharingKey = takeSharingFlash(deps, principal.agentId, roomId, presentedKey);
   const page = renderRoomPage({
     title: roomTitle(deps, roomId),
     roomId,
@@ -155,13 +158,13 @@ function showForCookie(
     nonce,
     ownerId: principal.ownerId,
     agentKey,
-    ownerToken,
+    sharingKey,
   });
   assertHidden(page, hidden);
   const cookies =
-    presentedOwner === null
+    presentedKey === null
       ? []
-      : [serializeCookie(ownerCookieName(roomId), "", agentCookiePath(roomId), 0)];
+      : [serializeCookie(sharingCookieName(roomId), "", agentCookiePath(roomId), 0)];
   return htmlResponse(page, 200, cookies);
 }
 
@@ -245,24 +248,24 @@ function takeKeyFlash(deps: RoomDeps, agentId: string, roomId: string): string |
   return row.agent_key;
 }
 
-function saveOwnerFlash(deps: RoomDeps, agentId: string, roomId: string, token: string): void {
+function saveSharingFlash(deps: RoomDeps, agentId: string, roomId: string, token: string): void {
   ensureRoomPageSchema(deps.db);
   deps.db
     .prepare(
-      `INSERT INTO room_owner_flash (agent_id, room_id, token_hash) VALUES (?, ?, ?)
+      `INSERT INTO room_sharing_flash (agent_id, room_id, token_hash) VALUES (?, ?, ?)
        ON CONFLICT(agent_id) DO UPDATE SET room_id = excluded.room_id, token_hash = excluded.token_hash`,
     )
     .run(agentId, roomId, hashToken(token));
 }
 
-function takeOwnerFlash(deps: RoomDeps, agentId: string, roomId: string, presented: string | null): string | null {
+function takeSharingFlash(deps: RoomDeps, agentId: string, roomId: string, presented: string | null): string | null {
   ensureRoomPageSchema(deps.db);
   if (!presented || !/^[A-Za-z0-9_-]+$/.test(presented)) return null;
   const row = deps.db
-    .prepare("SELECT token_hash FROM room_owner_flash WHERE agent_id = ? AND room_id = ?")
+    .prepare("SELECT token_hash FROM room_sharing_flash WHERE agent_id = ? AND room_id = ?")
     .get(agentId, roomId) as { token_hash: string } | undefined;
   if (!row || !sameHash(presented, row.token_hash)) return null;
-  deps.db.prepare("DELETE FROM room_owner_flash WHERE agent_id = ? AND room_id = ?").run(agentId, roomId);
+  deps.db.prepare("DELETE FROM room_sharing_flash WHERE agent_id = ? AND room_id = ?").run(agentId, roomId);
   return presented;
 }
 

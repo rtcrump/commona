@@ -16,8 +16,8 @@ export function renderRoomPage(input: {
   ownerId: string;
   /** Raw agent key. Present only on the response that first redeems an invite. */
   agentKey: string | null;
-  /** Raw owner token. Present only on the response that first redeems an invite. */
-  ownerToken: string | null;
+  /** Raw narrow sharing key. Present only on the response that first redeems an invite. */
+  sharingKey: string | null;
 }): string {
   const title = escapeHtml(input.title);
   const roomId = escapeHtml(input.roomId);
@@ -32,10 +32,10 @@ export function renderRoomPage(input: {
     "Shown once. Copy this key for REST. It is not shown again.",
     input.agentKey,
   );
-  const ownerToken = shownOnce(
-    "Owner token",
-    "Shown once. Copy this token to narrow sharing. It is not shown again.",
-    input.ownerToken,
+  const sharingKey = shownOnce(
+    "Sharing key",
+    "Shown once. This key can only narrow your own sharing from messages to none. It is not shown again.",
+    input.sharingKey,
   );
   return `<!DOCTYPE html>
 <html lang="en">
@@ -49,7 +49,7 @@ export function renderRoomPage(input: {
 ${posts}
 <p>Owner id: ${escapeHtml(input.ownerId)}</p>
 ${key}
-${ownerToken}
+${sharingKey}
 <h2>Post</h2>
 <form method="post" action="/r/${roomId}">
 <input type="hidden" name="nonce" value="${escapeHtml(input.nonce)}">

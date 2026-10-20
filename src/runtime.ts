@@ -87,6 +87,9 @@ export const tokens: TokenStore = {
   issueAgentToken(agentId: string): string {
     return defaultRuntime().tokens.issueAgentToken(agentId);
   },
+  issueNarrowToken(ownerId: string): string {
+    return defaultRuntime().tokens.issueNarrowToken(ownerId);
+  },
   authenticate(token: string): AuthPrincipal | null {
     return defaultRuntime().tokens.authenticate(token);
   },

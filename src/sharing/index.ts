@@ -8,6 +8,7 @@ import {
   feedIncludes,
   isId,
   isSharingLevel,
+  narrowSharingAllowed,
   type AuthPrincipal,
   type FeedItem,
   type FileDownload,
@@ -247,6 +248,13 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
     }
     if (principal.ownerId !== fromOwnerId) {
       return { allowed: false, reasonCode: ReasonCode.NotOwner };
+    }
+    // A narrow key may only lower its own outbound edge from messages to none.
+    if (
+      principal.kind === "narrow" &&
+      !narrowSharingAllowed(level(roomId, fromOwnerId, toOwnerId), sharingLevel)
+    ) {
+      return { allowed: false, reasonCode: ReasonCode.SharingNarrow };
     }
     return { allowed: true, sharing: writeLevel(roomId, fromOwnerId, toOwnerId, sharingLevel) };
   }

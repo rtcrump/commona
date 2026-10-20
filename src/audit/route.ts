@@ -6,6 +6,7 @@ import {
   ReasonCode,
   hashToken,
   isId,
+  principalActor,
   readBearerToken,
   routes,
   systemClock,
@@ -42,7 +43,11 @@ export function principalFromToken(db: Database.Database, token: string): AuthPr
     | { id: string; owner_id: string }
     | undefined;
   if (agent) return { kind: "agent", ownerId: agent.owner_id, agentId: agent.id };
-  return null;
+  const narrow = db.prepare("SELECT owner_id FROM owner_narrow_tokens WHERE token_hash = ?").get(hash) as
+    | { owner_id: string }
+    | undefined;
+  if (!narrow) return null;
+  return { kind: "narrow", ownerId: narrow.owner_id };
 }
 
 function ownerQuery(query: string | undefined): string | null {
@@ -69,9 +74,7 @@ export function registerLogRoute(app: CommonaHono, deps: LogRouteDeps): void {
     if (ownerId === null) return c.json(errorBody(ApiErrorCode.Validation), HTTP_STATUS.badRequest);
 
     if (principal.kind !== "owner") {
-      deps.audit.append(
-        refusedLogRead(clock, { agentId: principal.agentId, ownerId: principal.ownerId }, ownerId, ReasonCode.NotOwner),
-      );
+      deps.audit.append(refusedLogRead(clock, principalActor(principal), ownerId, ReasonCode.NotOwner));
       return c.json(errorBody(ApiErrorCode.Forbidden, ReasonCode.NotOwner), HTTP_STATUS.forbidden);
     }
 

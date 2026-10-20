@@ -2,7 +2,7 @@ import {
   AuditAction,
   AuditResult,
   formatTimestamp,
-  ownerActorId,
+  principalActor,
   ReasonCode,
   type AuditAction as AuditActionName,
   type AuditDetail,
@@ -17,7 +17,7 @@ export function nowStamp(deps: RoomDeps): string {
 }
 
 export function actorId(principal: AuthPrincipal): string {
-  return principal.kind === "agent" ? principal.agentId : ownerActorId(principal.ownerId);
+  return principalActor(principal).agentId;
 }
 
 export function requireRoom(deps: RoomDeps, roomId: string): void {
