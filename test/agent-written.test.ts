@@ -13,6 +13,7 @@ import {
   readBadge,
   renderBadge,
   summarize,
+  withPendingCommit,
   type AgentWrittenStats,
 } from "../scripts/agent-written.js";
 
@@ -308,6 +309,34 @@ describe("agent-written stats", () => {
     expect(classifyTrailers(message).kind).toBe("unattributed");
   });
 
+  it("settles the badge on the agent commit that writes it", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "commona-stats-badge-"));
+    const readmePath = path.join(cwd, "README.md");
+    try {
+      git(cwd, ["init"]);
+      writeFileSync(
+        readmePath,
+        "<!-- agent-written-badge:start -->\nWritten by agents: 0% of lines, 0% of commits\nHuman edits: 0\nQA trailers: 0\n<!-- agent-written-badge:end -->\n",
+      );
+      writeFileSync(path.join(cwd, "a.txt"), `${"a\n".repeat(10)}`);
+      git(cwd, ["add", "README.md", "a.txt"]);
+      git(cwd, ["commit", "-m", "feat(data): start\n\nAuthored-by-agent: cursor/example\nModel: test"]);
+      writeFileSync(path.join(cwd, "b.txt"), `${"b\n".repeat(4)}`);
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const extra = stagedAdded(cwd);
+        const next = renderBadge(withPendingCommit(collect(cwd), extra, "agent"));
+        const readme = readFileSync(readmePath, "utf8");
+        if (readBadge(readme) === next) break;
+        writeFileSync(readmePath, readme.replace(readBadge(readme) ?? "", next));
+      }
+      git(cwd, ["add", "-A"]);
+      git(cwd, ["commit", "-m", "feat(data): more lines\n\nAuthored-by-agent: cursor/example\nModel: test"]);
+      expect(readBadge(readFileSync(readmePath, "utf8"))).toBe(renderBadge(collect(cwd)));
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("reads a throwaway repository the same way", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "commona-stats-"));
     try {
@@ -395,6 +424,18 @@ describe("agent-written stats", () => {
     }
   });
 });
+
+function stagedAdded(cwd: string): number {
+  git(cwd, ["add", "-A"]);
+  const staged = execFileSync("git", ["-C", cwd, "diff", "--cached", "--numstat"], { encoding: "utf8" });
+  let added = 0;
+  for (const line of staged.split("\n")) {
+    const match = /^(\d+)\t/.exec(line);
+    if (!match?.[1]) continue;
+    added += Number(match[1]);
+  }
+  return added;
+}
 
 function git(cwd: string, args: string[]): void {
   execFileSync(

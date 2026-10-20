@@ -16,7 +16,7 @@
     "m1": "node --experimental-sqlite --import tsx scripts/m1.ts",
     "demo:lunch": "node --experimental-sqlite --import tsx scripts/demo-lunch.ts",
     "room:new": "tsx scripts/room-new.ts",
-    "stats": "tsx scripts/agent-written.ts --write",
+    "stats": "tsx scripts/agent-written.ts --write --include-workdir",
     "stats:check": "tsx scripts/agent-written.ts --check",
     "check:fake-data": "bash scripts/check-fake-data.sh",
     "check:conventions": "python3 scripts/test_check_conventions.py"

@@ -254,6 +254,37 @@ export function renderBadge(stats: AgentWrittenStats): string {
   ].join("\n");
 }
 
+/**
+ * The badge lives inside the commit it describes, so that commit's lines
+ * change the percentages. Treat the staged diff as one more commit of `kind`
+ * and return the stats `stats:check` will see after that commit lands.
+ * Zero added lines means there is no pending commit.
+ */
+export function withPendingCommit(
+  stats: AgentWrittenStats,
+  added: number,
+  kind: CommitStat["kind"],
+): AgentWrittenStats {
+  if (added <= 0) return stats;
+  const agent = kind === "agent";
+  const human = kind === "human";
+  const agentAdded = stats.agentAdded + (agent ? added : 0);
+  const totalAdded = stats.added + added;
+  const agentCommits = stats.agentCommits + (agent ? 1 : 0);
+  const totalCommits = stats.totalCommits + 1;
+  return {
+    ...stats,
+    totalCommits,
+    agentCommits,
+    humanCommits: stats.humanCommits + (human ? 1 : 0),
+    unattributedCommits: stats.unattributedCommits + (!agent && !human ? 1 : 0),
+    added: totalAdded,
+    agentAdded,
+    linePercent: percent(agentAdded, totalAdded),
+    commitPercent: percent(agentCommits, totalCommits),
+  };
+}
+
 export function readBadge(readme: string): string | null {
   const start = readme.indexOf(START);
   const end = readme.indexOf(END);
@@ -310,20 +341,13 @@ function main(): void {
   const includeWorkdir = process.argv.includes("--include-workdir");
   if (write) {
     const readmePath = `${cwd}/README.md`;
+    // Repeat until the badge text stops changing the staged insertions.
+    // The pending commit counts as agent-written, which is true only when
+    // that commit carries Authored-by-agent and Model and no Authored-by.
     for (let attempt = 0; attempt < 6; attempt++) {
       const stats = collect(cwd);
-      if (includeWorkdir) {
-        const extra = stagedAdditions(cwd);
-        if (extra > 0) {
-          stats.totalCommits += 1;
-          stats.agentCommits += 1;
-          stats.added += extra;
-          stats.agentAdded += extra;
-          stats.linePercent = percent(stats.agentAdded, stats.added);
-          stats.commitPercent = percent(stats.agentCommits, stats.totalCommits);
-        }
-      }
-      const next = renderBadge(stats);
+      const extra = includeWorkdir ? stagedAdditions(cwd) : 0;
+      const next = renderBadge(withPendingCommit(stats, extra, "agent"));
       const readme = readFileSync(readmePath, "utf8");
       if (readBadge(readme) === next) break;
       writeFileSync(readmePath, writeBadge(readme, next));
