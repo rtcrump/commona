@@ -159,6 +159,7 @@ function showForCookie(
     ownerId: principal.ownerId,
     agentKey,
     sharingKey,
+    agentId: agentKey === null ? null : principal.agentId,
   });
   assertHidden(page, hidden);
   const cookies =

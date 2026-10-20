@@ -13,6 +13,7 @@ import {
   readBadge,
   renderBadge,
   summarize,
+  withPendingCommit,
   type AgentWrittenStats,
 } from "../scripts/agent-written.js";
 
@@ -98,7 +99,242 @@ describe("agent-written stats", () => {
       classifyTrailers(
         "feat(room): x\n\nAuthored-by-agent: cursor/commona-build\n\nA body paragraph sits between the trailers.\n\nModel: cursor\n",
       ).kind,
+    ).toBe("agent");
+  });
+
+  it("counts a squash whose trailers all name agents", () => {
+    const message = [
+      "feat(room): serve the room (#37)",
+      "",
+      "* feat(room): first slice",
+      "",
+      "The first slice lands.",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "* fix(room): second slice",
+      "",
+      "The second slice lands.",
+      "",
+      "Authored-by-agent: cursor/other",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "",
+    ].join("\n");
+    expect(parseTrailerBlock(message)).toEqual([["Co-authored-by", "Cursor Agent <cursoragent@cursor.com>"]]);
+    expect(classifyTrailers(message).kind).toBe("agent");
+
+    const mixed = message.replace(
+      "Authored-by-agent: cursor/other\nModel: test",
+      "Authored-by-agent: cursor/other\nModel: test\n\nAuthored-by: human/tester",
+    );
+    expect(classifyTrailers(mixed).kind).toBe("unattributed");
+  });
+
+  it("counts a squash whose footer credits only the merger", () => {
+    const message = [
+      "feat(room): serve the room (#37)",
+      "",
+      "* feat(room): first slice",
+      "",
+      "The first slice lands.",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "",
+      "* fix(room): second slice",
+      "",
+      "The second slice lands.",
+      "",
+      "Authored-by-agent: cursor/other",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(message).kind).toBe("agent");
+  });
+
+  it("ignores a Markdown rule inside a squashed commit", () => {
+    const message = [
+      "feat(room): serve the room (#37)",
+      "",
+      "* feat(room): first slice",
+      "",
+      "The first slice lands.",
+      "",
+      "    ---------",
+      "",
+      "---------",
+      "",
+      "That rule is part of the commit body.",
+      "",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(message).kind).toBe("agent");
+  });
+
+  it("treats a nine-hyphen line as the squash divider only when allowed trailers follow", () => {
+    const proseAfterRule = [
+      "feat(room): mention the rule",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "That rule is part of the commit body.",
+      "",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(proseAfterRule).kind).toBe("agent");
+
+    const otherTrailerAfter = [
+      "feat(room): mention the rule",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "QA: chatgpt round 1 pass",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(otherTrailerAfter).kind).toBe("unattributed");
+
+    const realFooter = [
+      "feat(room): serve the room (#37)",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(realFooter).kind).toBe("unattributed");
+  });
+
+  it("counts a person in a squash footer that also has QA and Approved-by", () => {
+    const message = [
+      "feat(room): serve the room (#37)",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "QA: chatgpt round 1 pass",
+      "Approved-by: trafford",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(message).kind).toBe("agent");
+    expect(classifyTrailers(message).qa).toBe("chatgpt round 1 pass");
+
+    const withPerson = [
+      "feat(room): serve the room (#37)",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "QA: chatgpt round 1 pass",
+      "Approved-by: trafford",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(withPerson).kind).toBe("unattributed");
+  });
+
+  it("counts human Authored-by trailers when no agent trailer is present", () => {
+    expect(
+      classifyTrailers("fix(docs): two people\n\nAuthored-by: human/alice\nAuthored-by: human/bob\n").kind,
+    ).toBe("human");
+    expect(
+      classifyTrailers("fix(docs): two people\n\nAuthored-by: human/alice\n\nAuthored-by: human/bob\n").kind,
+    ).toBe("human");
+    expect(
+      classifyTrailers(
+        "fix(docs): mixed\n\nAuthored-by: human/alice\nAuthored-by: human/bob\n\nAuthored-by-agent: cursor/example\nModel: test\n",
+      ).kind,
     ).toBe("unattributed");
+  });
+
+  it("does not count a squash co-authored by a person", () => {
+    const message = [
+      "feat(room): serve the room (#37)",
+      "",
+      "* feat(room): first slice",
+      "",
+      "The first slice lands.",
+      "",
+      "Authored-by-agent: cursor/example",
+      "Model: test",
+      "",
+      "* fix(room): second slice",
+      "",
+      "The second slice lands.",
+      "",
+      "Authored-by-agent: cursor/other",
+      "Model: test",
+      "",
+      "---------",
+      "",
+      "Co-authored-by: Cursor Agent <cursoragent@cursor.com>",
+      "Co-authored-by: rtcrump <rtcrump@example.test>",
+      "",
+    ].join("\n");
+    expect(classifyTrailers(message).kind).toBe("unattributed");
+  });
+
+  it("settles the badge on the agent commit that writes it", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "commona-stats-badge-"));
+    const readmePath = path.join(cwd, "README.md");
+    try {
+      git(cwd, ["init"]);
+      writeFileSync(
+        readmePath,
+        "<!-- agent-written-badge:start -->\nWritten by agents: 0% of lines, 0% of commits\nHuman edits: 0\nQA trailers: 0\n<!-- agent-written-badge:end -->\n",
+      );
+      writeFileSync(path.join(cwd, "a.txt"), `${"a\n".repeat(10)}`);
+      git(cwd, ["add", "README.md", "a.txt"]);
+      git(cwd, ["commit", "-m", "feat(data): start\n\nAuthored-by-agent: cursor/example\nModel: test"]);
+      writeFileSync(path.join(cwd, "b.txt"), `${"b\n".repeat(4)}`);
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const extra = stagedAdded(cwd);
+        const next = renderBadge(withPendingCommit(collect(cwd), extra, "agent"));
+        const readme = readFileSync(readmePath, "utf8");
+        if (readBadge(readme) === next) break;
+        writeFileSync(readmePath, readme.replace(readBadge(readme) ?? "", next));
+      }
+      git(cwd, ["add", "-A"]);
+      git(cwd, ["commit", "-m", "feat(data): more lines\n\nAuthored-by-agent: cursor/example\nModel: test"]);
+      expect(readBadge(readFileSync(readmePath, "utf8"))).toBe(renderBadge(collect(cwd)));
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it("reads a throwaway repository the same way", () => {
@@ -188,6 +424,18 @@ describe("agent-written stats", () => {
     }
   });
 });
+
+function stagedAdded(cwd: string): number {
+  git(cwd, ["add", "-A"]);
+  const staged = execFileSync("git", ["-C", cwd, "diff", "--cached", "--numstat"], { encoding: "utf8" });
+  let added = 0;
+  for (const line of staged.split("\n")) {
+    const match = /^(\d+)\t/.exec(line);
+    if (!match?.[1]) continue;
+    added += Number(match[1]);
+  }
+  return added;
+}
 
 function git(cwd: string, args: string[]): void {
   execFileSync(
