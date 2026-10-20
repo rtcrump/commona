@@ -11,6 +11,7 @@ import { createSharingDirectory } from "../../src/sharing/index.js";
 
 const agentToken = "agent-key-for-poll";
 const ownerToken = "owner-key-for-poll";
+const roomId = "room_11111111-1111-4111-8111-111111111111";
 
 function deps(): RoomDeps {
   const db = openDatabase(":memory:");
@@ -28,6 +29,11 @@ function deps(): RoomDeps {
     "a1@example.test",
     hashToken(agentToken),
   );
+  db.prepare("INSERT INTO rooms (id, created_at, created_by_owner_id) VALUES (?, ?, ?)").run(
+    roomId,
+    "2026-04-01T12:00:00.000Z",
+    "O1",
+  );
   const clock = systemClock;
   return {
     db,
@@ -43,20 +49,32 @@ function deps(): RoomDeps {
 describe("agent poll guard", () => {
   it("allows an agent key once per 30 seconds and does not limit an owner", async () => {
     const room = deps();
-    const first = reserveAgentPoll(room, `Bearer ${agentToken}`, 1_000);
+    const first = reserveAgentPoll(room, `Bearer ${agentToken}`, 1_000, roomId);
     expect(first).toBeNull();
-    const second = reserveAgentPoll(room, `Bearer ${agentToken}`, 1_000 + 29_000);
+    const second = reserveAgentPoll(room, `Bearer ${agentToken}`, 1_000 + 29_000, roomId);
     expect(second?.status).toBe(429);
     expect(second?.headers.get("retry-after")).toBe("30");
     expect(await second?.json()).toEqual({ error: { code: "validation", message: "Try again later." } });
-    const later = reserveAgentPoll(room, `Bearer ${agentToken}`, 1_000 + 30_000);
+    const later = reserveAgentPoll(room, `Bearer ${agentToken}`, 1_000 + 30_000, roomId);
     expect(later).toBeNull();
-    expect(reserveAgentPoll(room, `Bearer ${ownerToken}`, 2_000)).toBeNull();
-    expect(reserveAgentPoll(room, `Bearer ${ownerToken}`, 2_001)).toBeNull();
-    expect(reserveAgentPoll(room, "Bearer missing-token", 2_001)).toBeNull();
+    expect(reserveAgentPoll(room, `Bearer ${ownerToken}`, 2_000, roomId)).toBeNull();
+    expect(reserveAgentPoll(room, `Bearer ${ownerToken}`, 2_001, roomId)).toBeNull();
+    expect(reserveAgentPoll(room, "Bearer missing-token", 2_001, roomId)).toBeNull();
     const stored = room.db.prepare("SELECT token_hash FROM agent_polls").all() as { token_hash: string }[];
     expect(stored.map((row) => row.token_hash)).toEqual([hashToken(agentToken)]);
     expect(JSON.stringify(stored)).not.toContain(agentToken);
+    room.db.close();
+  });
+
+  it("does not reserve a poll after the room row is gone", async () => {
+    const room = deps();
+    expect(reserveAgentPoll(room, `Bearer ${agentToken}`, 1_000, roomId)).toBeNull();
+    const before = room.db.prepare("SELECT last_ms FROM agent_polls").get() as { last_ms: number };
+    room.db.prepare("DELETE FROM rooms WHERE id = ?").run(roomId);
+    const again = reserveAgentPoll(room, `Bearer ${agentToken}`, 1_000 + 1_000, roomId);
+    expect(again).toBeNull();
+    const after = room.db.prepare("SELECT last_ms FROM agent_polls").get() as { last_ms: number };
+    expect(after.last_ms).toBe(before.last_ms);
     room.db.close();
   });
 });

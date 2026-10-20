@@ -11,7 +11,7 @@ import { auditHostRefusal, isHostRefusal, useHostSecret } from "../host/host-roo
 import { createHttpApp } from "../http/server.js";
 import type { CommonaHono } from "../http/types.js";
 import { createOwnerNotifier } from "../notices/store.js";
-import { isAgentFeedPoll, reserveAgentPoll } from "../poll/agent-poll.js";
+import { feedRoomId, isAgentFeedPoll, reserveAgentPoll } from "../poll/agent-poll.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createSharingDirectory } from "../sharing/index.js";
@@ -86,8 +86,9 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
       });
     }
     const url = new URL(request.url);
-    if (isAgentFeedPoll(request.method, url.pathname)) {
-      const limited = reserveAgentPoll(this.deps, request.headers.get("authorization") ?? undefined, Date.now());
+    const roomId = feedRoomId(url.pathname);
+    if (isAgentFeedPoll(request.method, url.pathname) && roomId) {
+      const limited = reserveAgentPoll(this.deps, request.headers.get("authorization") ?? undefined, Date.now(), roomId);
       if (limited) return limited;
     }
     applyPublicBindings(this.env);

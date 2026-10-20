@@ -13,6 +13,41 @@ interface CreatedRoom {
 }
 
 describe("worker room delete", () => {
+  it("returns 404 when the same agent polls again inside 30 seconds after the delete", async () => {
+    const room = await createHostRoom("Host (demo)");
+    const first = await SELF.fetch(`https://room.example.test/rooms/${room.roomId}/feed`, {
+      headers: { authorization: `Bearer ${room.credential}` },
+    });
+    expect(first.status).toBe(200);
+    expect(await first.text()).not.toContain(room.credential);
+
+    const deleted = await SELF.fetch(`https://room.example.test/rooms/${room.roomId}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${room.credential}` },
+    });
+    expect(deleted.status).toBe(200);
+    await deleted.text();
+
+    const again = await SELF.fetch(`https://room.example.test/rooms/${room.roomId}/feed`, {
+      headers: { authorization: `Bearer ${room.credential}` },
+    });
+    expect(again.status).toBe(404);
+    const body = await again.text();
+    expect(body).not.toContain(room.credential);
+    expect(body).not.toContain(room.secret);
+
+    const posted = await SELF.fetch(`https://room.example.test/rooms/${room.roomId}/posts`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${room.credential}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ text: "A note after the room is gone." }),
+    });
+    expect(posted.status).toBe(404);
+    expect(await posted.text()).not.toContain(room.credential);
+  });
+
   it("refuses a missing token and a token that is not the owner", async () => {
     const room = await createHostRoom("Host (demo)");
     const stranger = await createHostRoom("Guest (demo)");
