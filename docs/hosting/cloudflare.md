@@ -18,16 +18,17 @@ To read this owner's audit trail, load `COMMONA_OWNER_TOKEN` and `COMMONA_OWNER_
 
 The credential file is one `NAME=value` line for each secret, separated by a Unix newline. The value is the text after the first `=`. PowerShell and Command Prompt read that text for `COMMONA_OWNER_TOKEN` and `COMMONA_OWNER_ID`, then give it to curl on standard input (`--config -`). It is not a curl argument, so it is not on the curl command line. The text you paste does not contain the token, so the shell history does not either.
 
-Bash. The subshell ends when curl finishes, so the token does not stay in your shell.
+Bash. Pass the Authorization header to curl as a config on standard input. This keeps the token off the curl command line. The subshell ends when curl finishes, so the token does not stay in your shell.
 
 ```
 (
-  set -a
-  . "$COMMONA_HOST_CREDENTIAL"
   set +a
-  curl -sS \
-    -H "Authorization: Bearer ${COMMONA_OWNER_TOKEN}" \
-    "${COMMONA_URL}/log?owner=${COMMONA_OWNER_ID}"
+  . "$COMMONA_HOST_CREDENTIAL"
+  printf 'silent\nshow-error\nheader = "Authorization: Bearer %s"\nurl = "%s/log?owner=%s"\n' \
+    "$COMMONA_OWNER_TOKEN" \
+    "$COMMONA_URL" \
+    "$COMMONA_OWNER_ID" |
+    curl --config -
 )
 ```
 
