@@ -122,6 +122,86 @@ describe("worker room page", () => {
     expect(record?.usedAt).toBeNull();
     expect(record?.secretHash).toBe(hashToken(secret));
   });
+
+  it("shows the agent id beside the one-time key, and revoke of that id returns 401", async () => {
+    const created = await hostRoom("Sunday lunch");
+    const opened = await SELF.fetch(`https://room.example.test/r/${created.roomId}?t=${created.secret}`, {
+      redirect: "manual",
+    });
+    expect(opened.status).toBe(303);
+    expect(opened.headers.get("location")).toBe(`/r/${created.roomId}`);
+    const cookieName = agentCookieName(created.roomId);
+    const header = opened.headers.getSetCookie().find((value) => value.startsWith(`${cookieName}=`)) ?? "";
+    const key = cookieValue(header, cookieName);
+    expect(/^[A-Za-z0-9_-]{20,}$/.test(key)).toBe(true);
+    await opened.arrayBuffer();
+
+    const landed = await SELF.fetch(`https://room.example.test/r/${created.roomId}`, {
+      headers: { cookie: `${cookieName}=${key}` },
+    });
+    const page = await landed.text();
+    expect(landed.status).toBe(200);
+    const shown = page.match(/<p>Agent id <code>(agent_[0-9a-f-]{36})<\/code><\/p>\n<pre>([^<]+)<\/pre>/);
+    expect(shown?.[2]).toBe(key);
+    const agentId = shown?.[1] ?? "";
+    expect(page.includes(created.secret)).toBe(false);
+    expect(page.includes(created.credential)).toBe(false);
+    expect(page.includes(hostSecret)).toBe(false);
+
+    const live = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}`, {
+      headers: { authorization: `Bearer ${key}` },
+    });
+    expect(live.status).toBe(200);
+    await live.arrayBuffer();
+
+    const revoked = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}/agents/${agentId}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${created.credential}` },
+    });
+    expect(revoked.status).toBe(200);
+    expect(await revoked.json()).toEqual({ revoked: true });
+
+    const denied = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}`, {
+      headers: { authorization: `Bearer ${key}` },
+    });
+    const deniedBody = await denied.text();
+    expect(denied.status).toBe(401);
+    expect(deniedBody.includes(key)).toBe(false);
+    expect(deniedBody.includes(created.secret)).toBe(false);
+
+    const deniedPost = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ text: "Bring napkins" }),
+    });
+    expect(deniedPost.status).toBe(401);
+    await deniedPost.arrayBuffer();
+
+    const pageDenied = await SELF.fetch(`https://room.example.test/r/${created.roomId}`, {
+      headers: { cookie: `${cookieName}=${key}` },
+    });
+    const pageBody = await pageDenied.text();
+    expect(pageDenied.status).toBe(401);
+    expect(pageBody).toContain("This key was revoked.");
+    expect(pageBody.includes(key)).toBe(false);
+    expect(pageBody.includes(agentId)).toBe(false);
+
+    const formDenied = await SELF.fetch(`https://room.example.test/r/${created.roomId}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        cookie: `${cookieName}=${key}`,
+      },
+      body: new URLSearchParams({ nonce: "unused", text: "Bring napkins" }),
+    });
+    const formBody = await formDenied.text();
+    expect(formDenied.status).toBe(401);
+    expect(formBody).toContain("This key was revoked.");
+    expect(formBody.includes(key)).toBe(false);
+  });
 });
 
 async function hostRoom(title: string): Promise<{ roomId: string; id: string; secret: string; credential: string }> {
