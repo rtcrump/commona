@@ -21,7 +21,8 @@ export interface DeletedRoom {
  *
  * The Worker keeps every room in one SQLite Durable Object. The delete removes
  * only this room's rows, in the same transaction as the audit append, so the
- * append-only log is never cleared. When no rooms remain, the Worker clears
+ * append-only log is never cleared. Revocation rows stay. They are the global
+ * reissue block, not this room's data. When no rooms remain, the Worker clears
  * the object's alarm. Other owners' rows stay.
  *
  * There is no second index object. The response also returns the sealed record.
@@ -82,7 +83,8 @@ function purgeRoom(db: RoomDeps["db"], roomId: string): void {
   deleteWhere(db, "connect_presence", "DELETE FROM connect_presence WHERE room_id = ?", roomId);
   deleteWhere(db, "room_form_tokens", "DELETE FROM room_form_tokens WHERE room_id = ?", roomId);
   deleteWhere(db, "room_key_flash", "DELETE FROM room_key_flash WHERE room_id = ?", roomId);
-  deleteWhere(db, "agent_key_revocations", "DELETE FROM agent_key_revocations WHERE room_id = ?", roomId);
+  // agent_key_revocations is global safety state. The key is not room-scoped,
+  // so a revoke blocks reissue in every room. Deleting this room must not lift that.
   deleteWhere(db, "host_outbound", "DELETE FROM host_outbound WHERE room_id = ?", roomId);
   deleteWhere(db, "room_titles", "DELETE FROM room_titles WHERE room_id = ?", roomId);
   deleteWhere(db, "notices", "DELETE FROM notices WHERE room_id = ?", roomId);

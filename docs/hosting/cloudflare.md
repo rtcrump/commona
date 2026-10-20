@@ -29,7 +29,7 @@ The connector in `connectors/mcp-server` stays on your computer. It is not part 
 
 After that, `npm run room:new` can target the https origin. Set `COMMONA_URL` to that origin, with no path. Set `COMMONA_HOST_SECRET` in that window to the same secret. Set `COMMONA_HOST_CREDENTIAL` to a new file on your computer. The command writes the host credential there and prints only the invite links.
 
-`npm run room:delete` deletes that room. It reads the same credential file and does not print it. The delete removes that room's rows and writes the audit record on the same log. When no rooms remain, it also clears the Durable Object alarm. The response carries the record. There is no second index.
+`npm run room:delete` deletes that room. It reads the same credential file and does not print it. The delete removes that room's rows and writes the audit record on the same log. Revoked-key rows stay, so deleting the room does not lift the reissue block. When no rooms remain, it also clears the Durable Object alarm. The response carries the record. There is no second index.
 
 ## Local secret file
 
