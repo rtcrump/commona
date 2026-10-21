@@ -5,7 +5,7 @@ import { createTokenStore } from "../../src/auth/store.js";
 import { openDatabase } from "../../src/db.js";
 import { guard } from "../../src/guard/index.js";
 import { createOwnerNotifier } from "../../src/notices/store.js";
-import { reserveAgentPoll } from "../../src/poll/agent-poll.js";
+import { feedRoomId, reserveAgentPoll } from "../../src/poll/agent-poll.js";
 import type { RoomDeps } from "../../src/room/deps.js";
 import { createSharingDirectory } from "../../src/sharing/index.js";
 
@@ -47,6 +47,13 @@ function deps(): RoomDeps {
 }
 
 describe("agent poll guard", () => {
+  it("decodes the routed room segment once, preserving encoded percent signs", () => {
+    expect(feedRoomId(`/rooms/${roomId}/feed`)).toBe(roomId);
+    expect(feedRoomId(`/rooms/${roomId.replace("room_", "%72%6f%6Fm%5f")}/feed`)).toBe(roomId);
+    expect(feedRoomId("/%72ooms/room_%252f/%66eed")).toBe("room_%2f");
+    expect(feedRoomId("/health")).toBeNull();
+  });
+
   it("allows an agent key once per 30 seconds and does not limit an owner", async () => {
     const room = deps();
     const first = reserveAgentPoll(room, `Bearer ${agentToken}`, 1_000, roomId);
@@ -72,7 +79,7 @@ describe("agent poll guard", () => {
     const before = room.db.prepare("SELECT last_ms FROM agent_polls").get() as { last_ms: number };
     room.db.prepare("DELETE FROM rooms WHERE id = ?").run(roomId);
     const again = reserveAgentPoll(room, `Bearer ${agentToken}`, 1_000 + 1_000, roomId);
-    expect(again).toBeNull();
+    expect(again?.status).toBe(404);
     const after = room.db.prepare("SELECT last_ms FROM agent_polls").get() as { last_ms: number };
     expect(after.last_ms).toBe(before.last_ms);
     room.db.close();

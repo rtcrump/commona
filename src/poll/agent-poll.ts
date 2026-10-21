@@ -1,5 +1,6 @@
 import { hashToken, readBearerToken } from "../../contract/index.js";
 import type { RoomDeps } from "../room/deps.js";
+import { RoomHttpError } from "../room/http.js";
 
 /** Fixed gap. It is not read from the environment. */
 export const POLL_MIN_MS = 30_000;
@@ -7,7 +8,11 @@ export const POLL_MIN_MS = 30_000;
 const FEED_PATH = /^\/rooms\/([^/]+)\/feed$/;
 
 export function feedRoomId(pathname: string): string | null {
-  return FEED_PATH.exec(pathname)?.[1] ?? null;
+  // Hono decodes the path with decodeURI, preserving %25 until param decoding.
+  // Use strict decoders so malformed encodings cannot continue without a limit.
+  const path = decodeURI(pathname.replace(/%25/g, "%2525"));
+  const segment = FEED_PATH.exec(path)?.[1];
+  return segment === undefined ? null : decodeURIComponent(segment);
 }
 
 export function isAgentFeedPoll(method: string, pathname: string): boolean {
@@ -17,9 +22,9 @@ export function isAgentFeedPoll(method: string, pathname: string): boolean {
 /**
  * One poll per agent key per 30 seconds. Owners are not limited.
  * An unknown token is not limited here; the route answers 401.
- * A room that is not stored is not limited here, and no row is written.
- * The route answers 404. The stored value is the SHA-256 hash, never the key.
- * Returns 429, or null when the request may continue.
+ * A room that is not stored is refused here with 404, and no row is written.
+ * The stored value is the SHA-256 hash, never the key.
+ * Returns 404 or 429, or null when the request may continue.
  */
 export function reserveAgentPoll(
   deps: RoomDeps,
@@ -27,7 +32,9 @@ export function reserveAgentPoll(
   nowMs: number,
   roomId: string,
 ): Response | null {
-  if (!roomIsStored(deps, roomId)) return null;
+  if (!roomIsStored(deps, roomId)) {
+    return Response.json(RoomHttpError.notFound().body(), { status: 404, headers: { "cache-control": "no-store" } });
+  }
   const token = readBearerToken(authorization);
   if (!token) return null;
   const hash = hashToken(token);

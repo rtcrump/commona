@@ -11,7 +11,7 @@ import { auditHostRefusal, isHostRefusal, useHostSecret } from "../host/host-roo
 import { createHttpApp } from "../http/server.js";
 import type { CommonaHono } from "../http/types.js";
 import { createOwnerNotifier } from "../notices/store.js";
-import { feedRoomId, isAgentFeedPoll, reserveAgentPoll } from "../poll/agent-poll.js";
+import { feedRoomId, reserveAgentPoll } from "../poll/agent-poll.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createSharingDirectory } from "../sharing/index.js";
@@ -86,10 +86,20 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
       });
     }
     const url = new URL(request.url);
-    const roomId = feedRoomId(url.pathname);
-    if (isAgentFeedPoll(request.method, url.pathname) && roomId) {
-      const limited = reserveAgentPoll(this.deps, request.headers.get("authorization") ?? undefined, Date.now(), roomId);
-      if (limited) return limited;
+    if (request.method === "GET") {
+      let roomId: string | null;
+      try {
+        roomId = feedRoomId(url.pathname);
+      } catch {
+        return Response.json(RoomHttpError.badRequest().body(), {
+          status: 400,
+          headers: { "cache-control": "no-store" },
+        });
+      }
+      if (roomId !== null) {
+        const limited = reserveAgentPoll(this.deps, request.headers.get("authorization") ?? undefined, Date.now(), roomId);
+        if (limited) return limited;
+      }
     }
     applyPublicBindings(this.env);
     return useHostSecret(this.env.COMMONA_HOST_SECRET, () => Promise.resolve(this.app.fetch(request)));
