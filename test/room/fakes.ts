@@ -10,6 +10,7 @@ import {
   formatTimestamp,
   GENESIS_PREV_HASH,
   isSharingLevel,
+  narrowSharingAllowed,
   newId,
   ownerActorId,
   ReasonCode,
@@ -175,6 +176,15 @@ export function createTestSharing(db: Sqlite): SharingDirectory {
       }
       if (principal.ownerId !== fromOwnerId) {
         return { allowed: false, reasonCode: ReasonCode.NotOwner };
+      }
+      if (principal.kind === "narrow") {
+        const row = db
+          .prepare("SELECT level FROM sharing WHERE room_id = ? AND from_owner_id = ? AND to_owner_id = ?")
+          .get(roomId, fromOwnerId, toOwnerId) as { level: string } | undefined;
+        const current = row && isSharingLevel(row.level) ? row.level : DEFAULT_SHARING_LEVEL;
+        if (!narrowSharingAllowed(current, level)) {
+          return { allowed: false, reasonCode: ReasonCode.SharingNarrow };
+        }
       }
       writeLevel(roomId, fromOwnerId, toOwnerId, level);
       return { allowed: true, sharing: { roomId, fromOwnerId, toOwnerId, level } };

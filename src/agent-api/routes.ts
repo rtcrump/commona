@@ -10,6 +10,7 @@ import {
 import type { CommonaHono } from "../http/types.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { ensureInviteSchema } from "../join/schema.js";
+import { grantDefaultRoomPosts } from "../sharing/room-default-share.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost } from "../room/posts.js";
@@ -20,6 +21,7 @@ import { ensureAgentApiSchema } from "./schema.js";
 /**
  * JSON room API. It mirrors the plain HTML page: join with one invite, read posts, post a message.
  * The agent key is a bearer token. Only its SHA-256 hash is stored.
+ * The redeem response also returns a narrow sharing key once. It does not return the owner session token.
  * Only GET redeems an invite. Hono would otherwise run HEAD through this GET handler.
  */
 export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
@@ -81,26 +83,39 @@ function redeemAndReturn(deps: RoomDeps, roomId: string, inviteId: string | null
     if (error instanceof RoomHttpError) return json(error.body(), error.status);
     throw error;
   }
+  grantDefaultRoomPosts(deps, roomId, redeemed.owner.id, id);
   const principal: AuthPrincipal = {
     kind: "agent",
     agentId: redeemed.agent.id,
     ownerId: redeemed.owner.id,
   };
   const agentKey = deps.tokens.issueAgentToken(redeemed.agent.id);
-  if (!/^[A-Za-z0-9_-]+$/.test(agentKey)) throw new Error("refusing to send a secret");
+  const sharingKey = deps.tokens.issueNarrowToken(redeemed.owner.id);
+  const sessionToken = redeemed.sessionToken;
+  if (!/^[A-Za-z0-9_-]+$/.test(agentKey) || !/^[A-Za-z0-9_-]+$/.test(sharingKey)) {
+    throw new Error("refusing to send a secret");
+  }
   const body = {
     roomId,
     agentId: principal.agentId,
+    ownerId: principal.ownerId,
     title: roomTitle(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
     agentKey,
+    sharingKey,
   };
-  assertHidden(JSON.stringify({ roomId: body.roomId, agentId: body.agentId, title: body.title, posts: body.posts }), [
-    secret,
-    agentKey,
-  ]);
+  assertHidden(
+    JSON.stringify({
+      roomId: body.roomId,
+      agentId: body.agentId,
+      ownerId: body.ownerId,
+      title: body.title,
+      posts: body.posts,
+    }),
+    [secret, agentKey, sharingKey, sessionToken],
+  );
   const encoded = JSON.stringify(body);
-  assertHidden(encoded, [secret]);
+  assertHidden(encoded, [secret, sessionToken, hashToken(agentKey), hashToken(sharingKey), hashToken(sessionToken)]);
   return json(body, HTTP_STATUS.ok);
 }
 

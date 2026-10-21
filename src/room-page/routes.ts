@@ -7,6 +7,7 @@ import { readCookie, serializeCookie } from "../join/cookies.js";
 import { ensureInviteSchema } from "../join/schema.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { newSecret } from "../onboarding/account.js";
+import { grantDefaultRoomPosts } from "../sharing/room-default-share.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost } from "../room/posts.js";
@@ -17,6 +18,11 @@ import { ensureRoomPageSchema } from "./schema.js";
 /** Per-room agent cookie. Two rooms do not share one name or one path. */
 export function agentCookieName(roomId: string): string {
   return `commona_agent_${roomId}`;
+}
+
+/** Per-room sharing-key cookie. It carries the raw key only until the next page read. */
+export function sharingCookieName(roomId: string): string {
+  return `commona_share_${roomId}`;
 }
 
 function agentCookiePath(roomId: string): string {
@@ -111,12 +117,23 @@ function redeemAndRedirect(deps: RoomDeps, roomId: string, inviteId: string | nu
     }
     throw error;
   }
+  grantDefaultRoomPosts(deps, roomId, redeemed.owner.id, id);
   const key = deps.tokens.issueAgentToken(redeemed.agent.id);
-  if (!/^[A-Za-z0-9_-]+$/.test(key)) throw new Error("refusing to send a secret");
+  const sharingKey = deps.tokens.issueNarrowToken(redeemed.owner.id);
+  const sessionToken = redeemed.sessionToken;
+  if (!/^[A-Za-z0-9_-]+$/.test(key) || !/^[A-Za-z0-9_-]+$/.test(sharingKey)) {
+    throw new Error("refusing to send a secret");
+  }
   saveKeyFlash(deps, redeemed.agent.id, roomId, key);
+  saveSharingFlash(deps, redeemed.agent.id, roomId, sharingKey);
   const location = `/r/${roomId}`;
-  assertHidden(location, [secret, key]);
-  return redirect(location, [serializeCookie(agentCookieName(roomId), key, agentCookiePath(roomId))]);
+  assertHidden(location, [secret, key, sharingKey, sessionToken]);
+  const cookies = [
+    serializeCookie(agentCookieName(roomId), key, agentCookiePath(roomId)),
+    serializeCookie(sharingCookieName(roomId), sharingKey, agentCookiePath(roomId)),
+  ];
+  assertHidden(cookies.join("\n"), [secret, sessionToken, hashToken(sessionToken)]);
+  return redirect(location, cookies);
 }
 
 function showForCookie(
@@ -132,16 +149,24 @@ function showForCookie(
   const nonce = newSecret();
   saveFormToken(deps, principal.agentId, roomId, nonce);
   const agentKey = takeKeyFlash(deps, principal.agentId, roomId);
+  const presentedKey = readCookie(cookie, sharingCookieName(roomId));
+  const sharingKey = takeSharingFlash(deps, principal.agentId, roomId, presentedKey);
   const page = renderRoomPage({
     title: roomTitle(deps, roomId),
     roomId,
     posts,
     nonce,
+    ownerId: principal.ownerId,
     agentKey,
+    sharingKey,
     agentId: agentKey === null ? null : principal.agentId,
   });
   assertHidden(page, hidden);
-  return htmlResponse(page, 200);
+  const cookies =
+    presentedKey === null
+      ? []
+      : [serializeCookie(sharingCookieName(roomId), "", agentCookiePath(roomId), 0)];
+  return htmlResponse(page, 200, cookies);
 }
 
 function handlePost(deps: RoomDeps, roomId: string, cookie: string | undefined, body: unknown): Response {
@@ -222,6 +247,27 @@ function takeKeyFlash(deps: RoomDeps, agentId: string, roomId: string): string |
   if (!row) return null;
   deps.db.prepare("DELETE FROM room_key_flash WHERE agent_id = ? AND room_id = ?").run(agentId, roomId);
   return row.agent_key;
+}
+
+function saveSharingFlash(deps: RoomDeps, agentId: string, roomId: string, token: string): void {
+  ensureRoomPageSchema(deps.db);
+  deps.db
+    .prepare(
+      `INSERT INTO room_sharing_flash (agent_id, room_id, token_hash) VALUES (?, ?, ?)
+       ON CONFLICT(agent_id) DO UPDATE SET room_id = excluded.room_id, token_hash = excluded.token_hash`,
+    )
+    .run(agentId, roomId, hashToken(token));
+}
+
+function takeSharingFlash(deps: RoomDeps, agentId: string, roomId: string, presented: string | null): string | null {
+  ensureRoomPageSchema(deps.db);
+  if (!presented || !/^[A-Za-z0-9_-]+$/.test(presented)) return null;
+  const row = deps.db
+    .prepare("SELECT token_hash FROM room_sharing_flash WHERE agent_id = ? AND room_id = ?")
+    .get(agentId, roomId) as { token_hash: string } | undefined;
+  if (!row || !sameHash(presented, row.token_hash)) return null;
+  deps.db.prepare("DELETE FROM room_sharing_flash WHERE agent_id = ? AND room_id = ?").run(agentId, roomId);
+  return presented;
 }
 
 function agentFromCookie(

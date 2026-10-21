@@ -28,6 +28,13 @@ CREATE TABLE IF NOT EXISTS owners (
   webhook_secret_revealed INTEGER NOT NULL DEFAULT 0 CHECK (webhook_secret_revealed IN (0, 1))
 );
 
+-- One narrow sharing key per owner. The raw key is shown once. This stores only its SHA-256 hash.
+-- It does not replace owners.token_hash.
+CREATE TABLE IF NOT EXISTS owner_narrow_tokens (
+  owner_id TEXT PRIMARY KEY REFERENCES owners(id),
+  token_hash TEXT NOT NULL UNIQUE
+);
+
 CREATE TABLE IF NOT EXISTS agents (
   id TEXT PRIMARY KEY,
   owner_id TEXT NOT NULL REFERENCES owners(id),
