@@ -7,7 +7,6 @@ import { readCookie, serializeCookie } from "../join/cookies.js";
 import { ensureInviteSchema } from "../join/schema.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { newSecret } from "../onboarding/account.js";
-import { grantDefaultRoomPosts } from "../sharing/room-default-share.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost } from "../room/posts.js";
@@ -110,14 +109,13 @@ function redeemAndRedirect(deps: RoomDeps, roomId: string, inviteId: string | nu
   if (!id) return htmlResponse(renderRoomMessage("This invite cannot be used. Ask for a new link."), 403);
   let redeemed;
   try {
-    redeemed = redeemInvite(deps, id, secret, roomId);
+    redeemed = redeemInvite(deps, id, secret, roomId, { defaultRoomPosts: true });
   } catch (error) {
     if (error instanceof RoomHttpError) {
       return htmlResponse(renderRoomMessage("This invite cannot be used. Ask for a new link."), error.status);
     }
     throw error;
   }
-  grantDefaultRoomPosts(deps, roomId, redeemed.owner.id, id);
   const key = deps.tokens.issueAgentToken(redeemed.agent.id);
   const sharingKey = deps.tokens.issueNarrowToken(redeemed.owner.id);
   const sessionToken = redeemed.sessionToken;
