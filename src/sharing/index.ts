@@ -3,15 +3,17 @@ import {
   ContractError,
   DEFAULT_SHARING_LEVEL,
   ReasonCode,
+  SharingLevel,
   assertDistinctSharingOwners,
   feedIncludes,
+  isId,
   isSharingLevel,
+  narrowSharingAllowed,
   type AuthPrincipal,
   type FeedItem,
   type FileDownload,
   type ItemKind,
   type SharingDirectory,
-  type SharingLevel,
   type SharingRow,
   type SharingUpdateResult,
 } from "../../contract/index.js";
@@ -25,7 +27,9 @@ import {
  * overwrite. visibleFeed and visibleFile use level(room, author, viewer).
  * Held items stay hidden. A file the viewer must not see looks like a missing file.
  *
- * update is the only public write. The room route audits it. This module does not.
+ * `update` is the only owner write. The room route audits it. This module does not.
+ * `writePolicyMessages` is the room's invite default. It sets Messages on one edge
+ * and cannot set files. It does not take an owner principal and does not audit.
  */
 
 export interface SharingAccess extends SharingDirectory {
@@ -245,6 +249,13 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
     if (principal.ownerId !== fromOwnerId) {
       return { allowed: false, reasonCode: ReasonCode.NotOwner };
     }
+    // A narrow key may only lower its own outbound edge from messages to none.
+    if (
+      principal.kind === "narrow" &&
+      !narrowSharingAllowed(level(roomId, fromOwnerId, toOwnerId), sharingLevel)
+    ) {
+      return { allowed: false, reasonCode: ReasonCode.SharingNarrow };
+    }
     return { allowed: true, sharing: writeLevel(roomId, fromOwnerId, toOwnerId, sharingLevel) };
   }
 
@@ -293,4 +304,27 @@ function encodeContent(content: unknown): string {
     throw new ContractError("file content is missing");
   }
   return Buffer.from(content).toString("base64");
+}
+
+/**
+ * Room default for an invite join. One edge, Messages only.
+ * This is not an owner action: the caller audits it as the room policy.
+ */
+export function writePolicyMessages(
+  db: SqliteDatabase,
+  roomId: string,
+  fromOwnerId: string,
+  toOwnerId: string,
+): SharingRow {
+  assertDistinctSharingOwners(fromOwnerId, toOwnerId);
+  if (!isId(roomId) || !isId(fromOwnerId) || !isId(toOwnerId)) {
+    throw new ContractError("policy share requires ids");
+  }
+  db.prepare(
+    `INSERT INTO sharing (room_id, from_owner_id, to_owner_id, level)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT (room_id, from_owner_id, to_owner_id)
+     DO UPDATE SET level = excluded.level`,
+  ).run(roomId, fromOwnerId, toOwnerId, SharingLevel.Messages);
+  return { roomId, fromOwnerId, toOwnerId, level: SharingLevel.Messages };
 }

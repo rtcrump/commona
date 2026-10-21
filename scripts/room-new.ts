@@ -10,6 +10,7 @@ const INVITE_URL =
   /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?\/j\/inv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[A-Za-z0-9_-]+$/;
 const ROOM_ID = /^room_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const AGENT_ID = /^agent_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const OWNER_ID = /^owner_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CREDENTIAL_UNWRITABLE = "COMMONA_HOST_CREDENTIAL is not writable";
 
 const SAFE_SERVER_MESSAGES = new Set([
@@ -40,12 +41,14 @@ interface HostSetup {
   credential: string;
   roomId: string;
   agentId: string;
+  ownerToken: string;
+  ownerId: string;
 }
 
 /**
  * Ask the running server to create a room and invites.
  * Prints nothing. The caller prints the invite URLs and nothing else.
- * The host credential, room id, and agent id are written to a local file and are not returned.
+ * The host credential, room id, agent id, owner token, and owner id are written to a local file and are not returned.
  */
 export async function createRoomInvites(input: RoomNewInput): Promise<string[]> {
   const serverUrl = requireLocalUrl(input.serverUrl);
@@ -133,7 +136,7 @@ function writeCredential(file: string, body: string): void {
 }
 
 function credentialBody(parsed: HostSetup): string {
-  return `COMMONA_AGENT_TOKEN=${parsed.credential}\nCOMMONA_ROOM_ID=${parsed.roomId}\nCOMMONA_AGENT_ID=${parsed.agentId}\n`;
+  return `COMMONA_AGENT_TOKEN=${parsed.credential}\nCOMMONA_ROOM_ID=${parsed.roomId}\nCOMMONA_AGENT_ID=${parsed.agentId}\nCOMMONA_OWNER_TOKEN=${parsed.ownerToken}\nCOMMONA_OWNER_ID=${parsed.ownerId}\n`;
 }
 
 function readResult(text: string, hostSecret: string): HostSetup {
@@ -144,11 +147,20 @@ function readResult(text: string, hostSecret: string): HostSetup {
     throw new RoomNewError("room:new failed");
   }
   if (typeof parsed !== "object" || parsed === null) throw new RoomNewError("room:new failed");
-  const record = parsed as { invites?: unknown; credential?: unknown; roomId?: unknown; agentId?: unknown };
+  const record = parsed as {
+    invites?: unknown;
+    credential?: unknown;
+    roomId?: unknown;
+    agentId?: unknown;
+    ownerToken?: unknown;
+    ownerId?: unknown;
+  };
   const invites = record.invites;
   const credential = record.credential;
   const roomId = record.roomId;
   const agentId = record.agentId;
+  const ownerToken = record.ownerToken;
+  const ownerId = record.ownerId;
   if (
     !Array.isArray(invites) ||
     typeof credential !== "string" ||
@@ -161,7 +173,19 @@ function readResult(text: string, hostSecret: string): HostSetup {
     typeof agentId !== "string" ||
     !AGENT_ID.test(agentId) ||
     agentId.includes(hostSecret) ||
-    agentId.includes(credential)
+    agentId.includes(credential) ||
+    typeof ownerToken !== "string" ||
+    !/^[A-Za-z0-9_-]+$/.test(ownerToken) ||
+    ownerToken.includes(hostSecret) ||
+    ownerToken.includes(credential) ||
+    credential.includes(ownerToken) ||
+    roomId.includes(ownerToken) ||
+    agentId.includes(ownerToken) ||
+    typeof ownerId !== "string" ||
+    !OWNER_ID.test(ownerId) ||
+    ownerId.includes(hostSecret) ||
+    ownerId.includes(credential) ||
+    ownerId.includes(ownerToken)
   ) {
     throw new RoomNewError("room:new failed");
   }
@@ -173,14 +197,16 @@ function readResult(text: string, hostSecret: string): HostSetup {
       invite.includes(credential) ||
       invite.includes(hostSecret) ||
       invite.includes(roomId) ||
-      invite.includes(agentId)
+      invite.includes(agentId) ||
+      invite.includes(ownerToken) ||
+      invite.includes(ownerId)
     ) {
       throw new RoomNewError("room:new failed");
     }
     urls.push(invite);
   }
   if (urls.length === 0) throw new RoomNewError("room:new failed");
-  return { invites: urls, credential, roomId, agentId };
+  return { invites: urls, credential, roomId, agentId, ownerToken, ownerId };
 }
 
 function safeServerMessage(text: string): string {

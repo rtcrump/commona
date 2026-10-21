@@ -154,6 +154,18 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     return { tokenHash: agent.token_hash, revokedHash: revoked?.token_hash ?? null };
   }
 
+  /**
+   * Owner key storage a test can read inside the object.
+   * tokenHash is SHA-256 hex. The raw token is not stored.
+   */
+  ownerKeyState(ownerId: string): { tokenHash: string | null } | null {
+    const owner = this.deps.db.prepare("SELECT token_hash FROM owners WHERE id = ?").get(ownerId) as
+      | { token_hash: string | null }
+      | undefined;
+    if (!owner) return null;
+    return { tokenHash: owner.token_hash };
+  }
+
   /** How many posts this agent has counted toward the hourly limit. */
   postHitCount(agentId: string): number {
     const row = this.deps.db.prepare("SELECT COUNT(*) AS n FROM agent_post_hits WHERE agent_id = ?").get(agentId) as

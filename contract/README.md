@@ -27,7 +27,7 @@ A row is directional. `fromOwnerId` decides what `toOwnerId` may see. `level(roo
 
 `ensurePair` inserts both directions at `none` when two different owners are paired, and does not overwrite a row that already exists. The same owner twice throws `ContractError` and writes nothing.
 
-`SharingDirectory.update` is the only public write. There is no exported `put`. It accepts an owner token whose id is `fromOwnerId`. An agent token is refused with `agent_cannot_change_sharing`, including an agent of that owner. Another owner's token is refused with `not_owner`.
+`SharingDirectory.update` is the only public write. There is no exported `put`. It accepts an owner token whose id is `fromOwnerId`. An agent token is refused with `agent_cannot_change_sharing`, including an agent of that owner. Another owner's token is refused with `not_owner`. A narrow sharing key is not an owner token. It may only change its own outbound edge from `messages` to `none`. Any raise, any write that involves `messages_files`, and any other change are refused with `sharing_narrow`. A narrow key for a different owner is `not_owner`.
 
 The room route must audit the result. The sharing module does not write the log. A successful `update` is `setting_change` / `ok`, with `detail.level`, `detail.fromOwnerId`, and `detail.toOwnerId`, filed under the caller. A refusal is `setting_change_refused` / `refused` with the reason code from `update`. A thrown `ContractError` (the same owner twice, or a level outside the three values) is HTTP 400 and is not audited.
 
@@ -45,7 +45,7 @@ All bodies are JSON. The header is `Authorization: Bearer <token>`.
 | `GET /rooms/:roomId/feed?as=<agentId>` | that member agent | `200` `{ items }` oldest first |
 | `GET /rooms/:roomId/files/:fileId` | member who is allowed to see it | `200` file plus `contentBase64` |
 | `GET /rooms/:roomId/held` | authoring owner | `200` held items for that owner |
-| `PUT /rooms/:roomId/sharing` | `fromOwnerId` | `200` `{ sharing }` |
+| `PUT /rooms/:roomId/sharing` | owner `fromOwnerId`, or that owner's narrow key when lowering `messages` to `none` | `200` `{ sharing }` |
 | `GET /log?owner=<ownerId>` | that owner | `200` `{ entries }` oldest first |
 | `GET /notices` | owner | `200` `{ notices }` |
 
@@ -53,7 +53,7 @@ All bodies are JSON. The header is `Authorization: Bearer <token>`.
 
 File upload is JSON: `{ filename, mediaType, contentBase64, metadata? }`. Decoded size limit is `MAX_FILE_BYTES` (1 MiB). Message limit is `MAX_MESSAGE_CHARS`.
 
-Tokens name an owner or an agent. They are not tied to a room. Only the SHA-256 hash is stored. The members route returns an agent token when that call is what creates it. `TokenStore` can also mint in-process, which is how a test gives a token to an agent who never joins. Owner tokens are in-process only.
+Tokens name an owner, an agent, or a narrow sharing key. They are not tied to a room. Only the SHA-256 hash is stored. The members route returns an agent token when that call is what creates it. `TokenStore` can also mint in-process, which is how a test gives a token to an agent who never joins. The human join pages set the owner token only in the `commona_session` cookie (`HttpOnly`, `Secure`, `SameSite=Strict`). That cookie is not written into the page or a JSON body. `PUT /rooms/:roomId/sharing` accepts the cookie when no bearer token is sent. A bearer is never upgraded by the cookie. The JSON join and the plain room page return a narrow sharing key once. They do not return the owner token. The narrow key cannot call any other owner route.
 
 ## Wake-up events
 

@@ -5,6 +5,7 @@ import {
   ReasonCode,
   UNSCOPED_ROOM,
   formatTimestamp,
+  principalActor,
   readBearerToken,
   type AuditLog,
   type Clock,
@@ -32,11 +33,12 @@ export function registerNoticeRoute(app: CommonaHono, deps: NoticeRouteDeps): vo
     const principal = deps.tokens.authenticate(token);
     if (!principal) throw RoomHttpError.unauthorized();
     if (principal.kind !== "owner") {
+      const actor = principalActor(principal);
       deps.audit.append({
         ts: formatTimestamp(deps.clock.now()),
         room: UNSCOPED_ROOM,
-        agentId: principal.agentId,
-        ownerId: principal.ownerId,
+        agentId: actor.agentId,
+        ownerId: actor.ownerId,
         action: AuditAction.Read,
         result: AuditResult.Refused,
         detail: { reasonCode: ReasonCode.NotOwner },

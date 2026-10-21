@@ -21,7 +21,7 @@ interface Hit {
 }
 
 interface Issued {
-  kind: "owner" | "agent";
+  kind: "owner" | "agent" | "narrow";
   token: string;
 }
 
@@ -152,6 +152,11 @@ async function openHarness(clock: Clock & { advance(ms: number): void }) {
     issueAgentToken(agentId: string) {
       const token = inner.issueAgentToken(agentId);
       issued.push({ kind: "agent", token });
+      return token;
+    },
+    issueNarrowToken(ownerId: string) {
+      const token = inner.issueNarrowToken(ownerId);
+      issued.push({ kind: "narrow", token });
       return token;
     },
     authenticate: (token: string) => inner.authenticate(token),

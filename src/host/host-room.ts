@@ -4,6 +4,8 @@ import {
   AuditAction,
   AuditResult,
   formatTimestamp,
+  hashToken,
+  ownerActorId,
   UNSCOPED_ROOM,
 } from "../../contract/index.js";
 import { ensureInviteSchema } from "../join/schema.js";
@@ -144,6 +146,9 @@ interface HostRoomResult {
   credential: string;
   roomId: string;
   agentId: string;
+  /** Raw owner token. Returned once in this response. The database stores the hash. */
+  ownerToken: string;
+  ownerId: string;
 }
 
 /**
@@ -191,12 +196,44 @@ function createHostedRoom(deps: RoomDeps, body: HostRoomBody, origin: string, ho
       invites.push(`${origin}/j/${created.id}/${created.secret}`);
     }
     const credential = deps.tokens.issueAgentToken(opened.agentId);
-    rememberHostGrant(deps.db, room.id, opened.ownerId);
-    assertClean(deps, invites, credential, [credential, opened.sessionToken, hostSecret]);
-    if (room.id.includes(credential) || opened.agentId.includes(credential)) {
+    const ownerToken = opened.sessionToken;
+    const stored = deps.db.prepare("SELECT token_hash FROM owners WHERE id = ?").get(opened.ownerId) as
+      | { token_hash: string | null }
+      | undefined;
+    if (!stored?.token_hash || stored.token_hash !== hashToken(ownerToken) || stored.token_hash.includes(ownerToken)) {
       throw new HostInputError("room:new failed");
     }
-    return { invites, credential, roomId: room.id, agentId: opened.agentId };
+    rememberHostGrant(deps.db, room.id, opened.ownerId);
+    // The row names the owner. It does not contain the raw token.
+    deps.audit.append({
+      ts: formatTimestamp(deps.clock.now()),
+      room: room.id,
+      agentId: ownerActorId(opened.ownerId),
+      ownerId: opened.ownerId,
+      action: AuditAction.SettingChange,
+      result: AuditResult.Ok,
+      detail: { itemId: opened.ownerId },
+    });
+    assertClean(deps, invites, credential, [credential, ownerToken, hostSecret]);
+    if (
+      room.id.includes(credential) ||
+      opened.agentId.includes(credential) ||
+      room.id.includes(ownerToken) ||
+      opened.agentId.includes(ownerToken) ||
+      opened.ownerId.includes(ownerToken) ||
+      ownerToken.includes(hostSecret) ||
+      ownerToken.includes(credential)
+    ) {
+      throw new HostInputError("room:new failed");
+    }
+    return {
+      invites,
+      credential,
+      roomId: room.id,
+      agentId: opened.agentId,
+      ownerToken,
+      ownerId: opened.ownerId,
+    };
   });
   return write();
 }
