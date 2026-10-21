@@ -36,6 +36,44 @@ import {
 } from "./room.js";
 
 describe("W2 retry and email fallback", () => {
+  it.each([
+    { phase: "first webhook", expectedAttempts: 1, expectedRetries: 0 },
+    { phase: "retry sleep", expectedAttempts: 1, expectedRetries: 1 },
+    { phase: "last webhook", expectedAttempts: 4, expectedRetries: 3 },
+  ])("stops delivery when the wake is deleted during $phase", async ({ phase, expectedAttempts, expectedRetries }) => {
+    const room = await setupRoom();
+    try {
+      insertMessage(room.db);
+      let calls = 0;
+      const removeWakes = () => room.db.prepare("DELETE FROM wakes WHERE room_id = ?").run(ROOM_ID);
+      const service = useService(room, {
+        fetchImpl: async () => {
+          calls += 1;
+          await Promise.resolve();
+          if ((phase === "first webhook" && calls === 1) || (phase === "last webhook" && calls === 4)) {
+            removeWakes();
+          }
+          return new Response(null, { status: 503 });
+        },
+        sleep: async () => {
+          if (phase === "retry sleep") removeWakes();
+        },
+      });
+      const event = service.enqueue(enqueueInput())[0]!;
+      const result = await service.deliver(event.wakeId);
+      expect(result).toEqual({ wakeId: event.wakeId, state: WakeState.Failed, attempts: expectedAttempts });
+      expect(calls).toBe(expectedAttempts);
+      expect(room.mail.messages).toEqual([]);
+      expect(room.db.prepare("SELECT COUNT(*) AS n FROM wakes").get()).toEqual({ n: 0 });
+      expect(room.db.prepare("SELECT COUNT(*) AS n FROM notices").get()).toEqual({ n: 0 });
+      expect(expectChain(room.db).map((row) => row.action)).toEqual(
+        Array.from({ length: expectedRetries }, () => AuditAction.WakeRetry),
+      );
+    } finally {
+      await stopRoom(room);
+    }
+  });
+
   it("retries a failed webhook after 2 seconds and stops on the first 2xx", async () => {
     const room = await setupRoom();
     try {

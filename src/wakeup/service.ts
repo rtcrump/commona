@@ -257,6 +257,8 @@ export function createWakeService(options: WakeServiceOptions): WakeService {
             allowInsecureLocalhost,
           });
           attempts = attempt;
+          // Room deletion removes queued wakes, including deliveries already in flight.
+          if (!loadWake(db, wakeId)) return { wakeId, state: WakeState.Failed, attempts };
           if (result.ok) {
             safeWakeLog(
               log,
@@ -290,7 +292,8 @@ export function createWakeService(options: WakeServiceOptions): WakeService {
             });
             await sleep(delayMs);
             const fresh = loadWake(db, wakeId);
-            if (fresh && fresh.state !== WakeState.Pending) return snapshot(fresh);
+            if (!fresh) return { wakeId, state: WakeState.Failed, attempts };
+            if (fresh.state !== WakeState.Pending) return snapshot(fresh);
           }
         }
       } catch (error) {
