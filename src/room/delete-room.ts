@@ -33,6 +33,15 @@ export async function deleteOwnedRoom(deps: RoomDeps, principal: AuthPrincipal, 
     | { created_by_owner_id: string }
     | undefined;
   if (!room) throw RoomHttpError.notFound();
+  if (principal.kind === "narrow") {
+    refuse(deps, {
+      room: roomId,
+      principal,
+      action: AuditAction.SettingChangeRefused,
+      reasonCode: ReasonCode.NotOwner,
+      detail: { reasonCode: ReasonCode.NotOwner, itemId: roomId },
+    });
+  }
   if (principal.ownerId !== room.created_by_owner_id) {
     refuse(deps, {
       room: roomId,
@@ -83,6 +92,7 @@ function purgeRoom(db: RoomDeps["db"], roomId: string): void {
   deleteWhere(db, "connect_presence", "DELETE FROM connect_presence WHERE room_id = ?", roomId);
   deleteWhere(db, "room_form_tokens", "DELETE FROM room_form_tokens WHERE room_id = ?", roomId);
   deleteWhere(db, "room_key_flash", "DELETE FROM room_key_flash WHERE room_id = ?", roomId);
+  deleteWhere(db, "room_sharing_flash", "DELETE FROM room_sharing_flash WHERE room_id = ?", roomId);
   // agent_key_revocations is global safety state. The key is not room-scoped,
   // so a revoke blocks reissue in every room. Deleting this room must not lift that.
   deleteWhere(db, "host_outbound", "DELETE FROM host_outbound WHERE room_id = ?", roomId);
