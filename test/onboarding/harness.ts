@@ -7,7 +7,7 @@ import { createSharingDirectory } from "../../src/sharing/index.js";
 import { loadFixtures, seedFixtures } from "../helpers/fixtures.js";
 
 export interface Issued {
-  kind: "owner" | "agent";
+  kind: "owner" | "agent" | "narrow";
   token: string;
 }
 
@@ -48,6 +48,11 @@ export async function startJoinHarness(): Promise<JoinHarness> {
     issueAgentToken(agentId: string) {
       const token = inner.issueAgentToken(agentId);
       issued.push({ kind: "agent", token });
+      return token;
+    },
+    issueNarrowToken(ownerId: string) {
+      const token = inner.issueNarrowToken(ownerId);
+      issued.push({ kind: "narrow", token });
       return token;
     },
     authenticate: (token: string) => inner.authenticate(token),

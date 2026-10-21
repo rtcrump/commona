@@ -236,29 +236,43 @@ export function openSharing(
   return page(200, renderSharing({ action: `${pathFor(inviteId)}/finish`, nonce }), [cookie]);
 }
 
+function grantEdge(
+  deps: RoomDeps,
+  roomId: string,
+  fromOwnerId: string,
+  toOwnerId: string,
+  level: SharingLevelName,
+): void {
+  const principal = { kind: "owner" as const, ownerId: fromOwnerId };
+  const result = deps.sharing.update(principal, roomId, fromOwnerId, toOwnerId, level);
+  if (!result.allowed) return;
+  deps.audit.append({
+    ts: formatTimestamp(deps.clock.now()),
+    room: roomId,
+    agentId: ownerActorId(fromOwnerId),
+    ownerId: fromOwnerId,
+    action: AuditAction.SettingChange,
+    result: AuditResult.Ok,
+    detail: {
+      level: result.sharing.level,
+      fromOwnerId: result.sharing.fromOwnerId,
+      toOwnerId: result.sharing.toOwnerId,
+    },
+  });
+}
+
 function grantSeeing(deps: RoomDeps, roomId: string, ownerId: string, level: SharingLevelName): void {
   if (level === SharingLevel.None) return;
-  const others = deps.db
+  for (const other of otherOwners(deps, roomId, ownerId)) {
+    grantEdge(deps, roomId, ownerId, other, level);
+  }
+}
+
+function otherOwners(deps: RoomDeps, roomId: string, ownerId: string): string[] {
+  const rows = deps.db
     .prepare("SELECT DISTINCT owner_id FROM memberships WHERE room_id = ? AND owner_id <> ?")
     .all(roomId, ownerId) as { owner_id: string }[];
-  const principal = { kind: "owner" as const, ownerId };
-  for (const other of others) {
-    const result = deps.sharing.update(principal, roomId, ownerId, other.owner_id, level);
-    if (!result.allowed) continue;
-    deps.audit.append({
-      ts: formatTimestamp(deps.clock.now()),
-      room: roomId,
-      agentId: ownerActorId(ownerId),
-      ownerId,
-      action: AuditAction.SettingChange,
-      result: AuditResult.Ok,
-      detail: {
-        level: result.sharing.level,
-        fromOwnerId: result.sharing.fromOwnerId,
-        toOwnerId: result.sharing.toOwnerId,
-      },
-    });
-  }
+  return rows.map((row) => row.owner_id);
 }
 
 export function submitSharing(
