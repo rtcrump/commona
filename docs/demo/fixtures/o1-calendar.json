@@ -1,0 +1,11 @@
+{
+  "label": "demo calendar (fake data)",
+  "ownerId": "O1",
+  "timezone": "UTC",
+  "open": [
+    { "date": "2026-11-03", "start": "13:00", "end": "15:00" }
+  ],
+  "events": [
+    { "date": "2026-11-03", "start": "12:00", "end": "13:00", "title": "Demo standup" }
+  ]
+}
