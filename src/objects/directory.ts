@@ -11,23 +11,35 @@ import { auditHostRefusal, isHostRefusal, useHostSecret } from "../host/host-roo
 import { createHttpApp } from "../http/server.js";
 import type { CommonaHono } from "../http/types.js";
 import { createOwnerNotifier } from "../notices/store.js";
-import { isAgentFeedPoll, reserveAgentPoll } from "../poll/agent-poll.js";
+import { feedRoomId, reserveAgentPoll } from "../poll/agent-poll.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createSharingDirectory } from "../sharing/index.js";
+
+interface DurableRoomStorage extends DurableSqlStorage {
+  deleteAlarm(): Promise<void>;
+  getAlarm(): Promise<number | null>;
+  setAlarm(scheduledTime: number): Promise<void>;
+}
 
 /**
  * One SQLite Durable Object for the whole server.
  * Rooms, keys, invites, and the audit chain stay in one database, which is
  * what the Node server did. The free plan only offers this SQLite kind.
  */
+
 export class DirectoryObject extends DurableObject<CommonaEnv> {
-  private readonly deps: RoomDeps;
-  private readonly app: CommonaHono;
+  private deps!: RoomDeps;
+  private app!: CommonaHono;
 
   constructor(ctx: DurableObjectState, env: CommonaEnv) {
     super(ctx, env);
-    const db = createSqliteDatabase(new DurableSqlDriver(ctx.storage as unknown as DurableSqlStorage));
+    this.boot();
+  }
+
+  /** Open SQLite, then build the HTTP app. */
+  private boot(): void {
+    const db = createSqliteDatabase(new DurableSqlDriver(this.storage()));
     try {
       db.pragma("foreign_keys = ON");
     } catch {
@@ -35,7 +47,7 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     }
     prepareDatabase(db);
     const clock = systemClock;
-    this.deps = {
+    const deps: RoomDeps = {
       db,
       clock,
       tokens: createTokenStore(db),
@@ -43,8 +55,26 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
       sharing: createSharingDirectory(db),
       guard,
       notices: createOwnerNotifier(db, clock),
+      clearAlarmIfEmpty: () => this.clearAlarmIfEmpty(),
     };
-    this.app = createHttpApp(this.deps);
+    this.deps = deps;
+    this.app = createHttpApp(deps);
+  }
+
+  /**
+   * The alarm belongs to the whole object. Clear it only when no rooms remain,
+   * and hold other requests so a new room cannot set one in between.
+   */
+  private async clearAlarmIfEmpty(): Promise<void> {
+    await this.ctx.blockConcurrencyWhile(async () => {
+      const row = this.deps.db.prepare("SELECT COUNT(*) AS n FROM rooms").get() as { n: number } | undefined;
+      if (Number(row?.n ?? 0) !== 0) return;
+      await this.storage().deleteAlarm();
+    });
+  }
+
+  private storage(): DurableRoomStorage {
+    return this.ctx.storage as DurableRoomStorage;
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -56,9 +86,20 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
       });
     }
     const url = new URL(request.url);
-    if (isAgentFeedPoll(request.method, url.pathname)) {
-      const limited = reserveAgentPoll(this.deps, request.headers.get("authorization") ?? undefined, Date.now());
-      if (limited) return limited;
+    if (request.method === "GET") {
+      let roomId: string | null;
+      try {
+        roomId = feedRoomId(url.pathname);
+      } catch {
+        return Response.json(RoomHttpError.badRequest().body(), {
+          status: 400,
+          headers: { "cache-control": "no-store" },
+        });
+      }
+      if (roomId !== null) {
+        const limited = reserveAgentPoll(this.deps, request.headers.get("authorization") ?? undefined, Date.now(), roomId);
+        if (limited) return limited;
+      }
     }
     applyPublicBindings(this.env);
     return useHostSecret(this.env.COMMONA_HOST_SECRET, () => Promise.resolve(this.app.fetch(request)));

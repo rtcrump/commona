@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { hashToken, HTTP_STATUS, readBearerToken, type AuthPrincipal } from "../../contract/index.js";
+import { renderError } from "../onboarding/html.js";
 import type { AppEnv, CommonaHono } from "../http/types.js";
 import {
   answerCheck,
@@ -123,6 +124,7 @@ export function registerInviteRoutes(app: CommonaHono, deps: RoomDeps): void {
 
   function openInvite(c: Context<AppEnv>, presented: string): Response {
     const id = c.req.param("id") ?? "";
+    if (isInviteId(id) && !inviteRow(deps, id)) return missingInvite(c.req.header("accept"));
     if (isInviteId(id)) inviteLog(`invite view id=${id}`);
     const secret = secretForCookie(deps, id, presented);
     if (wantsJoinPage(c.req.header("accept"))) {
@@ -212,6 +214,33 @@ export function registerInviteRoutes(app: CommonaHono, deps: RoomDeps): void {
     });
     headers.append("set-cookie", serializeCookie(SESSION_COOKIE, redeemed.sessionToken, "/"));
     return new Response(JSON.stringify(body), { status: HTTP_STATUS.created, headers });
+  });
+}
+
+function inviteRow(deps: RoomDeps, id: string): boolean {
+  ensureInviteSchema(deps.db);
+  const row = deps.db.prepare("SELECT id FROM invites WHERE id = ?").get(id) as { id: string } | undefined;
+  return row !== undefined;
+}
+
+function missingInvite(accept: string | undefined): Response {
+  if (wantsJoinPage(accept)) {
+    return new Response(renderError("This link can't be used, so ask the person who sent it for a new link."), {
+      status: HTTP_STATUS.notFound,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        "referrer-policy": "no-referrer",
+      },
+    });
+  }
+  return new Response(JSON.stringify(RoomHttpError.notFound().body()), {
+    status: HTTP_STATUS.notFound,
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+    },
   });
 }
 

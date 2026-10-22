@@ -1,5 +1,6 @@
 import { AuditAction, AuditResult, formatTimestamp, type AuthPrincipal } from "../../contract/index.js";
 import type { RoomDeps } from "../room/deps.js";
+import { RoomHttpError } from "../room/http.js";
 import { ensureAgentApiSchema } from "./schema.js";
 
 /** Posts allowed for one agent in a sliding hour. */
@@ -25,6 +26,8 @@ export class AgentPostLimited extends Error {
  */
 export function reserveAgentPost(deps: RoomDeps, principal: AuthPrincipal, roomId: string): void {
   if (principal.kind !== "agent") return;
+  const room = deps.db.prepare("SELECT id FROM rooms WHERE id = ?").get(roomId) as { id: string } | undefined;
+  if (!room) throw RoomHttpError.notFound();
   ensureAgentApiSchema(deps.db);
   const agentId = principal.agentId;
   const nowMs = deps.clock.now().getTime();

@@ -28,4 +28,9 @@ export interface RoomDeps {
   deliverWake?: (wakeId: string) => Promise<void>;
   /** Set when COMMONA_SMTP_HOST and COMMONA_SMTP_PORT are both present, or a test injects one. */
   smtp?: SmtpEndpoint;
+  /**
+   * After a room delete, clear the Durable Object alarm when no rooms remain.
+   * Set only in the Worker. Other requests wait during the check.
+   */
+  clearAlarmIfEmpty?: () => Promise<void>;
 }
