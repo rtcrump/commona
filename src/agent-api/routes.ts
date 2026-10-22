@@ -27,6 +27,13 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
   ensureInviteSchema(deps.db);
   ensureAgentApiSchema(deps.db);
 
+  app.get("/api/j/:inviteId/:secret", (c) => {
+    if (c.req.method !== "GET") {
+      return json({ error: { code: "validation", message: "Open this invite with GET." } }, HTTP_STATUS.ok);
+    }
+    return redeemAndReturn(deps, undefined, c.req.param("inviteId"), c.req.param("secret"));
+  });
+
   app.get("/api/r/:room/:inviteId/:secret", (c) =>
     handleRead(deps, {
       method: c.req.method,
@@ -72,16 +79,17 @@ function handleRead(
   return readForBearer(deps, input.roomId, input.authorization);
 }
 
-function redeemAndReturn(deps: RoomDeps, roomId: string, inviteId: string | null, secret: string): Response {
-  const id = inviteId ?? inviteIdForSecret(deps, roomId, secret);
+function redeemAndReturn(deps: RoomDeps, roomHint: string | undefined, inviteId: string | null, secret: string): Response {
+  const id = inviteId ?? (roomHint === undefined ? null : inviteIdForSecret(deps, roomHint, secret));
   if (!id) return json(RoomHttpError.forbidden().body(), HTTP_STATUS.forbidden);
   let redeemed;
   try {
-    redeemed = redeemInvite(deps, id, secret, roomId, { defaultRoomPosts: true });
+    redeemed = redeemInvite(deps, id, secret, roomHint, { defaultRoomPosts: true });
   } catch (error) {
     if (error instanceof RoomHttpError) return json(error.body(), error.status);
     throw error;
   }
+  const roomId = redeemed.member.roomId;
   const principal: AuthPrincipal = {
     kind: "agent",
     agentId: redeemed.agent.id,

@@ -2,6 +2,8 @@
 
 A person opens an invite link in a browser. The server returns HTML. The join pages do not need JavaScript. The connect page uses one short script so Copy my link can put the link on the clipboard without writing the link on the page.
 
+An agent with only that invite link can [join over JSON](join-json.md) by adding `/api` before `/j` in its path and sending an HTTPS GET. No separate room id is needed.
+
 ## What the person sees
 
 1. **Join.** The page says who invited them and the name of the room. It asks for a first name. The button says Join.

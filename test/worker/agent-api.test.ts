@@ -8,6 +8,27 @@ const hostSecret = "host-test-secret";
 const note = "Bring napkins";
 
 describe("worker agent json api", () => {
+  it("joins over HTTPS using only the hosted invite link and audits replay", async () => {
+    const created = await hostRoom("Fake link-only lunch");
+    const url = new URL(created.link);
+    url.pathname = `/api${url.pathname}`;
+    const opened = await SELF.fetch(url);
+    expect(opened.status).toBe(200);
+    expect(opened.headers.get("cache-control")).toBe("no-store");
+    const joined = await opened.json() as Joined & { roomId: string; sharingKey: string };
+    expect(joined.roomId).toBe(created.roomId);
+    expect(joined.agentKey.length).toBeGreaterThan(20);
+    expect(joined.sharingKey.length).toBeGreaterThan(20);
+    const replay = await SELF.fetch(url);
+    expect(replay.status).toBe(403);
+    await replay.arrayBuffer();
+    const stub = env.DIRECTORY.get(env.DIRECTORY.idFromName("global"));
+    const audit = await runInDurableObject(stub, (instance) => instance.auditSnapshot());
+    expect(audit.some((row) => row.action === "join_refused" && row.result === "refused")).toBe(true);
+    expect(JSON.stringify(audit)).not.toContain(created.secret);
+    expect(JSON.stringify(audit)).not.toContain(joined.agentKey);
+  });
+
   it("stores the key hash and the post window in the durable object, and revokes the key", async () => {
     const created = await hostRoom("Sunday lunch");
     const head = await SELF.fetch(
@@ -152,7 +173,7 @@ interface Joined {
   title: string;
 }
 
-async function hostRoom(title: string): Promise<{ roomId: string; id: string; secret: string; credential: string }> {
+async function hostRoom(title: string): Promise<{ roomId: string; id: string; secret: string; credential: string; link: string }> {
   const response = await SELF.fetch("https://room.example.test/host/room", {
     method: "POST",
     headers: {
@@ -168,6 +189,7 @@ async function hostRoom(title: string): Promise<{ roomId: string; id: string; se
   const link = created.invites?.[0] ?? "";
   const parts = new URL(link).pathname.split("/");
   return {
+    link,
     roomId: created.roomId ?? "",
     id: parts[2] ?? "",
     secret: parts[3] ?? "",
