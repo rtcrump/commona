@@ -20,6 +20,55 @@ describe("open-join default post sharing", () => {
     room = undefined;
   });
 
+  it.each([
+    { route: "r", failure: "audit" },
+    { route: "r", failure: "edge" },
+    { route: "r", failure: "marker" },
+    { route: "api/r", failure: "audit" },
+    { route: "api/r", failure: "edge" },
+    { route: "api/r", failure: "marker" },
+  ])("rolls back /$route invite redemption after a $failure failure and allows retry", async ({ route, failure }) => {
+    room = await startJoinHarness();
+    await joinJson(room);
+    const invite = await createInvite(room);
+    const secret = invite.openPath.split("/")[3] ?? "";
+    const url = `/${route}/${room.roomId}?t=${secret}`;
+    const before = storedText(room);
+    const issuedBefore = room.issued.length;
+    const original = room.db.prepare;
+    let matches = 0;
+    room.db.prepare = ((sql: string) => {
+      const target = failure === "audit"
+        ? sql.includes("UPDATE audit_chain_tip")
+        : failure === "edge"
+          ? sql.includes("INSERT INTO sharing") && sql.includes("DO UPDATE SET level")
+          : sql.includes("INSERT INTO room_default_post_share");
+      const failAt = failure === "audit" ? 3 : failure === "edge" ? 2 : 1;
+      if (target && ++matches === failAt) throw new Error(`default ${failure} failed`);
+      return original.call(room!.db, sql);
+    }) as typeof room.db.prepare;
+    let failed;
+    try {
+      failed = await call(room.baseUrl, "GET", url);
+    } finally {
+      room.db.prepare = original;
+    }
+    expect(failed.status).toBe(500);
+    expect(failed.setCookies).toEqual([]);
+    expect(storedText(room)).toBe(before);
+    for (const issued of room.issued.slice(issuedBefore)) {
+      expect(room.tokens.authenticate(issued.token)).toBeNull();
+    }
+
+    const retried = await call(room.baseUrl, "GET", url);
+    expect(retried.status).toBe(route === "r" ? 303 : 200);
+    const used = room.db.prepare("SELECT used_at FROM invites WHERE id = ?").get(invite.id) as { used_at: string | null };
+    expect(used.used_at).not.toBeNull();
+    expect(policyGrants(room).filter((grant) => grant.itemId === invite.id)).toHaveLength(4);
+    const replay = await call(room.baseUrl, "GET", url);
+    expect(replay.status).toBe(403);
+  });
+
   it("shares an invite joiner's posts, and not another member's, until that owner narrows", async () => {
     room = await startJoinHarness();
     seedOwnerPost(room, OWNER_POST);

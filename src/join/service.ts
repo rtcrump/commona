@@ -17,6 +17,7 @@ import { clearRoomReissueBlock } from "../agent-api/keys.js";
 import { NEW_AGENT_NAME, NEW_OWNER_NAME, openAccount, newSecret } from "../onboarding/account.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
+import { grantDefaultRoomPosts } from "../sharing/room-default-share.js";
 import { inviteLog } from "./log.js";
 import { ensureInviteSchema } from "./schema.js";
 
@@ -250,7 +251,13 @@ function sameHash(presented: string, expectedHex: string): boolean {
   return timingSafeEqual(got, expected);
 }
 
-export function redeemInvite(deps: RoomDeps, inviteId: string, secret: string | null, roomHint?: string): RedeemedInvite {
+export function redeemInvite(
+  deps: RoomDeps,
+  inviteId: string,
+  secret: string | null,
+  roomHint?: string,
+  options: { defaultRoomPosts?: boolean } = {},
+): RedeemedInvite {
   ensureInviteSchema(deps.db);
   const gate = gateActor();
   if (!isInviteId(inviteId) || !secret) {
@@ -298,6 +305,7 @@ export function redeemInvite(deps: RoomDeps, inviteId: string, secret: string | 
       sharing: "none",
       sessionToken: account.sessionToken,
     };
+    if (options.defaultRoomPosts) grantDefaultRoomPosts(deps, row.room_id, account.ownerId, inviteId);
     return "ok" as const;
   });
   const outcome = write.immediate();
