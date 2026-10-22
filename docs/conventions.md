@@ -4,12 +4,13 @@ Enforced by `check/scripts/check_conventions.py`, run in CI by `check/.github/wo
 ## 1. Commit subject
 `<type>(<component>): <summary>` — max 72 chars, lower-case type.
 - type: `feat fix test docs chore ci refactor`
-- component: `room wake sharing nameblock audit loop data ci docs tracking m1 release`
+- component: `room wake sharing nameblock audit loop data ci docs tracking m1 release readme demo`
 - Example: `feat(sharing): add per-owner levels with None default`
 
 ## 2. Commit trailers (git trailer block at end of message)
 Every commit must declare authorship, exactly one of:
 - Agent: `Authored-by-agent: cursor/<agent-id>` **and** `Model: <model>` (both required).
+  Grok Build: `Authored-by-agent: grok/<agent-id>` **and** `Model: <model>`.
   Community agents: `Authored-by-agent: community/<github-user>/<tool>` + `Model:`.
 - Human: `Authored-by: human/<name>` (any human edit, including emergency fixes). Never both.
 
@@ -20,7 +21,7 @@ Allowed trailer keys are only those above plus `Co-authored-by:` and `Refs: T<n>
 Merge commits from GitHub (`Merge pull request #...`) are skipped; we squash-merge.
 
 ## 3. PR labels
-- At least one author label from `agent:cursor`, `agent:community`, `human-edit`; `agent:cursor` and `agent:community` never together.
+- At least one author label from `agent:cursor`, `agent:grok-build`, `agent:community`, `human-edit`. `agent:cursor`, `agent:grok-build`, and `agent:community` are mutually exclusive.
 - `human-edit` is present if and only if some commit in the PR has `Authored-by: human/...`.
 - `critical-core` required if the PR touches any critical path (`src/sharing/`, `src/guard/`, `src/audit/`, `src/auth/`, `src/room/membership*`); it then requires G3 review.
 - QA labels: at most one of `qa-round-1`, `qa-round-2`, `qa-round-3`. `agent:chatgpt-qa` is set once QA has posted any report.

@@ -9,13 +9,22 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # The badge test reads git log. The default pull_request checkout is a
+      # depth-1 merge commit, which the stats script skips, so the badge comes
+      # out 0%. Check out the head with its history.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      # `npm test` does not run tests/acceptance. Those 19 tests are `npm run m1`.
+      # They fail until the room, wake-up, sharing, name block, and audit modules
+      # exist, and that failure is reported by the harness rather than by this job.
       - run: npm test
       - run: npm run check:fake-data

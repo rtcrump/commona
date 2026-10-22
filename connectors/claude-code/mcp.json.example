@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "commona": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["tsx", "connectors/mcp-server/stdio.ts"],
+      "env": {
+        "COMMONA_BASE_URL": "${COMMONA_BASE_URL}",
+        "COMMONA_ROOM_ID": "${COMMONA_ROOM_ID}",
+        "COMMONA_AGENT_ID": "${COMMONA_AGENT_ID}",
+        "COMMONA_AGENT_TOKEN": "${COMMONA_AGENT_TOKEN}",
+        "COMMONA_OWNER_TOKEN": "${COMMONA_OWNER_TOKEN}",
+        "COMMONA_WAKE_SPOOL": "${COMMONA_WAKE_SPOOL}"
+      }
+    }
+  }
+}

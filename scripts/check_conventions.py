@@ -10,31 +10,37 @@ Exit 0 = pass, 1 = violations (printed), 2 = usage error.
 import argparse, re, subprocess, sys
 
 TYPES = "feat|fix|test|docs|chore|ci|refactor"
-COMPONENTS = "room|wake|sharing|nameblock|audit|loop|data|ci|docs|tracking|m1|release"
+COMPONENTS = "room|wake|sharing|nameblock|audit|loop|data|ci|docs|tracking|m1|release|readme|demo"
 SUBJECT_RE = re.compile(rf"^({TYPES})\(({COMPONENTS})\): \S.*$")
 TRAILER_RE = re.compile(r"^([A-Za-z][A-Za-z-]*): (.+)$")
 ALLOWED = {"Authored-by-agent", "Model", "Authored-by", "QA", "Approved-by", "Co-authored-by", "Refs"}
-AGENT_RE = re.compile(r"^(cursor/[A-Za-z0-9._-]+|community/[A-Za-z0-9-]+/[A-Za-z0-9._-]+)$")
+AGENT_RE = re.compile(
+    r"^(cursor/[A-Za-z0-9._-]+|grok/[A-Za-z0-9._-]+|community/[A-Za-z0-9-]+/[A-Za-z0-9._-]+)$"
+)
 HUMAN_RE = re.compile(r"^human/[A-Za-z0-9._-]+$")
 QA_RE = re.compile(r"^chatgpt round [123] (pass|fail)$")
 BOT_EMAILS = {"commona-bot@users.noreply.github.com"}  # [Assumed] real bot identity set at G2
 CRITICAL = ("src/sharing/", "src/guard/", "src/audit/", "src/auth/", "src/room/membership")
-AUTHOR_LABELS = {"agent:cursor", "agent:community", "human-edit"}
+AUTHOR_LABELS = {"agent:cursor", "agent:community", "agent:grok-build", "human-edit"}
 QA_LABELS = {"qa-round-1", "qa-round-2", "qa-round-3"}
 KNOWN_LABELS = AUTHOR_LABELS | QA_LABELS | {"agent:chatgpt-qa", "critical-core"}
 
 
-def trailers(msg):
-    """Return (parsed trailers, malformed lines) from the last paragraph."""
-    lines = msg.rstrip("\n").split("\n")
-    block = []
-    for line in reversed(lines):
+def _paragraphs(msg):
+    paras, cur = [], []
+    for line in msg.rstrip("\n").split("\n"):
         if not line.strip():
-            break
-        block.append(line)
-    block.reverse()
-    if len(block) >= len(lines):  # message is a single paragraph (subject only)
-        return [], []
+            if cur:
+                paras.append(cur)
+                cur = []
+        else:
+            cur.append(line)
+    if cur:
+        paras.append(cur)
+    return paras
+
+
+def _parse_lines(block):
     parsed, bad = [], []
     for line in block:
         m = TRAILER_RE.match(line)
@@ -42,9 +48,42 @@ def trailers(msg):
             parsed.append((m.group(1), m.group(2).strip()))
         else:
             bad.append(line)
+    return parsed, bad
+
+
+def _pure_allowed(block):
+    """True when every line is an allowed trailer key. Used for paragraphs above the last one."""
+    if not block:
+        return False
+    for line in block:
+        m = TRAILER_RE.match(line)
+        if not m or m.group(1) not in ALLOWED:
+            return False
+    return True
+
+
+def trailers(msg):
+    """Return (parsed trailers, malformed lines).
+
+    Start at the last paragraph. Keep walking backward through earlier
+    paragraphs while every line is an allowed trailer, so a blank line
+    between trailers (commit 70da75f) still counts as one block. Stop at
+    body text and at the subject line. A subject-only message, or one
+    whose last paragraph is body text, returns no trailers.
+    """
+    paras = _paragraphs(msg)
+    if len(paras) <= 1:  # subject only, or empty
+        return [], []
+    parsed, bad = _parse_lines(paras[-1])
     if not parsed:
         return [], []  # last paragraph is ordinary body text
-    return parsed, bad
+    earlier = []
+    for para in reversed(paras[1:-1]):
+        if not _pure_allowed(para):
+            break
+        parsed_earlier, _ = _parse_lines(para)
+        earlier = parsed_earlier + earlier
+    return earlier + parsed, bad
 
 
 def check_commit(email, msg, mode):
@@ -126,9 +165,13 @@ def check_labels(labels, files, human_commits, mode):
         if l not in KNOWN_LABELS and (l.startswith("agent:") or l.startswith("qa-round")):
             errs.append(f"unknown label {l!r}")
     if not labels & AUTHOR_LABELS:
-        errs.append("needs an author label: agent:cursor, agent:community or human-edit")
+        errs.append("needs an author label: agent:cursor, agent:community, agent:grok-build or human-edit")
     if {"agent:cursor", "agent:community"} <= labels:
         errs.append("agent:cursor and agent:community are mutually exclusive")
+    if {"agent:cursor", "agent:grok-build"} <= labels:
+        errs.append("agent:cursor and agent:grok-build are mutually exclusive")
+    if {"agent:community", "agent:grok-build"} <= labels:
+        errs.append("agent:community and agent:grok-build are mutually exclusive")
     if human_commits and "human-edit" not in labels:
         errs.append("a commit has Authored-by: human/... so label human-edit is required")
     if not human_commits and "human-edit" in labels:
