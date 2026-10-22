@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   classifyTrailers,
@@ -337,6 +338,68 @@ describe("agent-written stats", () => {
     }
   });
 
+  it.each(["agent", "human", "unattributed"] as const)("counts a deletion-only pending %s commit", (kind) => {
+    const commits = Array.from({ length: 22 }, (_, index) => ({
+      hash: String(index), subject: "test(data): synthetic history", kind: index === 0 ? "human" as const : "agent" as const,
+      added: 10, qa: null,
+    }));
+    const pending = { hash: "pending", subject: "test(data): delete", kind, added: 0, qa: null };
+    const expected = summarize([...commits, pending]);
+    const actual = withPendingCommit(summarize(commits), 0, kind);
+    expect(actual.totalCommits).toBe(expected.totalCommits);
+    expect(actual.agentCommits).toBe(expected.agentCommits);
+    expect(actual.humanCommits).toBe(expected.humanCommits);
+    expect(actual.unattributedCommits).toBe(expected.unattributedCommits);
+    expect(renderBadge(actual)).toBe(renderBadge(expected));
+  });
+
+  it.each([
+    { kind: "agent", deletion: false }, { kind: "agent", deletion: true },
+    { kind: "human", deletion: false }, { kind: "human", deletion: true },
+    { kind: "unattributed", deletion: false }, { kind: "unattributed", deletion: true },
+  ])("settles the CLI badge for a $kind commit, deletion=$deletion", ({ kind, deletion }) => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "commona-stats-cli-"));
+    try {
+      git(cwd, ["init"]);
+      git(cwd, ["config", "core.autocrlf", "false"]);
+      const readmePath = path.join(cwd, "README.md");
+      writeFileSync(readmePath,
+        "<!-- agent-written-badge:start -->\nWritten by agents: 100% of lines, 100% of commits\nHuman edits: 0\nQA trailers: 0\n<!-- agent-written-badge:end -->\n");
+      const dataPath = path.join(cwd, "data.txt");
+      writeFileSync(dataPath, "synthetic line\n".repeat(10));
+      git(cwd, ["add", "-A"]);
+      git(cwd, ["commit", "-m", "test(data): seed\n\nAuthored-by-agent: community/test/agent\nModel: test"]);
+      if (deletion) rmSync(dataPath);
+      else writeFileSync(dataPath, "synthetic addition\n".repeat(20));
+      runStats(cwd, ["--write", "--include-workdir", "--pending-kind", kind]);
+      const trailers = kind === "agent" ? "\n\nAuthored-by-agent: community/test/agent\nModel: test"
+        : kind === "human" ? "\n\nAuthored-by: human/tester" : "";
+      git(cwd, ["commit", "-m", `test(data): change${trailers}`]);
+      expect(readBadge(readFileSync(readmePath, "utf8"))).toBe(renderBadge(collect(cwd)));
+      expect(() => runStats(cwd, ["--check"])).not.toThrow();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it.each([{ args: [] }, { args: ["--pending-kind", "unknown"] }])("requires a valid pending kind before writing or staging: $args", ({ args }) => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "commona-stats-kind-"));
+    try {
+      git(cwd, ["init"]);
+      const readmePath = path.join(cwd, "README.md");
+      const readme = "<!-- agent-written-badge:start -->\nold badge\n<!-- agent-written-badge:end -->\n";
+      writeFileSync(readmePath, readme);
+      git(cwd, ["add", "-A"]);
+      git(cwd, ["commit", "-m", "test(data): seed\n\nAuthored-by: human/tester"]);
+      writeFileSync(path.join(cwd, "new.txt"), "synthetic addition\n");
+      expect(() => runStats(cwd, ["--write", "--include-workdir", ...args])).toThrow(/--pending-kind/);
+      expect(readFileSync(readmePath, "utf8")).toBe(readme);
+      expect(execFileSync("git", ["-C", cwd, "diff", "--cached", "--name-only"], { encoding: "utf8" })).toBe("");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("reads a throwaway repository the same way", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "commona-stats-"));
     try {
@@ -435,6 +498,13 @@ function stagedAdded(cwd: string): number {
     added += Number(match[1]);
   }
   return added;
+}
+
+function runStats(cwd: string, args: string[]): string {
+  const script = fileURLToPath(new URL("../scripts/agent-written.ts", import.meta.url));
+  return execFileSync(process.execPath, ["--import", import.meta.resolve("tsx"), script, ...args], {
+    cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+  });
 }
 
 function git(cwd: string, args: string[]): void {

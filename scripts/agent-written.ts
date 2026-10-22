@@ -258,14 +258,14 @@ export function renderBadge(stats: AgentWrittenStats): string {
  * The badge lives inside the commit it describes, so that commit's lines
  * change the percentages. Treat the staged diff as one more commit of `kind`
  * and return the stats `stats:check` will see after that commit lands.
- * Zero added lines means there is no pending commit.
+ * A deletion-only commit still counts, even though it adds zero lines.
+ * Call only when there is a pending change.
  */
 export function withPendingCommit(
   stats: AgentWrittenStats,
   added: number,
   kind: CommitStat["kind"],
 ): AgentWrittenStats {
-  if (added <= 0) return stats;
   const agent = kind === "agent";
   const human = kind === "human";
   const agentAdded = stats.agentAdded + (agent ? added : 0);
@@ -328,10 +328,10 @@ export function collect(cwd = process.cwd()): AgentWrittenStats {
   return summarize(parseLog(text));
 }
 
-function stagedAdditions(cwd: string): number {
+function stagedAdditions(cwd: string): number | null {
   execFileSync("git", ["-C", cwd, "add", "-A"]);
   const staged = execFileSync("git", ["-C", cwd, "diff", "--cached", "--numstat"], { encoding: "utf8" });
-  return addedLines(staged);
+  return staged.trim() === "" ? null : addedLines(staged);
 }
 
 function main(): void {
@@ -339,15 +339,19 @@ function main(): void {
   const write = process.argv.includes("--write");
   const check = process.argv.includes("--check");
   const includeWorkdir = process.argv.includes("--include-workdir");
+  const kindIndex = process.argv.indexOf("--pending-kind");
+  const pendingKind = kindIndex === -1 ? undefined : process.argv[kindIndex + 1];
+  if (write && includeWorkdir && pendingKind !== "agent" && pendingKind !== "human" && pendingKind !== "unattributed") {
+    throw new Error("--include-workdir requires --pending-kind agent|human|unattributed");
+  }
   if (write) {
     const readmePath = `${cwd}/README.md`;
     // Repeat until the badge text stops changing the staged insertions.
-    // The pending commit counts as agent-written, which is true only when
-    // that commit carries Authored-by-agent and Model and no Authored-by.
+    // The caller supplies the kind of the commit that will carry the badge.
     for (let attempt = 0; attempt < 6; attempt++) {
       const stats = collect(cwd);
-      const extra = includeWorkdir ? stagedAdditions(cwd) : 0;
-      const next = renderBadge(withPendingCommit(stats, extra, "agent"));
+      const extra = includeWorkdir ? stagedAdditions(cwd) : null;
+      const next = renderBadge(extra === null ? stats : withPendingCommit(stats, extra, pendingKind as CommitStat["kind"]));
       const readme = readFileSync(readmePath, "utf8");
       if (readBadge(readme) === next) break;
       writeFileSync(readmePath, writeBadge(readme, next));
