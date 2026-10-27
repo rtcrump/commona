@@ -269,7 +269,7 @@ export function redeemInvite(
   let redeemed: RedeemedInvite | undefined;
   const write = deps.db.transaction(() => {
     const row = loadInvite(deps, inviteId);
-    if (!row || row.secret_hash !== secretHash) return "refuse" as const;
+    if (!row || !sameHash(secret, row.secret_hash)) return "refuse" as const;
     if (roomHint !== undefined && roomHint !== row.room_id) return "refuse" as const;
     if (row.used_at !== null || row.revoked_at !== null || row.expires_at <= now) return "refuse" as const;
     const marked = deps.db
