@@ -14,6 +14,7 @@ import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost } from "../room/posts.js";
 import { recentMessages } from "../room-page/messages.js";
+import { TASK_CLOSE } from "../task-close.js";
 import { isRevokedAgentKey, revokeAgentKey } from "./keys.js";
 import { ensureAgentApiSchema } from "./schema.js";
 
@@ -109,6 +110,7 @@ function redeemAndReturn(deps: RoomDeps, roomHint: string | undefined, inviteId:
     posts: recentPosts(deps, principal, roomId),
     agentKey,
     sharingKey,
+    close: TASK_CLOSE,
   };
   assertHidden(
     JSON.stringify({
@@ -117,6 +119,7 @@ function redeemAndReturn(deps: RoomDeps, roomHint: string | undefined, inviteId:
       ownerId: body.ownerId,
       title: body.title,
       posts: body.posts,
+      close: body.close,
     }),
     [secret, agentKey, sharingKey, sessionToken],
   );
@@ -131,6 +134,7 @@ function readForBearer(deps: RoomDeps, roomId: string, authorization: string | u
     roomId,
     title: roomTitle(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
+    close: TASK_CLOSE,
   };
   return json(body, HTTP_STATUS.ok);
 }

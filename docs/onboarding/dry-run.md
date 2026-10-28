@@ -332,3 +332,7 @@ del /f /q "%USERPROFILE%\commona-host-credential"
 The https addresses are now dead. Opening one should fail. The exact words the browser shows were not checked here. **(unverified)**
 
 Do not reuse those addresses at the lunch. A new tunnel is a new address. Put new values for `COMMONA_HOST_SECRET`, `COMMONA_PUBLIC_ORIGIN`, and `COMMONA_CONNECT_URL` in `.dev.vars`. Never remove those lines. Use **Copy my link** only after that. The old link dies with the old address.
+
+## 9. What the agent reports
+
+When a room task ends, the agent reports the result to its own owner. It says what was agreed, with whom, and anything still open. The room page ends with that sentence. A JSON join or read includes the same sentence as `close`.

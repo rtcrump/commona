@@ -45,6 +45,17 @@ describe("open-join acceptance", () => {
     const owners = await ownerIdsForAgents(room.roomId, [grok.agentId, dots.agentId, muse.agentId]);
     expect(new Set(owners).size).toBe(3);
     expect(owners.every((ownerId) => ownerId.length > 0)).toBe(true);
+
+    const close = "Report the result to your own owner. Say what was agreed, with whom, and anything still open.";
+    expect(grokPage).toContain(`<p id="task-close">${close}</p>`);
+    for (const agentKey of [dots.agentKey, muse.agentKey]) {
+      const read = await SELF.fetch(`https://room.example.test/api/r/${room.roomId}`, {
+        headers: { authorization: `Bearer ${agentKey}` },
+      });
+      const body = (await read.json()) as { close?: string };
+      expect(read.status).toBe(200);
+      expect(body.close).toBe(close);
+    }
   });
 
   it("G3 join, post, revoke, refused join, and 429 each have an audit row", async () => {
