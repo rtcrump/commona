@@ -7,6 +7,7 @@ import {
   type AuthPrincipal,
   type CreatePostResponse,
 } from "../../contract/index.js";
+import { publicOrigin } from "../http/public-origin.js";
 import type { CommonaHono } from "../http/types.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { ensureInviteSchema } from "../join/schema.js";
@@ -20,7 +21,9 @@ import { ensureAgentApiSchema } from "./schema.js";
 /**
  * JSON room API. It mirrors the plain HTML page: join with one invite, read posts, post a message.
  * The agent key is a bearer token. Only its SHA-256 hash is stored.
- * The redeem response also returns a narrow sharing key once. It does not return the owner session token.
+ * The redeem response also returns a narrow sharing key once, and the absolute
+ * addresses for posting, reading the room, reading the room feed, and changing
+ * sharing. It does not return the owner session token.
  * Only GET redeems an invite. Hono would otherwise run HEAD through this GET handler.
  */
 export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
@@ -31,7 +34,13 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
     if (c.req.method !== "GET") {
       return json({ error: { code: "validation", message: "Open this invite with GET." } }, HTTP_STATUS.ok);
     }
-    return redeemAndReturn(deps, undefined, c.req.param("inviteId"), c.req.param("secret"));
+    return redeemAndReturn(
+      deps,
+      undefined,
+      c.req.param("inviteId"),
+      c.req.param("secret"),
+      publicOrigin(c.req.url, c.req.header("host")),
+    );
   });
 
   app.get("/api/r/:room/:inviteId/:secret", (c) =>
@@ -41,6 +50,8 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
       inviteId: c.req.param("inviteId"),
       secret: c.req.param("secret"),
       authorization: c.req.header("authorization"),
+      requestUrl: c.req.url,
+      host: c.req.header("host"),
     }),
   );
   app.get("/api/r/:room", (c) =>
@@ -50,6 +61,8 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
       inviteId: null,
       secret: c.req.query("t") ?? null,
       authorization: c.req.header("authorization"),
+      requestUrl: c.req.url,
+      host: c.req.header("host"),
     }),
   );
   app.post("/api/r/:room", (c) => handlePost(deps, c.req.param("room"), c.req.header("authorization"), c.get("parsedBody")));
@@ -66,6 +79,8 @@ function handleRead(
     inviteId: string | null;
     secret: string | null;
     authorization: string | undefined;
+    requestUrl: string;
+    host: string | undefined;
   },
 ): Response {
   if (input.method !== "GET") {
@@ -75,11 +90,19 @@ function handleRead(
     return json(RoomHttpError.notFound().body(), HTTP_STATUS.notFound);
   }
   const secret = input.secret && input.secret.length > 0 ? input.secret : null;
-  if (secret) return redeemAndReturn(deps, input.roomId, input.inviteId, secret);
+  if (secret) {
+    return redeemAndReturn(deps, input.roomId, input.inviteId, secret, publicOrigin(input.requestUrl, input.host));
+  }
   return readForBearer(deps, input.roomId, input.authorization);
 }
 
-function redeemAndReturn(deps: RoomDeps, roomHint: string | undefined, inviteId: string | null, secret: string): Response {
+function redeemAndReturn(
+  deps: RoomDeps,
+  roomHint: string | undefined,
+  inviteId: string | null,
+  secret: string,
+  origin: string,
+): Response {
   const id = inviteId ?? (roomHint === undefined ? null : inviteIdForSecret(deps, roomHint, secret));
   if (!id) return json(RoomHttpError.forbidden().body(), HTTP_STATUS.forbidden);
   let redeemed;
@@ -90,6 +113,7 @@ function redeemAndReturn(deps: RoomDeps, roomHint: string | undefined, inviteId:
     throw error;
   }
   const roomId = redeemed.member.roomId;
+  const addresses = joinAddresses(origin, roomId);
   const principal: AuthPrincipal = {
     kind: "agent",
     agentId: redeemed.agent.id,
@@ -109,6 +133,7 @@ function redeemAndReturn(deps: RoomDeps, roomHint: string | undefined, inviteId:
     posts: recentPosts(deps, principal, roomId),
     agentKey,
     sharingKey,
+    addresses,
   };
   assertHidden(
     JSON.stringify({
@@ -117,6 +142,7 @@ function redeemAndReturn(deps: RoomDeps, roomHint: string | undefined, inviteId:
       ownerId: body.ownerId,
       title: body.title,
       posts: body.posts,
+      addresses: body.addresses,
     }),
     [secret, agentKey, sharingKey, sessionToken],
   );
@@ -171,6 +197,44 @@ function requireBearer(deps: RoomDeps, authorization: string | undefined): AuthP
   const principal = deps.tokens.authenticate(token);
   if (!principal) throw RoomHttpError.unauthorized();
   return principal;
+}
+
+interface JoinAddress {
+  method: "GET" | "POST" | "PUT";
+  url: string;
+}
+
+/**
+ * Absolute addresses for the room this join just opened.
+ * `read` is the posts list. `feed` is the room feed. `sharing` has no `/api` prefix.
+ */
+function joinAddresses(origin: string, roomId: string): {
+  post: JoinAddress;
+  read: JoinAddress;
+  feed: JoinAddress;
+  sharing: JoinAddress;
+} {
+  if (!isId(roomId)) throw new Error("refusing to send an address");
+  return {
+    post: absoluteAddress("POST", origin, `/api/r/${roomId}`),
+    read: absoluteAddress("GET", origin, `/api/r/${roomId}`),
+    feed: absoluteAddress("GET", origin, `/rooms/${roomId}/feed`),
+    sharing: absoluteAddress("PUT", origin, `/rooms/${roomId}/sharing`),
+  };
+}
+
+function absoluteAddress(method: "GET" | "POST" | "PUT", origin: string, path: string): JoinAddress {
+  let url: URL;
+  try {
+    url = new URL(path, origin.endsWith("/") ? origin : `${origin}/`);
+  } catch {
+    throw new Error("refusing to send an address");
+  }
+  if (url.origin !== origin || url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {
+    throw new Error("refusing to send an address");
+  }
+  if (url.pathname !== path) throw new Error("refusing to send an address");
+  return { method, url: url.toString() };
 }
 
 function recentPosts(deps: RoomDeps, principal: AuthPrincipal, roomId: string): { text: string }[] {
