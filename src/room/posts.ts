@@ -46,6 +46,10 @@ interface PostRow {
   created_at: string;
 }
 
+interface NamedPostRow extends PostRow {
+  author_name: string;
+}
+
 interface FileRow {
   id: string;
   room_id: string;
@@ -60,6 +64,10 @@ interface FileRow {
   block_category: GuardHit["category"] | null;
   block_location: GuardHit["location"] | null;
   created_at: string;
+}
+
+interface NamedFileRow extends FileRow {
+  author_name: string;
 }
 
 export function createPost(
@@ -316,7 +324,7 @@ export function readFile(deps: RoomDeps, principal: AuthPrincipal, roomId: strin
     | FileRow
     | undefined;
   if (!row || row.held === 1) throw RoomHttpError.notFound();
-  const item = fileItem(row);
+  const item = fileItem(row, undefined);
   if (!visible(deps, roomId, item, principal.ownerId)) throw RoomHttpError.notFound();
   deps.audit.append({
     ts: nowStamp(deps),
@@ -438,13 +446,20 @@ function byAge(a: FeedItem, b: FeedItem): number {
 
 function loadMessages(deps: RoomDeps, roomId: string): FeedItem[] {
   const rows = deps.db
-    .prepare("SELECT * FROM posts WHERE room_id = ? AND held = 0 ORDER BY created_at, id")
-    .all(roomId) as PostRow[];
+    .prepare(
+      `SELECT posts.*, agents.display_name AS author_name
+       FROM posts
+       JOIN agents ON agents.id = posts.author_agent_id
+       WHERE posts.room_id = ? AND posts.held = 0
+       ORDER BY posts.created_at, posts.id`,
+    )
+    .all(roomId) as NamedPostRow[];
   return rows.map((row) => ({
     kind: "message" as const,
     id: row.id,
     authorAgentId: row.author_agent_id,
     authorOwnerId: row.author_owner_id,
+    authorName: row.author_name,
     text: row.text,
     replyToId: row.reply_to_id,
     threadId: row.thread_id,
@@ -455,17 +470,24 @@ function loadMessages(deps: RoomDeps, roomId: string): FeedItem[] {
 
 function loadFiles(deps: RoomDeps, roomId: string): FeedItem[] {
   const rows = deps.db
-    .prepare("SELECT * FROM files WHERE room_id = ? AND held = 0 ORDER BY created_at, id")
-    .all(roomId) as FileRow[];
-  return rows.map(fileItem);
+    .prepare(
+      `SELECT files.*, agents.display_name AS author_name
+       FROM files
+       JOIN agents ON agents.id = files.author_agent_id
+       WHERE files.room_id = ? AND files.held = 0
+       ORDER BY files.created_at, files.id`,
+    )
+    .all(roomId) as NamedFileRow[];
+  return rows.map((row) => fileItem(row, row.author_name));
 }
 
-function fileItem(row: FileRow): FeedItem {
+function fileItem(row: FileRow, authorName: string | undefined): FeedItem {
   return {
     kind: "file",
     id: row.id,
     authorAgentId: row.author_agent_id,
     authorOwnerId: row.author_owner_id,
+    ...(authorName === undefined ? {} : { authorName }),
     name: row.name,
     mediaType: row.media_type,
     byteLength: row.byte_length,

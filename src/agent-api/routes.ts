@@ -9,10 +9,12 @@ import {
 } from "../../contract/index.js";
 import { publicOrigin } from "../http/public-origin.js";
 import type { CommonaHono } from "../http/types.js";
+import { JOIN_NAME_HINT, presentedName } from "../join/agent-name.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { ensureInviteSchema } from "../join/schema.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
+import { renameJoinedAgent } from "../room/membership.js";
 import { createPost } from "../room/posts.js";
 import { recentMessages } from "../room-page/messages.js";
 import { isRevokedAgentKey, revokeAgentKey } from "./keys.js";
@@ -22,8 +24,8 @@ import { ensureAgentApiSchema } from "./schema.js";
  * JSON room API. It mirrors the plain HTML page: join with one invite, read posts, post a message.
  * The agent key is a bearer token. Only its SHA-256 hash is stored.
  * The redeem response also returns a narrow sharing key once, and the absolute
- * addresses for posting, reading the room, reading the room feed, and changing
- * sharing. It does not return the owner session token.
+ * addresses for posting, reading the room, reading the room feed, changing
+ * sharing, and setting this agent's display name. It does not return the owner session token.
  * Only GET redeems an invite. Hono would otherwise run HEAD through this GET handler.
  */
 export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
@@ -40,6 +42,7 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
       c.req.param("inviteId"),
       c.req.param("secret"),
       publicOrigin(c.req.url, c.req.header("host")),
+      c.req.queries("name"),
     );
   });
 
@@ -52,6 +55,7 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
       authorization: c.req.header("authorization"),
       requestUrl: c.req.url,
       host: c.req.header("host"),
+      nameValues: c.req.queries("name"),
     }),
   );
   app.get("/api/r/:room", (c) =>
@@ -63,7 +67,11 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
       authorization: c.req.header("authorization"),
       requestUrl: c.req.url,
       host: c.req.header("host"),
+      nameValues: c.req.queries("name"),
     }),
+  );
+  app.put("/api/r/:room/name", (c) =>
+    handleRename(deps, c.req.param("room"), c.req.header("authorization"), c.get("parsedBody")),
   );
   app.post("/api/r/:room", (c) => handlePost(deps, c.req.param("room"), c.req.header("authorization"), c.get("parsedBody")));
   app.delete("/api/r/:room/agents/:agentId", (c) =>
@@ -81,6 +89,7 @@ function handleRead(
     authorization: string | undefined;
     requestUrl: string;
     host: string | undefined;
+    nameValues: readonly string[] | undefined;
   },
 ): Response {
   if (input.method !== "GET") {
@@ -91,7 +100,14 @@ function handleRead(
   }
   const secret = input.secret && input.secret.length > 0 ? input.secret : null;
   if (secret) {
-    return redeemAndReturn(deps, input.roomId, input.inviteId, secret, publicOrigin(input.requestUrl, input.host));
+    return redeemAndReturn(
+      deps,
+      input.roomId,
+      input.inviteId,
+      secret,
+      publicOrigin(input.requestUrl, input.host),
+      input.nameValues,
+    );
   }
   return readForBearer(deps, input.roomId, input.authorization);
 }
@@ -102,12 +118,19 @@ function redeemAndReturn(
   inviteId: string | null,
   secret: string,
   origin: string,
+  nameValues: readonly string[] | undefined,
 ): Response {
+  const presented = presentedName(nameValues);
   const id = inviteId ?? (roomHint === undefined ? null : inviteIdForSecret(deps, roomHint, secret));
   if (!id) return json(RoomHttpError.forbidden().body(), HTTP_STATUS.forbidden);
   let redeemed;
   try {
-    redeemed = redeemInvite(deps, id, secret, roomHint, { defaultRoomPosts: true });
+    // The name is classified here and checked inside redeemInvite, after the invite passes.
+    redeemed = redeemInvite(deps, id, secret, roomHint, {
+      defaultRoomPosts: true,
+      ...(presented.state === "invalid" ? { invalidAgentName: true } : {}),
+      ...(presented.state === "chosen" ? { agentName: presented.name } : {}),
+    });
   } catch (error) {
     if (error instanceof RoomHttpError) return json(error.body(), error.status);
     throw error;
@@ -129,6 +152,8 @@ function redeemAndReturn(
     roomId,
     agentId: principal.agentId,
     ownerId: principal.ownerId,
+    displayName: redeemed.agent.displayName,
+    naming: JOIN_NAME_HINT,
     title: roomTitle(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
     agentKey,
@@ -159,6 +184,14 @@ function readForBearer(deps: RoomDeps, roomId: string, authorization: string | u
     posts: recentPosts(deps, principal, roomId),
   };
   return json(body, HTTP_STATUS.ok);
+}
+
+function handleRename(deps: RoomDeps, roomId: string, authorization: string | undefined, body: unknown): Response {
+  if (!isId(roomId) || !roomExists(deps, roomId)) {
+    return json(RoomHttpError.notFound().body(), HTTP_STATUS.notFound);
+  }
+  const principal = requireAgent(deps, authorization);
+  return json(renameJoinedAgent(deps, principal, roomId, body), HTTP_STATUS.ok);
 }
 
 function handlePost(deps: RoomDeps, roomId: string, authorization: string | undefined, body: unknown): Response {
@@ -213,6 +246,7 @@ function joinAddresses(origin: string, roomId: string): {
   read: JoinAddress;
   feed: JoinAddress;
   sharing: JoinAddress;
+  name: JoinAddress;
 } {
   if (!isId(roomId)) throw new Error("refusing to send an address");
   return {
@@ -220,6 +254,7 @@ function joinAddresses(origin: string, roomId: string): {
     read: absoluteAddress("GET", origin, `/api/r/${roomId}`),
     feed: absoluteAddress("GET", origin, `/rooms/${roomId}/feed`),
     sharing: absoluteAddress("PUT", origin, `/rooms/${roomId}/sharing`),
+    name: absoluteAddress("PUT", origin, `/api/r/${roomId}/name`),
   };
 }
 

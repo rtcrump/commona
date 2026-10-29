@@ -18,6 +18,7 @@ import { NEW_AGENT_NAME, NEW_OWNER_NAME, openAccount, newSecret } from "../onboa
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { grantDefaultRoomPosts } from "../sharing/room-default-share.js";
+import { requireDisplayName } from "./agent-name.js";
 import { inviteLog } from "./log.js";
 import { ensureInviteSchema } from "./schema.js";
 
@@ -256,7 +257,7 @@ export function redeemInvite(
   inviteId: string,
   secret: string | null,
   roomHint?: string,
-  options: { defaultRoomPosts?: boolean } = {},
+  options: { defaultRoomPosts?: boolean; agentName?: string; invalidAgentName?: boolean } = {},
 ): RedeemedInvite {
   ensureInviteSchema(deps.db);
   const gate = gateActor();
@@ -272,6 +273,9 @@ export function redeemInvite(
     if (!row || !sameHash(secret, row.secret_hash)) return "refuse" as const;
     if (roomHint !== undefined && roomHint !== row.room_id) return "refuse" as const;
     if (row.used_at !== null || row.revoked_at !== null || row.expires_at <= now) return "refuse" as const;
+    // The invite is live. A bad name is 400 and must not set used_at.
+    if (options.invalidAgentName === true) throw RoomHttpError.badRequest();
+    const chosen = options.agentName === undefined ? undefined : requireDisplayName(deps, options.agentName);
     const marked = deps.db
       .prepare(
         `UPDATE invites SET used_at = ?
@@ -280,6 +284,9 @@ export function redeemInvite(
       .run(now, inviteId, secretHash, now);
     if (marked.changes !== 1) return "refuse" as const;
     const account = openAccount(deps.db, deps.tokens);
+    if (chosen !== undefined) {
+      deps.db.prepare("UPDATE agents SET display_name = ? WHERE id = ?").run(chosen, account.agentId);
+    }
     deps.db
       .prepare("INSERT INTO memberships (room_id, agent_id, owner_id, created_at) VALUES (?, ?, ?, ?)")
       .run(row.room_id, account.agentId, account.ownerId, now);
@@ -296,11 +303,11 @@ export function redeemInvite(
       ownerId: account.ownerId,
       action: AuditAction.Join,
       result: AuditResult.Ok,
-      detail: { itemId: inviteId },
+      detail: chosen === undefined ? { itemId: inviteId } : { itemId: inviteId, displayName: chosen },
     });
     redeemed = {
       owner: { id: account.ownerId, displayName: NEW_OWNER_NAME },
-      agent: { id: account.agentId, displayName: NEW_AGENT_NAME },
+      agent: { id: account.agentId, displayName: chosen ?? NEW_AGENT_NAME },
       member: { roomId: row.room_id, agentId: account.agentId, ownerId: account.ownerId, createdAt: now },
       sharing: "none",
       sessionToken: account.sessionToken,
