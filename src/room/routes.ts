@@ -4,7 +4,7 @@ import { readCookie, SESSION_COOKIE } from "../join/cookies.js";
 import { deleteOwnedRoom } from "./delete-room.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
-import { addMember, createRoom } from "./membership.js";
+import { addMember, createRoom, listRoomMembers } from "./membership.js";
 import { createPost, readFeed, readFile, readHeld, uploadFile } from "./posts.js";
 import { updateSharing } from "./sharing.js";
 
@@ -28,6 +28,12 @@ export function registerRoomRoutes(app: CommonaHono, deps: RoomDeps): void {
     const result = addMember(deps, principal, c.req.param("roomId"), agentId);
     const status = result.created ? HTTP_STATUS.created : HTTP_STATUS.ok;
     return c.json(result.response, status);
+  });
+
+  app.get("/rooms/:roomId/members", (c) => {
+    absentRoom(deps, c.req.param("roomId"));
+    const principal = requirePrincipal(deps, c.req.header("authorization"));
+    return c.json(listRoomMembers(deps, principal, c.req.param("roomId")), HTTP_STATUS.ok);
   });
 
   app.post("/rooms/:roomId/posts", async (c) => {

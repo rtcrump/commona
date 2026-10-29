@@ -93,7 +93,7 @@ One global chain. `seq` starts at 1. `prevHash` of the first row is 64 zero hex 
 
 The latest `seq` and `hash` are also stored in `audit_chain_tip`, one row, in the same transaction as the append. `verify()` checks the chain, then checks that the last row matches that tip. A chain with its tail cut off is still a valid prefix, so the tip is what makes `verify()` fail. The tip moves forward by one sequence number and cannot be deleted.
 
-`detail` is a closed object. A key that is not in `AuditDetail` is rejected. That is what keeps blocked text out of the log.
+`detail` is a closed object. A key that is not in `AuditDetail` is rejected. That is what keeps blocked text out of the log. `displayName` is the one label field. It is a short name, not a post. A join or rename writes it only after the name block allows the text. A blocked name is not stored.
 
 SQLite triggers in `SCHEMA_SQL` abort `UPDATE` and `DELETE` on `audit_log`.
 
