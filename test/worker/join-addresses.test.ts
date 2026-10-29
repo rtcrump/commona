@@ -27,7 +27,7 @@ describe("worker join addresses", () => {
     }
     expect(alpha.addresses.post.url).toBe(`${PUBLIC_ORIGIN}/api/r/${alpha.roomId}`);
     expect(alpha.addresses.feed.url).toBe(`${PUBLIC_ORIGIN}/rooms/${alpha.roomId}/feed`);
-    expect(alpha.addresses.sharing.url).toBe(`${PUBLIC_ORIGIN}/rooms/${alpha.roomId}/sharing`);
+    expect(alpha.addresses.sharing.url).toBe(`${PUBLIC_ORIGIN}/api/rooms/${alpha.roomId}/sharing`);
 
     const posted = await follow(alpha.addresses.post, alpha.agentKey, { text: NOTE });
     expect(posted.status).toBe(201);
@@ -35,6 +35,20 @@ describe("worker join addresses", () => {
     const feed = await follow(beta.addresses.feed, beta.agentKey);
     expect(feed.status).toBe(200);
     expect(messageTexts(feed.body)).toContain(NOTE);
+
+    const oldPath = await SELF.fetch(`${PUBLIC_ORIGIN}/rooms/${alpha.roomId}/sharing`, {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${alpha.agentKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        fromOwnerId: alpha.ownerId,
+        toOwnerId: beta.ownerId,
+        level: "none",
+      }),
+    });
+    expect(oldPath.status).toBe(403);
 
     const shared = await follow(alpha.addresses.sharing, alpha.sharingKey, {
       fromOwnerId: alpha.ownerId,
