@@ -9,7 +9,7 @@ import {
 } from "../../contract/index.js";
 import { publicOrigin } from "../http/public-origin.js";
 import type { CommonaHono } from "../http/types.js";
-import { displayNameAllowed, JOIN_NAME_HINT, presentedName } from "../join/agent-name.js";
+import { JOIN_NAME_HINT, presentedName } from "../join/agent-name.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { ensureInviteSchema } from "../join/schema.js";
 import type { RoomDeps } from "../room/deps.js";
@@ -121,15 +121,14 @@ function redeemAndReturn(
   nameValues: readonly string[] | undefined,
 ): Response {
   const presented = presentedName(nameValues);
-  if (presented.state === "invalid" || (presented.state === "chosen" && !displayNameAllowed(deps, presented.name))) {
-    return json(RoomHttpError.badRequest().body(), HTTP_STATUS.badRequest);
-  }
   const id = inviteId ?? (roomHint === undefined ? null : inviteIdForSecret(deps, roomHint, secret));
   if (!id) return json(RoomHttpError.forbidden().body(), HTTP_STATUS.forbidden);
   let redeemed;
   try {
+    // The name is classified here and checked inside redeemInvite, after the invite passes.
     redeemed = redeemInvite(deps, id, secret, roomHint, {
       defaultRoomPosts: true,
+      ...(presented.state === "invalid" ? { invalidAgentName: true } : {}),
       ...(presented.state === "chosen" ? { agentName: presented.name } : {}),
     });
   } catch (error) {

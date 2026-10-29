@@ -1,7 +1,16 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { NEW_AGENT_NAME } from "../../src/onboarding/account.js";
-import { call, createInvite, startJoinHarness, type JoinHarness } from "../onboarding/harness.js";
+import {
+  call,
+  createInvite,
+  startJoinHarness,
+  type CreatedInviteLink,
+  type Hit,
+  type JoinHarness,
+} from "../onboarding/harness.js";
+
+const FORBIDDEN = { error: { code: "forbidden", message: "Not allowed." } };
 
 /** Fictional room note. Not a person, and not a patient record. */
 const NOTE = "Bring cups";
@@ -115,6 +124,51 @@ describe("link join display name", () => {
     expect(auditText(room)).not.toContain(blocked);
   });
 
+  it.each(["wrong secret", "expired", "revoked", "unknown", "malformed", "replay"])(
+    "audits a %s invite with a blocked name the same as with a valid name",
+    async (kind) => {
+      room = await startJoinHarness();
+      const blocked = listedName();
+      const invite = await createInvite(room, kind === "expired" ? 1 : undefined);
+      if (kind === "expired") room.clock.advance(1000);
+      if (kind === "revoked") {
+        room.db
+          .prepare("UPDATE invites SET revoked_at = ? WHERE id = ?")
+          .run(room.clock.now().toISOString(), invite.id);
+      }
+      if (kind === "replay") {
+        expect((await call(room.baseUrl, "GET", `/api${invite.openPath}`)).status).toBe(200);
+      }
+      const queries = ["name=Riley", `name=${encodeURIComponent(blocked)}`, "name=Riley2", "name=Riley&name=Quinn"];
+      const hits: Hit[] = [];
+      for (const query of queries) {
+        hits.push(await call(room.baseUrl, "GET", `${badInvitePath(invite, kind)}?${query}`));
+      }
+      if (kind === "wrong secret") {
+        hits.push(
+          await call(
+            room.baseUrl,
+            "GET",
+            `/api/r/${room.roomId}/${invite.id}/fake-wrong-secret?name=${encodeURIComponent(blocked)}`,
+          ),
+        );
+      }
+      for (const hit of hits) {
+        expect(hit.status).toBe(403);
+        expect(JSON.parse(hit.body)).toEqual(FORBIDDEN);
+        expect(hit.body).not.toContain(blocked);
+        expect(hit.body).not.toContain(room.roomId);
+      }
+      const rows = refusalRows(room);
+      expect(rows).toHaveLength(hits.length);
+      expect(new Set(rows.map((row) => JSON.stringify(row))).size).toBe(1);
+      expect(JSON.stringify(rows)).not.toContain(blocked);
+      expect(JSON.stringify(rows)).not.toContain("Riley");
+      if (kind === "replay") expect(usedAt(room, invite.id)).toEqual(expect.any(String));
+      else expect(usedAt(room, invite.id)).toBeNull();
+    },
+  );
+
   it("accepts the name on the room-id join route", async () => {
     room = await startJoinHarness();
     const invite = await createInvite(room);
@@ -190,6 +244,32 @@ interface Joined {
   displayName: string;
   naming: string;
   addresses: { name: { method: string; url: string } };
+}
+
+function badInvitePath(invite: CreatedInviteLink, kind: string): string {
+  if (kind === "unknown") return "/api/j/inv_00000000-0000-4000-8000-000000000000/fake-secret";
+  if (kind === "malformed") return "/api/j/not-an-invite/fake-secret";
+  if (kind === "wrong secret") return `/api/j/${invite.id}/fake-wrong-secret`;
+  return `/api${invite.openPath}`;
+}
+
+function refusalRows(room: JoinHarness): RefusalRow[] {
+  return room.db
+    .prepare(
+      `SELECT room, agent_id, owner_id, action, result, detail_json
+       FROM audit_log WHERE action = 'join_refused' AND result = 'refused'
+       ORDER BY seq`,
+    )
+    .all() as RefusalRow[];
+}
+
+interface RefusalRow {
+  room: string;
+  agent_id: string;
+  owner_id: string;
+  action: string;
+  result: string;
+  detail_json: string;
 }
 
 function listedName(): string {

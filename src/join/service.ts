@@ -257,11 +257,9 @@ export function redeemInvite(
   inviteId: string,
   secret: string | null,
   roomHint?: string,
-  options: { defaultRoomPosts?: boolean; agentName?: string } = {},
+  options: { defaultRoomPosts?: boolean; agentName?: string; invalidAgentName?: boolean } = {},
 ): RedeemedInvite {
   ensureInviteSchema(deps.db);
-  // Check the name before the redeem transaction, so a bad name does not use the invite.
-  const chosen = options.agentName === undefined ? undefined : requireDisplayName(deps, options.agentName);
   const gate = gateActor();
   if (!isInviteId(inviteId) || !secret) {
     refuse(deps, { room: UNSCOPED_ROOM, ...gate, itemId: isInviteId(inviteId) ? inviteId : undefined });
@@ -275,6 +273,9 @@ export function redeemInvite(
     if (!row || !sameHash(secret, row.secret_hash)) return "refuse" as const;
     if (roomHint !== undefined && roomHint !== row.room_id) return "refuse" as const;
     if (row.used_at !== null || row.revoked_at !== null || row.expires_at <= now) return "refuse" as const;
+    // The invite is live. A bad name is 400 and must not set used_at.
+    if (options.invalidAgentName === true) throw RoomHttpError.badRequest();
+    const chosen = options.agentName === undefined ? undefined : requireDisplayName(deps, options.agentName);
     const marked = deps.db
       .prepare(
         `UPDATE invites SET used_at = ?
