@@ -26,7 +26,7 @@ describe("join response addresses", () => {
     expect(alpha.addresses.post.url).toBe(`${room.baseUrl}/api/r/${alpha.roomId}`);
     expect(alpha.addresses.read.url).toBe(`${room.baseUrl}/api/r/${alpha.roomId}`);
     expect(alpha.addresses.feed.url).toBe(`${room.baseUrl}/rooms/${alpha.roomId}/feed`);
-    expect(alpha.addresses.sharing.url).toBe(`${room.baseUrl}/rooms/${alpha.roomId}/sharing`);
+    expect(alpha.addresses.sharing.url).toBe(`${room.baseUrl}/api/rooms/${alpha.roomId}/sharing`);
     expect(beta.addresses.feed.url).toBe(alpha.addresses.feed.url);
     for (const joined of [alpha, beta]) {
       for (const address of Object.values(joined.addresses)) {
@@ -84,7 +84,7 @@ describe("join response addresses", () => {
     expect(joined.addresses.feed).toEqual({ method: "GET", url: `${room.baseUrl}/rooms/${joined.roomId}/feed` });
     expect(joined.addresses.sharing).toEqual({
       method: "PUT",
-      url: `${room.baseUrl}/rooms/${joined.roomId}/sharing`,
+      url: `${room.baseUrl}/api/rooms/${joined.roomId}/sharing`,
     });
     expect(opened.body.includes(secret)).toBe(false);
     const posted = await follow(joined.addresses.post, joined.agentKey, { text: NOTE });
