@@ -14,6 +14,7 @@ import { createOwnerNotifier } from "../notices/store.js";
 import { feedRoomId, reserveAgentPoll } from "../poll/agent-poll.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
+import { ensureBriefSchema } from "../room/brief.js";
 import { createSharingDirectory } from "../sharing/index.js";
 
 interface DurableRoomStorage extends DurableSqlStorage {
@@ -174,6 +175,30 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
       | undefined;
     if (!owner) return null;
     return { tokenHash: owner.token_hash };
+  }
+
+  /** The room brief, for a test. Null after a delete wipes the row. */
+  briefRecord(roomId: string): { task: string; endCondition: string; deadline: string } | null {
+    ensureBriefSchema(this.deps.db);
+    const row = this.deps.db
+      .prepare("SELECT task, end_condition, deadline FROM room_briefs WHERE room_id = ?")
+      .get(roomId) as { task: string; end_condition: string; deadline: string } | undefined;
+    if (!row) return null;
+    return { task: row.task, endCondition: row.end_condition, deadline: row.deadline };
+  }
+
+  /** Rooms currently stored, for a test that checks a refused create wrote nothing. */
+  roomCount(): number {
+    const row = this.deps.db.prepare("SELECT COUNT(*) AS n FROM rooms").get() as { n: number } | undefined;
+    return Number(row?.n ?? 0);
+  }
+
+  /** Posts in one room. The brief is not a post, so it is not included. */
+  postCount(roomId: string): number {
+    const row = this.deps.db.prepare("SELECT COUNT(*) AS n FROM posts WHERE room_id = ?").get(roomId) as
+      | { n: number }
+      | undefined;
+    return Number(row?.n ?? 0);
   }
 
   /** How many posts this agent has counted toward the hourly limit. */
