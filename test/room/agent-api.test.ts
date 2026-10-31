@@ -49,7 +49,13 @@ describe("agent json api", () => {
     });
     expect(again.status).toBe(200);
     expect(again.body.includes(joined.agentKey)).toBe(false);
-    expect(JSON.parse(again.body)).toEqual({ roomId: room.roomId, title: "Sunday lunch", posts: [] });
+    expect(JSON.parse(again.body)).toEqual({
+      roomId: room.roomId,
+      title: "Sunday lunch",
+      posts: [],
+      status: "open",
+      proposals: [],
+    });
 
     const reused = await call(room.baseUrl, "GET", `/api/r/${room.roomId}/${invite.id}/${secret}`);
     expect(reused.status).toBe(403);

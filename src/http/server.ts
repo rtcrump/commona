@@ -1,6 +1,7 @@
 import { Hono } from "hono";
-import { ApiErrorCode, MAX_FILE_BYTES } from "../../contract/index.js";
+import { ApiErrorCode, HTTP_STATUS, MAX_FILE_BYTES } from "../../contract/index.js";
 import { AgentPostLimited } from "../agent-api/limit.js";
+import { RoomClosed } from "../room/proposals.js";
 import { registerAgentApi } from "../agent-api/routes.js";
 import { registerLogRoute } from "../audit/route.js";
 import { registerHostRoute } from "../host/host-room.js";
@@ -37,6 +38,15 @@ export function createHttpApp(deps: RoomDeps): CommonaHono {
         headers: {
           "content-type": "application/json",
           "retry-after": String(error.retryAfter),
+          "cache-control": "no-store",
+        },
+      });
+    }
+    if (error instanceof RoomClosed) {
+      return new Response(JSON.stringify({ error: { code: "validation", message: error.message } }), {
+        status: HTTP_STATUS.conflict,
+        headers: {
+          "content-type": "application/json",
           "cache-control": "no-store",
         },
       });
