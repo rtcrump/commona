@@ -8,6 +8,22 @@ import { agentCookieName } from "../../src/room-page/routes.js";
 const hostSecret = "host-test-secret";
 const note = "Bring napkins";
 
+const CLIENTS: { name: string; headers: Record<string, string> }[] = [
+  { name: "python-urllib", headers: { "user-agent": "Python-urllib/3.12", "accept-encoding": "identity" } },
+  { name: "curl", headers: { "user-agent": "curl/8.5.0", accept: "*/*" } },
+  {
+    name: "node-fetch",
+    headers: {
+      "user-agent": "node",
+      accept: "*/*",
+      "accept-language": "*",
+      "sec-fetch-mode": "cors",
+      "accept-encoding": "gzip, deflate",
+    },
+  },
+  { name: "no-user-agent", headers: {} },
+];
+
 describe("worker agent json api", () => {
   it("joins over HTTPS using only the hosted invite link and audits replay", async () => {
     const created = await hostRoom("Fake link-only lunch");
@@ -147,6 +163,10 @@ describe("worker agent json api", () => {
 
   it("returns 429 from durable object sqlite after 30 posts in an hour", async () => {
     const created = await hostRoom("Sunday lunch");
+    const stubForCap = env.DIRECTORY.get(env.DIRECTORY.idFromName("global"));
+    await runInDurableObject(stubForCap, (instance) => {
+      instance.rememberBriefPostCap(created.roomId, 100);
+    });
     const opened = await SELF.fetch(
       `https://room.example.test/api/r/${created.roomId}/${created.id}/${created.secret}`,
     );
@@ -182,10 +202,139 @@ describe("worker agent json api", () => {
     const hits = await runInDurableObject(stub, (instance) => instance.postHitCount(joined.agentId));
     expect(hits).toBe(30);
     const audit = await runInDurableObject(stub, (instance) => instance.auditSnapshot());
-    const refusal = audit.find((row) => row.action === "post" && row.result === "refused");
+    const refusal = audit.find(
+      (row) => row.room === created.roomId && row.action === "post" && row.result === "refused",
+    );
     expect(refusal?.detailJson).toContain("429");
     expect(JSON.stringify(audit).includes(joined.agentKey)).toBe(false);
   }, 60_000);
+
+  it("joins, reads, and posts for urllib, curl, node fetch, and a request with no User-Agent", async () => {
+    const created = await hostRoom("Sunday lunch", CLIENTS.length);
+    expect(created.invites).toHaveLength(CLIENTS.length);
+    for (let index = 0; index < CLIENTS.length; index += 1) {
+      const client = CLIENTS[index];
+      const invite = created.invites[index];
+      if (!client || !invite) throw new Error("missing client");
+      const joined = await SELF.fetch(
+        `https://room.example.test/api/r/${created.roomId}/${invite.id}/${invite.secret}`,
+        { headers: client.headers },
+      );
+      expect(joined.status).toBe(200);
+      const body = JSON.parse(await joined.text()) as { agentKey: string; rules: string[] };
+      expect(body.rules.join("\n")).toContain("Work from the brief.");
+      expect(body.rules.join("\n")).toContain("Post only free times and place preferences, never raw calendar entries.");
+      const headers = { ...client.headers, authorization: `Bearer ${body.agentKey}` };
+      const read = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}?since=0`, { headers });
+      expect(read.status).toBe(200);
+      const page = (await read.json()) as { posts: { text: string }[]; cursor: string };
+      expect(Array.isArray(page.posts)).toBe(true);
+      expect(page.cursor.length).toBeGreaterThan(0);
+      const note = `Bring napkins ${client.name}`;
+      const posted = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}`, {
+        method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({ text: note }),
+      });
+      expect(posted.status).toBe(201);
+      await posted.arrayBuffer();
+      const again = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}?since=0`, { headers });
+      expect(again.status).toBe(200);
+      const seen = await again.text();
+      expect(seen).toContain(note);
+    }
+  });
+
+  it("waits for a visible post, ignores a hidden one, and caps posts from the brief", async () => {
+    const created = await hostRoom("Sunday lunch", 2);
+    const [readerInvite, authorInvite] = created.invites;
+    if (!readerInvite || !authorInvite) throw new Error("room:new did not mint two invites");
+    const reader = await joinAgent(created.roomId, readerInvite);
+    const author = await joinAgent(created.roomId, authorInvite);
+    const first = await postNote(created.roomId, author.agentKey, "Tuesday noon is free");
+    const opened = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}?since=0`, {
+      headers: { authorization: `Bearer ${reader.agentKey}` },
+    });
+    expect(opened.status).toBe(200);
+    const firstPage = (await opened.json()) as { posts: { id: string; text: string }[]; cursor: string };
+    expect(firstPage.posts.map((post) => post.text)).toEqual(["Tuesday noon is free"]);
+    expect(firstPage.cursor).toBe(first);
+
+    const pending = SELF.fetch(
+      `https://room.example.test/api/r/${created.roomId}?since=${firstPage.cursor}&wait=25`,
+      { headers: { authorization: `Bearer ${reader.agentKey}` } },
+    );
+    await delay(40);
+    const second = await postNote(created.roomId, author.agentKey, "The park is free at noon");
+    const waited = await pending;
+    expect(waited.status).toBe(200);
+    const waitedBody = (await waited.json()) as { posts: { id: string; text: string }[]; cursor: string };
+    expect(waitedBody.posts).toEqual([{ id: second, text: "The park is free at noon" }]);
+
+    const bad = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}?since=nope`, {
+      headers: { authorization: `Bearer ${reader.agentKey}` },
+    });
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: { code: "validation", message: "That cursor is not valid." } });
+    const tooLong = await SELF.fetch(
+      `https://room.example.test/api/r/${created.roomId}?since=${second}&wait=26`,
+      { headers: { authorization: `Bearer ${reader.agentKey}` } },
+    );
+    expect(tooLong.status).toBe(400);
+    await tooLong.arrayBuffer();
+
+    const narrowed = await SELF.fetch(`https://room.example.test/api/rooms/${created.roomId}/sharing`, {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${author.sharingKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ fromOwnerId: author.ownerId, toOwnerId: reader.ownerId, level: "none" }),
+    });
+    expect(narrowed.status).toBe(200);
+    await narrowed.arrayBuffer();
+    const hiddenWait = SELF.fetch(
+      `https://room.example.test/api/r/${created.roomId}?since=${second}&wait=1`,
+      { headers: { authorization: `Bearer ${reader.agentKey}` } },
+    );
+    await delay(40);
+    const hidden = await postNote(created.roomId, author.agentKey, "Raw calendar: dentist Tuesday 13:00");
+    const hiddenResponse = await hiddenWait;
+    const hiddenText = await hiddenResponse.text();
+    expect(hiddenResponse.status).toBe(200);
+    expect(JSON.parse(hiddenText)).toMatchObject({ posts: [], cursor: second });
+    expect(hiddenText.includes("Raw calendar: dentist Tuesday 13:00")).toBe(false);
+    expect(hiddenText.includes(hidden)).toBe(false);
+
+    const plain = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}?since=${second}`, {
+      headers: { authorization: `Bearer ${reader.agentKey}` },
+    });
+    expect(plain.status).toBe(200);
+    expect(await plain.json()).toMatchObject({ posts: [], cursor: second });
+
+    const stub = env.DIRECTORY.get(env.DIRECTORY.idFromName("global"));
+    await runInDurableObject(stub, (instance) => {
+      instance.rememberBriefPostCap(created.roomId, 3);
+    });
+    const capped = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${author.agentKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ text: "Bring forks" }),
+    });
+    expect(capped.status).toBe(429);
+    expect(capped.headers.get("retry-after")).toBeNull();
+    expect(await capped.json()).toEqual({
+      error: { code: "validation", message: "This task allows 3 posts in this room. That limit has been reached." },
+    });
+    const audit = await runInDurableObject(stub, (instance) => instance.auditSnapshot());
+    const refusal = audit.find(
+      (row) => row.room === created.roomId && row.action === "post" && row.result === "refused",
+    );
+    expect(refusal?.detailJson).toContain("429");
+  }, 15_000);
 });
 
 interface Joined {
@@ -194,26 +343,69 @@ interface Joined {
   title: string;
 }
 
-async function hostRoom(title: string): Promise<{ roomId: string; id: string; secret: string; credential: string; link: string }> {
+async function hostRoom(
+  title: string,
+  inviteCount = 1,
+): Promise<{
+  roomId: string;
+  id: string;
+  secret: string;
+  credential: string;
+  link: string;
+  invites: { id: string; secret: string }[];
+}> {
   const response = await SELF.fetch("https://room.example.test/host/room", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       [HOST_SECRET_HEADER]: hostSecret,
     },
-    body: JSON.stringify({ title, hostName: "Host (demo)", inviteCount: 1 }),
+    body: JSON.stringify({ title, hostName: "Host (demo)", inviteCount }),
   });
   const body = await response.text();
   expect(response.status).toBe(201);
   expect(body.includes(hostSecret)).toBe(false);
   const created = JSON.parse(body) as { invites?: string[]; roomId?: string; credential?: string };
-  const link = created.invites?.[0] ?? "";
-  const parts = new URL(link).pathname.split("/");
+  const invites = (created.invites ?? []).map((link) => {
+    const parts = new URL(link).pathname.split("/");
+    return { id: parts[2] ?? "", secret: parts[3] ?? "" };
+  });
+  const first = invites[0];
   return {
-    link,
+    link: created.invites?.[0] ?? "",
     roomId: created.roomId ?? "",
-    id: parts[2] ?? "",
-    secret: parts[3] ?? "",
+    id: first?.id ?? "",
+    secret: first?.secret ?? "",
     credential: created.credential ?? "",
+    invites,
   };
+}
+
+async function joinAgent(
+  roomId: string,
+  invite: { id: string; secret: string },
+): Promise<{ agentKey: string; ownerId: string; sharingKey: string }> {
+  const opened = await SELF.fetch(`https://room.example.test/api/r/${roomId}/${invite.id}/${invite.secret}`);
+  expect(opened.status).toBe(200);
+  return JSON.parse(await opened.text()) as { agentKey: string; ownerId: string; sharingKey: string };
+}
+
+async function postNote(roomId: string, agentKey: string, text: string): Promise<string> {
+  await delay(20);
+  const posted = await SELF.fetch(`https://room.example.test/api/r/${roomId}`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${agentKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ text }),
+  });
+  expect(posted.status).toBe(201);
+  return ((await posted.json()) as { post: { id: string } }).post.id;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

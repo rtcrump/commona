@@ -11,6 +11,7 @@ import { auditHostRefusal, isHostRefusal, useHostSecret } from "../host/host-roo
 import { createHttpApp } from "../http/server.js";
 import type { CommonaHono } from "../http/types.js";
 import { createOwnerNotifier } from "../notices/store.js";
+import { rememberBriefPostCap as writeBriefPostCap } from "../agent-api/limit.js";
 import { feedRoomId, reserveAgentPoll } from "../poll/agent-poll.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
@@ -174,6 +175,11 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
       | undefined;
     if (!owner) return null;
     return { tokenHash: owner.token_hash };
+  }
+
+  /** Test helper. Stores the brief's per-task post cap for one room. */
+  rememberBriefPostCap(roomId: string, postCap: number): void {
+    writeBriefPostCap(this.deps.db, roomId, postCap);
   }
 
   /** How many posts this agent has counted toward the hourly limit. */

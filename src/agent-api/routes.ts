@@ -14,10 +14,16 @@ import { ensureInviteSchema } from "../join/schema.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost } from "../room/posts.js";
-import { recentMessages } from "../room-page/messages.js";
+import { BadReadCursor, messagesSince, recentMessages, recordRoomRead } from "../room-page/messages.js";
 import { TASK_CLOSE } from "../task-close.js";
 import { isRevokedAgentKey, revokeAgentKey } from "./keys.js";
+import { taskPostCap } from "./limit.js";
 import { ensureAgentApiSchema } from "./schema.js";
+
+/** Longest wait, in seconds. A longer value is rejected. */
+const WAIT_MAX_SECONDS = 25;
+/** How often a waiting read looks for a visible post. */
+const WAIT_POLL_MS = 100;
 
 /**
  * JSON room API. It mirrors the plain HTML page: join with one invite, read posts, post a message.
@@ -61,6 +67,8 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
       authorization: c.req.header("authorization"),
       requestUrl: c.req.url,
       host: c.req.header("host"),
+      since: c.req.query("since"),
+      wait: c.req.query("wait"),
     }),
   );
   app.post("/api/r/:room", (c) => handlePost(deps, c.req.param("room"), c.req.header("authorization"), c.get("parsedBody")));
@@ -119,8 +127,10 @@ function handleRead(
     authorization: string | undefined;
     requestUrl: string;
     host: string | undefined;
+    since?: string;
+    wait?: string;
   },
-): Response {
+): Response | Promise<Response> {
   if (input.method !== "GET") {
     return json({ error: { code: "validation", message: "Open this invite with GET." } }, HTTP_STATUS.ok);
   }
@@ -133,7 +143,7 @@ function handleRead(
     if (origin instanceof Response) return origin;
     return redeemAndReturn(deps, input.roomId, input.inviteId, secret, origin);
   }
-  return readForBearer(deps, input.roomId, input.authorization);
+  return readForBearer(deps, input.roomId, input.authorization, input.since, input.wait);
 }
 
 function redeemAndReturn(
@@ -174,6 +184,7 @@ function redeemAndReturn(
     ownerId: principal.ownerId,
     title: roomTitle(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
+    rules: houseRules(taskPostCap(deps, roomId)),
     agentKey,
     sharingKey,
     close: TASK_CLOSE,
@@ -196,15 +207,94 @@ function redeemAndReturn(
   return json(body, HTTP_STATUS.ok);
 }
 
-function readForBearer(deps: RoomDeps, roomId: string, authorization: string | undefined): Response {
+async function readForBearer(
+  deps: RoomDeps,
+  roomId: string,
+  authorization: string | undefined,
+  since: string | undefined,
+  wait: string | undefined,
+): Promise<Response> {
   const principal = requireAgent(deps, authorization);
-  const body = {
-    roomId,
-    title: roomTitle(deps, roomId),
-    posts: recentPosts(deps, principal, roomId),
-    close: TASK_CLOSE,
-  };
-  return json(body, HTTP_STATUS.ok);
+  const seconds = parseWait(wait);
+  if (seconds === "bad") {
+    return json(
+      { error: { code: "validation", message: "Wait must be a whole number of seconds from 1 to 25." } },
+      HTTP_STATUS.badRequest,
+    );
+  }
+  if (since === undefined) {
+    if (seconds !== "absent") {
+      return json(
+        { error: { code: "validation", message: "A wait needs a since cursor." } },
+        HTTP_STATUS.badRequest,
+      );
+    }
+    return json(
+      {
+        roomId,
+        title: roomTitle(deps, roomId),
+        posts: recentPosts(deps, principal, roomId),
+        close: TASK_CLOSE,
+      },
+      HTTP_STATUS.ok,
+    );
+  }
+  const holdMs = seconds === "absent" ? 0 : seconds * 1000;
+  let page;
+  try {
+    page = messagesSince(deps, principal, roomId, since);
+  } catch (error) {
+    if (error instanceof BadReadCursor) {
+      return json({ error: { code: "validation", message: error.message } }, HTTP_STATUS.badRequest);
+    }
+    throw error;
+  }
+  const deadline = Date.now() + holdMs;
+  while (page.posts.length === 0 && Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await sleep(Math.min(WAIT_POLL_MS, remaining));
+    // The room owner can revoke this key while the read is waiting.
+    // Check the bearer again before reading, so a revoked key gets no posts.
+    requireAgent(deps, authorization);
+    page = messagesSince(deps, principal, roomId, since);
+  }
+  recordRoomRead(deps, principal, roomId);
+  return json(
+    {
+      roomId,
+      title: roomTitle(deps, roomId),
+      posts: page.posts,
+      cursor: page.cursor,
+    },
+    HTTP_STATUS.ok,
+  );
+}
+
+function parseWait(raw: string | undefined): number | "absent" | "bad" {
+  if (raw === undefined) return "absent";
+  if (!/^[1-9][0-9]*$/.test(raw)) return "bad";
+  const seconds = Number(raw);
+  if (seconds > WAIT_MAX_SECONDS) return "bad";
+  return seconds;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/** House rules returned on join. The cap number is the brief's cap, or the default. */
+function houseRules(cap: number): string[] {
+  return [
+    "Post only when there is something new.",
+    "Answer every proposal.",
+    "Report to your owner when the task is done or stalled.",
+    `You can post at most ${cap} times in this room for this task.`,
+    "Work from the brief.",
+    "Post only free times and place preferences, never raw calendar entries.",
+  ];
 }
 
 function handlePost(deps: RoomDeps, roomId: string, authorization: string | undefined, body: unknown): Response {

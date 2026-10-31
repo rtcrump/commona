@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { hashToken } from "../../contract/index.js";
+import { rememberBriefPostCap } from "../../src/agent-api/limit.js";
 import { claimAgentHandoff, issueAgentHandoff } from "../../src/onboarding/handoff.js";
 import { agentCookieName } from "../../src/room-page/routes.js";
 import { TASK_CLOSE } from "../../src/task-close.js";
@@ -196,6 +197,7 @@ describe("agent json api", () => {
 
   it("returns 429 after 30 posts in an hour and allows a post when the hour has passed", async () => {
     room = await startJoinHarness();
+    rememberBriefPostCap(room.db, room.roomId, 100);
     const invite = await createInvite(room);
     const opened = await call(room.baseUrl, "GET", `/r/${room.roomId}?t=${secretOf(invite.openPath)}`);
     expect(opened.status).toBe(303);

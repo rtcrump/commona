@@ -72,6 +72,10 @@ describe("open-join acceptance", () => {
 
   it("G3 join, post, revoke, refused join, and 429 each have an audit row", async () => {
     const room = await hostRoom("Sunday lunch", 1);
+    const stub = env.DIRECTORY.get(env.DIRECTORY.idFromName("global"));
+    await runInDurableObject(stub, (instance) => {
+      instance.rememberBriefPostCap(room.roomId, 100);
+    });
     const invite = room.invites[0];
     if (!invite) throw new Error("room:new did not mint an invite");
     const joined = await joinJson(room.roomId, invite);
