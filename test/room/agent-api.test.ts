@@ -3,6 +3,7 @@ import { hashToken } from "../../contract/index.js";
 import { rememberBriefPostCap } from "../../src/agent-api/limit.js";
 import { claimAgentHandoff, issueAgentHandoff } from "../../src/onboarding/handoff.js";
 import { agentCookieName } from "../../src/room-page/routes.js";
+import { TASK_CLOSE } from "../../src/task-close.js";
 import { call, cookieValue, createInvite, startJoinHarness, type JoinHarness } from "../onboarding/harness.js";
 
 const NOTE = "Bring napkins";
@@ -31,6 +32,7 @@ describe("agent json api", () => {
     expect(joined.title).toBe("Sunday lunch");
     expect(joined.posts).toEqual([]);
     expect(joined.agentId).toMatch(/^agent_/);
+    expect(joined.close).toBe(TASK_CLOSE);
     expect(/^[A-Za-z0-9_-]{20,}$/.test(joined.agentKey)).toBe(true);
     expect(opened.body.includes(secret)).toBe(false);
     expect(opened.body.includes(hashToken(secret))).toBe(false);
@@ -50,7 +52,12 @@ describe("agent json api", () => {
     });
     expect(again.status).toBe(200);
     expect(again.body.includes(joined.agentKey)).toBe(false);
-    expect(JSON.parse(again.body)).toEqual({ roomId: room.roomId, title: "Sunday lunch", posts: [] });
+    expect(JSON.parse(again.body)).toEqual({
+      roomId: room.roomId,
+      title: "Sunday lunch",
+      posts: [],
+      close: TASK_CLOSE,
+    });
 
     const reused = await call(room.baseUrl, "GET", `/api/r/${room.roomId}/${invite.id}/${secret}`);
     expect(reused.status).toBe(403);
@@ -361,6 +368,7 @@ interface Joined {
   title: string;
   posts: { text: string }[];
   agentKey: string;
+  close: string;
 }
 
 async function expect401(room: JoinHarness, key: string): Promise<void> {

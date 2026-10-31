@@ -44,6 +44,8 @@ If the friend does not use Claude, they tell Trafford. The page says the same th
 
 Each friend's assistant, and Trafford's assistant, names the same day, the same time, and the same place. The person hears that from their assistant.
 
+When the lunch is agreed, each assistant reports the result to its own person. It says what was agreed, with whom, and anything still open. That report is the last step of the task.
+
 Count the taps. A friend who follows the page uses Join, Continue, Connect your assistant, Copy my link, the Claude paste and Add, and Check connection.
 
 ## What to watch for

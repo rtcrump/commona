@@ -3,6 +3,7 @@ import { hashToken } from "../../contract/index.js";
 import { RECENT_MESSAGE_LIMIT, RECENT_MESSAGE_MAX_BATCHES, RECENT_MESSAGES_SQL } from "../../src/room-page/messages.js";
 import { POSTS_RECENT_INDEX } from "../../src/room-page/schema.js";
 import { agentCookieName } from "../../src/room-page/routes.js";
+import { TASK_CLOSE } from "../../src/task-close.js";
 import { call, cookieValue, createInvite, startJoinHarness, type Hit, type JoinHarness } from "../onboarding/harness.js";
 
 const MARKUP = 'Bring napkins <script>alert(1)</script> & "forks"';
@@ -53,6 +54,10 @@ describe("plain room page", () => {
     expect(page.body).toContain(">Post</button>");
     expect(page.body).toContain(`POST /rooms/${room.roomId}/posts is live`);
     expect(page.body).toContain(`GET /rooms/${room.roomId}/feed is live`);
+    expect(TASK_CLOSE).toBe(
+      "Report the result to your own owner. Say what was agreed, with whom, and anything still open.",
+    );
+    expect(page.body).toContain(`<p id="task-close">${TASK_CLOSE}</p>`);
     expect(page.body).not.toMatch(/<script/i);
     expect(page.body.includes(`<pre>${key}</pre>`)).toBe(true);
     expect(page.body.includes(secret)).toBe(false);
@@ -62,6 +67,7 @@ describe("plain room page", () => {
       cookie: `${agentCookieName(room.roomId)}=${key}`,
     });
     expect(again.status).toBe(200);
+    expect(again.body).toContain(`<p id="task-close">${TASK_CLOSE}</p>`);
     expect(again.body.includes(key)).toBe(false);
     expect(again.body.includes(secret)).toBe(false);
     expect(again.body).not.toMatch(/<script/i);

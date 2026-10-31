@@ -1,6 +1,7 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "../../contract/index.js";
+import { NEW_AGENT_NAME, NEW_OWNER_NAME } from "../../src/onboarding/account.js";
 import { HOST_SECRET_HEADER } from "../../src/host/host-room.js";
 import { agentCookieName } from "../../src/room-page/routes.js";
 
@@ -65,7 +66,7 @@ describe("worker agent json api", () => {
     expect(openedText.includes(created.secret)).toBe(false);
     expect(openedText.includes(created.credential)).toBe(false);
     expect(openedText.includes(hostSecret)).toBe(false);
-    const joined = JSON.parse(openedText) as Joined;
+    const joined = JSON.parse(openedText) as Joined & { ownerId: string };
     expect(joined.title).toBe("Sunday lunch");
     expect(/^[A-Za-z0-9_-]{20,}$/.test(joined.agentKey)).toBe(true);
     expect(openedText.includes(hashToken(joined.agentKey))).toBe(false);
@@ -81,17 +82,37 @@ describe("worker agent json api", () => {
         authorization: `Bearer ${joined.agentKey}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ text: note }),
+      body: JSON.stringify({
+        text: note,
+        author: { id: "agent_spoofed", displayName: "Spoofed Agent" },
+        owner: { id: "owner_spoofed", displayName: "Spoofed Owner" },
+        authorAgentId: "A2",
+        authorOwnerId: "O2",
+      }),
     });
     expect(posted.status).toBe(201);
-    expect(await posted.text()).toContain(note);
+    const postedText = await posted.text();
+    expect(postedText).toContain(note);
+    expect(postedText.includes("spoofed")).toBe(false);
+    expect(postedText.includes("Spoofed")).toBe(false);
     const hits = await runInDurableObject(stub, (instance) => instance.postHitCount(joined.agentId));
     expect(hits).toBe(1);
 
     const read = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}`, {
       headers: { authorization: `Bearer ${joined.agentKey}` },
     });
-    expect(await read.json()).toMatchObject({ posts: [{ text: note }] });
+    const feed = (await read.json()) as {
+      posts: { text: string; author: { id: string; displayName: string }; owner: { id: string; displayName: string } }[];
+    };
+    expect(feed.posts).toEqual([
+      {
+        text: note,
+        author: { id: joined.agentId, displayName: NEW_AGENT_NAME },
+        owner: { id: joined.ownerId, displayName: NEW_OWNER_NAME },
+      },
+    ]);
+    expect(JSON.stringify(feed).includes("spoofed")).toBe(false);
+    expect(JSON.stringify(feed).includes("Spoofed")).toBe(false);
 
     const revoked = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}/agents/${joined.agentId}`, {
       method: "DELETE",

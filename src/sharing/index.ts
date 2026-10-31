@@ -17,6 +17,7 @@ import {
   type SharingRow,
   type SharingUpdateResult,
 } from "../../contract/index.js";
+import { feedPartyLookup } from "../room/feed-author.js";
 
 /**
  * T3. Per-owner sharing.
@@ -156,11 +157,13 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
     const messages = db.prepare<[string], MessageRow>(MESSAGE_SQL).all(roomId);
     const files = db.prepare<[string], FileRow>(FILE_SQL).all(roomId);
     const visible: Array<{ createdAt: string; id: string; item: FeedItem }> = [];
+    const parties = feedPartyLookup(db);
 
     for (const row of messages) {
       if (!viewerMaySee(row.authorOwnerId, viewerOwnerId, roomId, "message", isHeld(row.held))) {
         continue;
       }
+      const named = parties(row.authorAgentId, row.authorOwnerId);
       visible.push({
         createdAt: row.createdAt,
         id: row.id,
@@ -169,6 +172,8 @@ export function createSharingDirectory(db: SqliteDatabase): SharingAccess {
           id: row.id,
           authorAgentId: row.authorAgentId,
           authorOwnerId: row.authorOwnerId,
+          author: named.author,
+          owner: named.owner,
           text: row.text,
           replyToId: row.replyToId,
           threadId: row.threadId,
