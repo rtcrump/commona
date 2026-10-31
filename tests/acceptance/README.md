@@ -1,9 +1,11 @@
 # Acceptance tests
 
-This folder is the home of the one-command M1 run (`npm run m1`).
+`npm run m1` runs the 19 M1 tests in order on a fresh database: R1–R3, W1–W3, S1–S5, P1–P5, then L1–L3.
 
-T0 does not own any of the 19 tests. Later specs add their own tests under `test/<component>/`, named with the acceptance id (`test_R1_a1_posts_a2_reads` and so on). T7 runs all 19 in order on a fresh database and writes `m1-report.md` and `m1-report.json`.
+The wording of each test is the plan sentence, mapped to its id in `catalog.ts`. The tests call the HTTP API and the auth and audit entry points. They do not implement room, wake-up, sharing, the name block, or the log.
 
-`npm run m1` is a placeholder until then. It prints that the tests were not run, and it exits 0 so the script exists. It does not claim a pass.
+The command prints a pass or fail for every id and writes `m1-report.md` and `m1-report.json`. A missing module is a failure, marked `not-built`. The process exits non-zero when any test fails.
+
+`npm test` does not run this folder. CI stays on `npm test`, so a red acceptance run does not fail that job.
 
 Do not mark a test skipped to make the build green.

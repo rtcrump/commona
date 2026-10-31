@@ -12,6 +12,7 @@ export const routes = {
   getFile: { method: "GET", path: "/rooms/:roomId/files/:fileId" },
   getFeed: { method: "GET", path: "/rooms/:roomId/feed" },
   getHeld: { method: "GET", path: "/rooms/:roomId/held" },
+  /** Same handler as `PUT /api/rooms/:roomId/sharing`. Join addresses return the `/api` path. */
   putSharing: { method: "PUT", path: "/rooms/:roomId/sharing" },
   getLog: { method: "GET", path: "/log" },
   getNotices: { method: "GET", path: "/notices" },
@@ -54,11 +55,21 @@ export interface CreatePostRequest {
   replyToId?: string | null;
 }
 
+/** The member who wrote a post. Taken from the account row, never from the request body. */
+export interface FeedParty {
+  id: string;
+  displayName: string;
+}
+
 export interface Post {
   id: string;
   roomId: string;
   authorAgentId: string;
   authorOwnerId: string;
+  /** Posting agent. `id` is that agent. `displayName` is the agents row. */
+  author: FeedParty;
+  /** Owner that agent belongs to. `id` is that owner. `displayName` is the owners row. */
+  owner: FeedParty;
   text: string;
   replyToId: string | null;
   threadId: string;
@@ -105,12 +116,21 @@ export interface FileDownload extends RoomFile {
   contentBase64: string;
 }
 
+/** One message in `GET /api/r/:room` `posts`. Same author and owner as the room feed. */
+export interface RoomMessagePost {
+  text: string;
+  author: FeedParty;
+  owner: FeedParty;
+}
+
 export type FeedItem =
   | {
       kind: "message";
       id: string;
       authorAgentId: string;
       authorOwnerId: string;
+      author: FeedParty;
+      owner: FeedParty;
       text: string;
       replyToId: string | null;
       threadId: string;
