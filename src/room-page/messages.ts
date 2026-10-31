@@ -1,4 +1,11 @@
-import { AuditAction, AuditResult, feedIncludes, formatTimestamp, type AuthPrincipal } from "../../contract/index.js";
+import {
+  AuditAction,
+  AuditResult,
+  feedIncludes,
+  formatTimestamp,
+  isId,
+  type AuthPrincipal,
+} from "../../contract/index.js";
 import { requireMember } from "../room/access.js";
 import type { RoomDeps } from "../room/deps.js";
 import type { RoomPagePost } from "./page.js";
@@ -6,6 +13,20 @@ import type { RoomPagePost } from "./page.js";
 export const RECENT_MESSAGE_LIMIT = 20;
 /** Stop after this many batches. A page may show fewer than 20 messages. */
 export const RECENT_MESSAGE_MAX_BATCHES = 10;
+
+/**
+ * Cursor for "nothing yet". A since read with this cursor returns every visible post.
+ * Any other cursor is a post id in this room.
+ */
+export const SINCE_START = "0";
+
+/** A since cursor that is not the start marker and not a post id in this room. */
+export class BadReadCursor extends Error {
+  constructor() {
+    super("That cursor is not valid.");
+    this.name = "BadReadCursor";
+  }
+}
 
 /**
  * One batch of message text, newest first, from an exclusive keyset cursor.
@@ -21,7 +42,24 @@ ORDER BY created_at DESC, id DESC
 LIMIT ?
 `;
 
-/** Past every real post timestamp and id, so the first batch starts at the newest row. */
+/**
+ * Posts strictly newer than a cursor, oldest first.
+ * Same columns as the page query. No file rows and no file content.
+ */
+export const NEWER_MESSAGES_SQL = `
+SELECT text, author_owner_id, created_at, id
+FROM posts
+WHERE room_id = ? AND held = 0
+  AND (created_at, id) > (?, ?)
+ORDER BY created_at ASC, id ASC
+LIMIT ?
+`;
+
+/** Before every real timestamp, so a start cursor includes the oldest post. */
+const CURSOR_START_AT = "";
+const CURSOR_START_ID = "";
+
+/** Past every real post timestamp and id, so the first page batch starts at the newest row. */
 const CURSOR_START = "9999-99-99T99:99:99.999Z";
 
 type RecentRow = {
@@ -30,6 +68,42 @@ type RecentRow = {
   created_at: string;
   id: string;
 };
+
+export interface SinceMessage {
+  id: string;
+  text: string;
+}
+
+export interface SincePage {
+  posts: SinceMessage[];
+  cursor: string;
+}
+
+/**
+ * Whether this viewer may see one unheld message.
+ * This is the room's sharing check. The page and the since read both call it.
+ * Do not copy it.
+ */
+function messageVisible(
+  deps: RoomDeps,
+  roomId: string,
+  principal: AuthPrincipal,
+  authorOwnerId: string,
+  levels: Map<string, string>,
+): boolean {
+  let level = levels.get(authorOwnerId);
+  if (level === undefined) {
+    level = deps.sharing.level(roomId, authorOwnerId, principal.ownerId);
+    levels.set(authorOwnerId, level);
+  }
+  return feedIncludes({
+    held: false,
+    level,
+    itemKind: "message",
+    viewerOwnerId: principal.ownerId,
+    authorOwnerId,
+  });
+}
 
 /** Newest messages the viewer may see, oldest of that window first. Also audits the read. */
 export function recentMessages(deps: RoomDeps, principal: AuthPrincipal, roomId: string): RoomPagePost[] {
@@ -44,19 +118,9 @@ export function recentMessages(deps: RoomDeps, principal: AuthPrincipal, roomId:
     if (rows.length === 0) break;
     for (const row of rows) {
       if (visible.length >= RECENT_MESSAGE_LIMIT) break;
-      let level = levels.get(row.author_owner_id);
-      if (level === undefined) {
-        level = deps.sharing.level(roomId, row.author_owner_id, principal.ownerId);
-        levels.set(row.author_owner_id, level);
+      if (messageVisible(deps, roomId, principal, row.author_owner_id, levels)) {
+        visible.push({ text: row.text });
       }
-      const allowed = feedIncludes({
-        held: false,
-        level,
-        itemKind: "message",
-        viewerOwnerId: principal.ownerId,
-        authorOwnerId: row.author_owner_id,
-      });
-      if (allowed) visible.push({ text: row.text });
     }
     const last = rows[rows.length - 1];
     if (!last) break;
@@ -65,6 +129,50 @@ export function recentMessages(deps: RoomDeps, principal: AuthPrincipal, roomId:
     if (rows.length < RECENT_MESSAGE_LIMIT) break;
   }
   visible.reverse();
+  recordRoomRead(deps, principal, roomId);
+  return visible;
+}
+
+/**
+ * Visible posts newer than `since`, oldest first, and the cursor to use next.
+ * `since` is the start marker or a post id in this room. A bad cursor throws.
+ * Does not audit. The route audits once, including when it waited.
+ */
+export function messagesSince(
+  deps: RoomDeps,
+  principal: AuthPrincipal,
+  roomId: string,
+  since: string,
+): SincePage {
+  requireMember(deps, principal, roomId);
+  const position = cursorPosition(deps, roomId, since);
+  if (position === null) throw new BadReadCursor();
+  const visible: SinceMessage[] = [];
+  const levels = new Map<string, string>();
+  const stmt = deps.db.prepare(NEWER_MESSAGES_SQL);
+  let cursorAt = position.at;
+  let cursorId = position.id;
+  let lastVisibleId = since;
+  for (let batch = 0; batch < RECENT_MESSAGE_MAX_BATCHES && visible.length < RECENT_MESSAGE_LIMIT; batch += 1) {
+    const rows = stmt.all(roomId, cursorAt, cursorId, RECENT_MESSAGE_LIMIT) as RecentRow[];
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      if (visible.length >= RECENT_MESSAGE_LIMIT) break;
+      if (!messageVisible(deps, roomId, principal, row.author_owner_id, levels)) continue;
+      visible.push({ id: row.id, text: row.text });
+      lastVisibleId = row.id;
+    }
+    const last = rows[rows.length - 1];
+    if (!last) break;
+    cursorAt = last.created_at;
+    cursorId = last.id;
+    if (rows.length < RECENT_MESSAGE_LIMIT) break;
+  }
+  return { posts: visible, cursor: visible.length > 0 ? lastVisibleId : since };
+}
+
+/** One read in the audit log. A wait records this once, not once per poll. */
+export function recordRoomRead(deps: RoomDeps, principal: AuthPrincipal, roomId: string): void {
   const actorId = principal.kind === "agent" ? principal.agentId : principal.ownerId;
   deps.audit.append({
     ts: formatTimestamp(deps.clock.now()),
@@ -75,5 +183,14 @@ export function recentMessages(deps: RoomDeps, principal: AuthPrincipal, roomId:
     result: AuditResult.Ok,
     detail: {},
   });
-  return visible;
+}
+
+function cursorPosition(deps: RoomDeps, roomId: string, since: string): { at: string; id: string } | null {
+  if (since === SINCE_START) return { at: CURSOR_START_AT, id: CURSOR_START_ID };
+  if (since.length > 80 || !isId(since)) return null;
+  const row = deps.db
+    .prepare("SELECT created_at, id FROM posts WHERE room_id = ? AND id = ?")
+    .get(roomId, since) as { created_at: string; id: string } | undefined;
+  if (!row) return null;
+  return { at: row.created_at, id: row.id };
 }

@@ -32,13 +32,14 @@ export function createHttpApp(deps: RoomDeps): CommonaHono {
   });
   app.onError((error, c) => {
     if (error instanceof AgentPostLimited) {
-      return new Response(JSON.stringify({ error: { code: "validation", message: "Try again later." } }), {
+      const headers = new Headers({
+        "content-type": "application/json",
+        "cache-control": "no-store",
+      });
+      if (error.retryAfter !== null) headers.set("retry-after", String(error.retryAfter));
+      return new Response(JSON.stringify({ error: { code: "validation", message: error.message } }), {
         status: 429,
-        headers: {
-          "content-type": "application/json",
-          "retry-after": String(error.retryAfter),
-          "cache-control": "no-store",
-        },
+        headers,
       });
     }
     if (error instanceof RoomHttpError) return c.json(error.body(), error.status as 400);

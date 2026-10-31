@@ -352,7 +352,12 @@ function assertHidden(text: string, secrets: readonly string[]): void {
 
 function htmlFromError(error: unknown): Response {
   if (error instanceof AgentPostLimited) {
-    return htmlResponse(renderRoomMessage("Try again later."), 429, [], error.retryAfter);
+    return htmlResponse(
+      renderRoomMessage(error.message),
+      429,
+      [],
+      error.retryAfter === null ? undefined : error.retryAfter,
+    );
   }
   if (error instanceof RoomHttpError) {
     const sentence = error.status === 404 ? "This room is not here." : "This invite cannot be used. Ask for a new link.";
