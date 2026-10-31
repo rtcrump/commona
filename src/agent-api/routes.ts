@@ -16,6 +16,7 @@ import { readBrief, setBrief } from "../room/brief.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost } from "../room/posts.js";
+import { isProposalBody, roomStatusFields, roomTalkStatus, submitProposal } from "../room/proposals.js";
 import { recentMessages } from "../room-page/messages.js";
 import { isRevokedAgentKey, revokeAgentKey } from "./keys.js";
 import { ensureAgentApiSchema } from "./schema.js";
@@ -140,6 +141,7 @@ function redeemAndReturn(
     title: roomTitle(deps, roomId),
     brief: readBrief(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
+    ...roomStatusFields(roomTalkStatus(deps, roomId, principal.ownerId)),
     guide: renderJoinGuide(),
     agentKey,
     sharingKey,
@@ -168,6 +170,7 @@ function readForBearer(deps: RoomDeps, roomId: string, authorization: string | u
     title: roomTitle(deps, roomId),
     brief: readBrief(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
+    ...roomStatusFields(roomTalkStatus(deps, roomId, principal.ownerId)),
   };
   return json(body, HTTP_STATUS.ok);
 }
@@ -177,6 +180,10 @@ function handlePost(deps: RoomDeps, roomId: string, authorization: string | unde
     return json(RoomHttpError.notFound().body(), HTTP_STATUS.notFound);
   }
   const principal = requireAgent(deps, authorization);
+  if (isProposalBody(body)) {
+    const result = submitProposal(deps, principal, roomId, body, createPost);
+    return json(result.body, result.httpStatus);
+  }
   const result: CreatePostResponse = createPost(deps, principal, roomId, body);
   const status = result.outcome === "accepted" ? HTTP_STATUS.created : HTTP_STATUS.ok;
   return json(result, status);

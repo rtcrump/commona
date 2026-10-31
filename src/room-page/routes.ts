@@ -11,6 +11,7 @@ import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { readBrief } from "../room/brief.js";
 import { createPost } from "../room/posts.js";
+import { RoomClosed, roomTalkStatus } from "../room/proposals.js";
 import { recentMessages } from "./messages.js";
 import { renderRoomMessage, renderRoomPage } from "./page.js";
 import { ensureRoomPageSchema } from "./schema.js";
@@ -160,6 +161,7 @@ function showForCookie(
     agentKey,
     sharingKey,
     agentId: agentKey === null ? null : principal.agentId,
+    roomStatus: roomTalkStatus(deps, roomId, principal.ownerId),
   });
   assertHidden(page, hidden);
   const cookies =
@@ -186,6 +188,9 @@ function handlePost(deps: RoomDeps, roomId: string, cookie: string | undefined, 
     try {
       result = createPost(deps, principal, roomId, { text });
     } catch (error) {
+      if (error instanceof RoomClosed) {
+        return htmlResponse(renderRoomMessage(error.message), error.status);
+      }
       if (error instanceof RoomHttpError) {
         return htmlResponse(renderRoomMessage("The message was not posted."), error.status);
       }
@@ -353,6 +358,9 @@ function assertHidden(text: string, secrets: readonly string[]): void {
 }
 
 function htmlFromError(error: unknown): Response {
+  if (error instanceof RoomClosed) {
+    return htmlResponse(renderRoomMessage(error.message), error.status);
+  }
   if (error instanceof AgentPostLimited) {
     return htmlResponse(renderRoomMessage("Try again later."), 429, [], error.retryAfter);
   }

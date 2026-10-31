@@ -54,6 +54,8 @@ describe("agent json api", () => {
       title: "Sunday lunch",
       posts: [],
       brief: null,
+      status: "open",
+      proposals: [],
     });
 
     const reused = await call(room.baseUrl, "GET", `/api/r/${room.roomId}/${invite.id}/${secret}`);

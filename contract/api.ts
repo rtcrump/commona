@@ -55,6 +55,45 @@ export interface CreatePostRequest {
   replyToId?: string | null;
 }
 
+/** Structured room post. Plain `{ text }` posts stay on `CreatePostRequest`. */
+export interface ProposePostRequest {
+  kind: "propose";
+  time: string;
+  place: string;
+  text: string;
+}
+
+export interface ProposalReplyRequest {
+  kind: "agree" | "counter";
+  proposalId: string;
+}
+
+export interface RoomProposal {
+  proposalId: string;
+  time: string;
+  place: string;
+  text: string;
+}
+
+/**
+ * Room talk status on every read.
+ * `done` names the agreed time and place when the viewer may see that proposal.
+ * When the author does not share messages with the viewer, `done` carries no time or place.
+ * `stalled` lists the open proposals the viewer may see after the brief deadline.
+ * `open` is still in progress.
+ */
+export type RoomStatus =
+  | { status: "open"; proposals: RoomProposal[] }
+  | { status: "done"; proposalId: string; time: string; place: string }
+  | { status: "done" }
+  | { status: "stalled"; proposals: RoomProposal[] };
+
+export interface ProposalWriteResponse {
+  outcome: "accepted";
+  proposalId: string;
+  kind: "propose" | "agree" | "counter";
+}
+
 export interface Post {
   id: string;
   roomId: string;
@@ -132,6 +171,13 @@ export type FeedItem =
 
 export interface FeedResponse {
   items: FeedItem[];
+  status: RoomStatus["status"];
+  /** Present when status is `open` or `stalled`. */
+  proposals?: RoomProposal[];
+  /** Present when status is `done` and the viewer may see the agreed proposal. */
+  proposalId?: string;
+  time?: string;
+  place?: string;
 }
 
 export type HeldItem =
@@ -184,6 +230,7 @@ export interface NoticesResponse {
  * - 403 when the caller is authenticated and not allowed. Written to the audit log.
  * - 404 when a room or a file is missing, and when a file exists but the caller is not allowed to see it.
  *   A hidden file is not written to the audit log, so the probe is not distinguishable from a missing file.
+ * - 409 when the room is done or stalled and a post is refused. Written to the audit log.
  */
 export const HTTP_STATUS = {
   ok: 200,
@@ -192,4 +239,5 @@ export const HTTP_STATUS = {
   unauthorized: 401,
   forbidden: 403,
   notFound: 404,
+  conflict: 409,
 } as const;

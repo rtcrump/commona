@@ -31,6 +31,7 @@ import { nowStamp, refuse, requireMember, requireRoom } from "./access.js";
 import { readBrief, type RoomBrief } from "./brief.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
+import { refuseIfRoomClosed, roomStatusFields, roomTalkStatus } from "./proposals.js";
 
 interface PostRow {
   id: string;
@@ -72,6 +73,7 @@ export function createPost(
   const request = parsePost(body);
   requireMember(deps, principal, roomId);
   if (principal.kind !== "agent") throw RoomHttpError.forbidden();
+  refuseIfRoomClosed(deps, principal, roomId);
   const parent = resolveParent(deps, roomId, request.replyToId);
   reserveAgentPost(deps, principal, roomId);
   const id = newId("post");
@@ -306,7 +308,11 @@ export function readFeed(
     result: AuditResult.Ok,
     detail: {},
   });
-  return { brief: readBrief(deps, roomId), items };
+  return {
+    brief: readBrief(deps, roomId),
+    items,
+    ...roomStatusFields(roomTalkStatus(deps, roomId, viewerOwnerId)),
+  };
 }
 
 export function readFile(deps: RoomDeps, principal: AuthPrincipal, roomId: string, fileId: string): FileDownload {
