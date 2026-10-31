@@ -20,7 +20,7 @@ describe("posts and files", () => {
       expect(posted.status).toBe(201);
       const hidden = await send(room.baseUrl, "GET", `/rooms/${roomId}/feed?as=A2`, a2);
       expect(hidden.status).toBe(200);
-      expect(hidden.body).toEqual({ items: [], status: "open", proposals: [] });
+      expect(hidden.body).toEqual({ brief: null, items: [], status: "open", proposals: [] });
       const own = await send(room.baseUrl, "GET", `/rooms/${roomId}/feed`, a1);
       expect(own.status).toBe(200);
       expect((own.body as { items: unknown[] }).items).toHaveLength(1);

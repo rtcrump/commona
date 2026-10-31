@@ -18,6 +18,10 @@ const SAFE_SERVER_MESSAGES = new Set([
   "room title must be a short label",
   "host display name must be a short label",
   "invite count must be a whole number from 1 to 20",
+  "brief task must be short text",
+  "brief end condition must be short text",
+  "brief deadline must be in the future and at most 30 days out",
+  "Invalid request.",
   "room:new failed",
 ]);
 
@@ -34,6 +38,7 @@ export interface RoomNewInput {
   title: string;
   hostName: string;
   inviteCount?: string;
+  brief?: { task: string; endCondition: string; deadline: string };
 }
 
 interface HostSetup {
@@ -56,6 +61,7 @@ export async function createRoomInvites(input: RoomNewInput): Promise<string[]> 
   const title = requireLabel(input.title, "room title must be a short label");
   const hostName = requireLabel(input.hostName, "host display name must be a short label");
   const inviteCount = requireCount(input.inviteCount);
+  const brief = input.brief ?? briefFromEnv();
   reserveCredential(credentialPath);
   let committed = false;
   try {
@@ -68,7 +74,7 @@ export async function createRoomInvites(input: RoomNewInput): Promise<string[]> 
           "content-type": "application/json",
           [HOST_SECRET_HEADER]: hostSecret,
         },
-        body: JSON.stringify({ title, hostName, inviteCount }),
+        body: JSON.stringify(brief ? { title, hostName, inviteCount, brief } : { title, hostName, inviteCount }),
       });
     } catch {
       throw new RoomNewError("room:new failed");
@@ -83,6 +89,17 @@ export async function createRoomInvites(input: RoomNewInput): Promise<string[]> 
     if (!committed) releaseCredential(credentialPath);
     throw error;
   }
+}
+
+function briefFromEnv(): { task: string; endCondition: string; deadline: string } | undefined {
+  const task = process.env.COMMONA_ROOM_TASK;
+  const endCondition = process.env.COMMONA_ROOM_END_CONDITION;
+  const deadline = process.env.COMMONA_ROOM_DEADLINE;
+  if (task === undefined && endCondition === undefined && deadline === undefined) return undefined;
+  if (!task || !endCondition || !deadline) {
+    throw new RoomNewError("brief needs a task, an end condition, and a deadline");
+  }
+  return { task, endCondition, deadline };
 }
 
 function readHostSecret(): string {

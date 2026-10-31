@@ -10,9 +10,8 @@ const NOTE = "Bring napkins";
 
 describe("worker propose and agree", () => {
   it("returns a proposal id, keeps plain text, and marks the room done when every member agrees", async () => {
-    const created = await hostRoom("Fake lunch room", 1);
+    const created = await hostRoom("Fake lunch room", 1, futureDeadline());
     const guest = await join(created);
-    await setDeadline(created.roomId, "2099-01-01T00:00:00.000Z");
 
     const plain = await post(created.roomId, created.credential, { text: NOTE });
     expect(plain.status).toBe(201);
@@ -73,9 +72,8 @@ describe("worker propose and agree", () => {
   });
 
   it("returns stalled from the brief deadline and rejects a bad agree", async () => {
-    const created = await hostRoom("Fake stalled lunch", 1);
+    const created = await hostRoom("Fake stalled lunch", 1, futureDeadline());
     const guest = await join(created);
-    await setDeadline(created.roomId, "2099-01-01T00:00:00.000Z");
     const proposed = await post(created.roomId, guest.agentKey, {
       kind: "propose",
       time: TIME,
@@ -91,7 +89,7 @@ describe("worker propose and agree", () => {
     expect(unknown.status).toBe(400);
     await unknown.arrayBuffer();
 
-    const other = await hostRoom("Other fake room", 1);
+    const other = await hostRoom("Other fake room", 1, futureDeadline());
     const cross = await post(other.roomId, other.credential, { kind: "agree", proposalId });
     expect(cross.status).toBe(400);
     await cross.arrayBuffer();
@@ -149,9 +147,14 @@ async function join(created: { roomId: string; id: string; secret: string }): Pr
   return { agentKey: body.agentKey ?? "" };
 }
 
+function futureDeadline(): string {
+  return new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
+}
+
 async function hostRoom(
   title: string,
   inviteCount: number,
+  deadline: string,
 ): Promise<{ roomId: string; id: string; secret: string; credential: string; ownerId: string }> {
   const response = await SELF.fetch("https://room.example.test/host/room", {
     method: "POST",
@@ -159,7 +162,16 @@ async function hostRoom(
       "content-type": "application/json",
       [HOST_SECRET_HEADER]: hostSecret,
     },
-    body: JSON.stringify({ title, hostName: "Host (demo)", inviteCount }),
+    body: JSON.stringify({
+      title,
+      hostName: "Host (demo)",
+      inviteCount,
+      brief: {
+        task: "Agree a pretend lunch",
+        endCondition: "Everyone agrees one time and place",
+        deadline,
+      },
+    }),
   });
   const text = await response.text();
   expect(response.status).toBe(201);
@@ -186,19 +198,6 @@ async function setDeadline(roomId: string, deadline: string): Promise<void> {
     const storage = instance.ctx.storage as {
       sql: { exec(query: string, ...bindings: unknown[]): unknown };
     };
-    storage.sql.exec(`CREATE TABLE IF NOT EXISTS room_briefs (
-      room_id TEXT PRIMARY KEY,
-      task TEXT NOT NULL,
-      end_condition TEXT NOT NULL,
-      deadline TEXT NOT NULL
-    )`);
-    storage.sql.exec(
-      `INSERT INTO room_briefs (room_id, task, end_condition, deadline) VALUES (?, ?, ?, ?)
-       ON CONFLICT(room_id) DO UPDATE SET deadline = excluded.deadline`,
-      roomId,
-      "Agree a pretend lunch",
-      "Everyone agrees one time and place",
-      deadline,
-    );
+    storage.sql.exec("UPDATE room_briefs SET deadline = ? WHERE room_id = ?", deadline, roomId);
   });
 }

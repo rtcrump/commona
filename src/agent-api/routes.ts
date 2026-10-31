@@ -9,8 +9,10 @@ import {
 } from "../../contract/index.js";
 import { publicOrigin } from "../http/public-origin.js";
 import type { CommonaHono } from "../http/types.js";
+import { renderJoinGuide } from "../join/agent-guide.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { ensureInviteSchema } from "../join/schema.js";
+import { readBrief, setBrief } from "../room/brief.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost } from "../room/posts.js";
@@ -67,6 +69,12 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
     }),
   );
   app.post("/api/r/:room", (c) => handlePost(deps, c.req.param("room"), c.req.header("authorization"), c.get("parsedBody")));
+  app.put("/api/r/:room/brief", (c) => {
+    const roomId = c.req.param("room");
+    const principal = requireBearer(deps, c.req.header("authorization"));
+    const brief = setBrief(deps, principal, roomId, c.get("parsedBody"));
+    return json({ brief }, HTTP_STATUS.ok);
+  });
   app.delete("/api/r/:room/agents/:agentId", (c) =>
     handleRevoke(deps, c.req.param("room"), c.req.param("agentId"), c.req.header("authorization")),
   );
@@ -131,8 +139,10 @@ function redeemAndReturn(
     agentId: principal.agentId,
     ownerId: principal.ownerId,
     title: roomTitle(deps, roomId),
+    brief: readBrief(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
     ...roomStatusFields(roomTalkStatus(deps, roomId)),
+    guide: renderJoinGuide(),
     agentKey,
     sharingKey,
     addresses,
@@ -158,6 +168,7 @@ function readForBearer(deps: RoomDeps, roomId: string, authorization: string | u
   const body = {
     roomId,
     title: roomTitle(deps, roomId),
+    brief: readBrief(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
     ...roomStatusFields(roomTalkStatus(deps, roomId)),
   };

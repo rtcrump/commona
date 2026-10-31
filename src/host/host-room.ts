@@ -13,6 +13,7 @@ import { createInvite } from "../join/service.js";
 import { openAccount } from "../onboarding/account.js";
 import type { CommonaEnv, DirectoryStub } from "../env.js";
 import type { RoomDeps } from "../room/deps.js";
+import { BriefInputError, optionalBrief, saveBrief, type RoomBrief } from "../room/brief.js";
 import { rememberHostGrant } from "../room/host-grant.js";
 import { RoomHttpError } from "../room/http.js";
 import { addMember, createRoom } from "../room/membership.js";
@@ -139,6 +140,7 @@ interface HostRoomBody {
   title: string;
   hostName: string;
   inviteCount: number;
+  brief?: RoomBrief;
 }
 
 interface HostRoomResult {
@@ -165,12 +167,16 @@ export function registerHostRoute(app: Hono<AppEnv>, deps: RoomDeps): void {
       return jsonNoStore(c, RoomHttpError.forbidden().body(), 403);
     }
     try {
-      const body = readBody(c.get("parsedBody"));
+      const parsed = c.get("parsedBody");
+      const body = readBody(parsed);
+      body.brief = optionalBrief(parsed, deps.clock.now());
       const origin = requireHttpsOrigin(process.env.COMMONA_PUBLIC_ORIGIN);
       const created = createHostedRoom(deps, body, origin, expected);
       return jsonNoStore(c, created, 201);
     } catch (error) {
-      if (error instanceof HostInputError) return jsonNoStore(c, { error: { message: error.message } }, 400);
+      if (error instanceof HostInputError || error instanceof BriefInputError) {
+        return jsonNoStore(c, { error: { message: error.message } }, 400);
+      }
       if (error instanceof RoomHttpError) return jsonNoStore(c, error.body(), error.status);
       return jsonNoStore(c, { error: { message: "room:new failed" } }, 500);
     }
@@ -190,6 +196,7 @@ function createHostedRoom(deps: RoomDeps, body: HostRoomBody, origin: string, ho
     const room = createRoom(deps, principal);
     addMember(deps, principal, room.id, opened.agentId);
     deps.db.prepare("INSERT INTO room_titles (room_id, title) VALUES (?, ?)").run(room.id, body.title);
+    if (body.brief) saveBrief(deps, room.id, body.brief);
     const invites: string[] = [];
     for (let index = 0; index < body.inviteCount; index += 1) {
       const created = createInvite(deps, principal, room.id, {});

@@ -53,6 +53,7 @@ describe("agent json api", () => {
       roomId: room.roomId,
       title: "Sunday lunch",
       posts: [],
+      brief: null,
       status: "open",
       proposals: [],
     });

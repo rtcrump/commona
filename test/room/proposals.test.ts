@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { saveBrief } from "../../src/room/brief.js";
+import type { RoomDeps } from "../../src/room/deps.js";
 import { agentCookieName } from "../../src/room-page/routes.js";
 import { loadFixtures } from "../helpers/fixtures.js";
 import { call, startJoinHarness, type JoinHarness } from "../onboarding/harness.js";
@@ -98,6 +100,7 @@ describe("propose, agree, and room status", () => {
     const { a1, a2 } = agents(room);
     setBrief(room, "2026-04-01T12:30:00.000Z");
     const first = await propose(room, a1, TIME, PLACE, note);
+    room.clock.advance(1);
     const second = await propose(room, a2, LATER, OTHER_PLACE, other);
     await agree(room, a1, first);
 
@@ -235,18 +238,11 @@ function agents(room: JoinHarness): { a1: string; a2: string } {
 }
 
 function setBrief(room: JoinHarness, deadline: string): void {
-  room.db.exec(`CREATE TABLE IF NOT EXISTS room_briefs (
-    room_id TEXT PRIMARY KEY,
-    task TEXT NOT NULL,
-    end_condition TEXT NOT NULL,
-    deadline TEXT NOT NULL
-  )`);
-  room.db
-    .prepare(
-      `INSERT INTO room_briefs (room_id, task, end_condition, deadline) VALUES (?, ?, ?, ?)
-       ON CONFLICT(room_id) DO UPDATE SET deadline = excluded.deadline`,
-    )
-    .run(room.roomId, "Agree a pretend lunch", "Everyone agrees one time and place", deadline);
+  saveBrief({ db: room.db } as RoomDeps, room.roomId, {
+    task: "Agree a pretend lunch",
+    endCondition: "Everyone agrees one time and place",
+    deadline,
+  });
 }
 
 async function propose(room: JoinHarness, token: string, time: string, place: string, text: string): Promise<string> {

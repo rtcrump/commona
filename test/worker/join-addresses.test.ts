@@ -1,5 +1,7 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { hashToken } from "../../contract/index.js";
+import { USER_AGENT_LINE } from "../../src/join/agent-guide.js";
 import { HOST_SECRET_HEADER } from "../../src/host/host-room.js";
 
 /** Fictional room note. Not a person, and not a patient record. */
@@ -129,6 +131,45 @@ function postTexts(body: string): string[] {
   const parsed = JSON.parse(body) as { posts?: { text?: string }[] };
   return (parsed.posts ?? []).map((post) => post.text ?? "");
 }
+
+describe("worker invite page clients", () => {
+  it("returns the agent text for urllib, curl, Node fetch, and a request with no User-Agent", async () => {
+    const created = await hostRoom();
+    const link = created.invites[0];
+    if (!link) throw new Error("room:new did not mint an invite");
+    const url = new URL(link);
+    const secret = url.pathname.split("/")[3] ?? "";
+    const clients: Record<string, string>[] = [
+      { "user-agent": "Python-urllib/3.13" },
+      { "user-agent": "curl/8.7.1", accept: "*/*" },
+      { "user-agent": "node", accept: "*/*" },
+      { accept: "*/*" },
+      {},
+    ];
+    for (const headers of clients) {
+      const opened = await SELF.fetch(link, { headers });
+      expect(opened.status).toBe(200);
+      expect(opened.headers.get("content-type")).toContain("text/plain");
+      const text = await opened.text();
+      expect(text).toContain(USER_AGENT_LINE);
+      expect(text).toContain(`Join address: /api/j/${url.pathname.split("/")[2]}/${secret}`);
+      expect(text).not.toContain("<html");
+      expect(text).not.toContain(hashToken(secret));
+    }
+    const browser = await SELF.fetch(link, {
+      headers: { "user-agent": "curl/8.7.1", accept: "text/html" },
+    });
+    expect(browser.headers.get("content-type")).toContain("text/html");
+    expect(await browser.text()).not.toContain(USER_AGENT_LINE);
+
+    const joined = await SELF.fetch(`${url.origin}/api${url.pathname}`);
+    expect(joined.status).toBe(200);
+    expect(await joined.text()).toContain(USER_AGENT_LINE);
+    const reused = await SELF.fetch(`${url.origin}/api${url.pathname}`);
+    expect(reused.status).toBe(403);
+    await reused.text();
+  });
+});
 
 function messageTexts(body: string): string[] {
   const parsed = JSON.parse(body) as { items?: { kind?: string; text?: string }[] };

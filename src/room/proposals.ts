@@ -12,6 +12,7 @@ import {
   type RoomStatus,
 } from "../../contract/index.js";
 import { nowStamp, requireMember } from "./access.js";
+import { readBrief } from "./brief.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
 
@@ -319,19 +320,13 @@ function toProposal(row: ProposalRow): RoomProposal {
 }
 
 /**
- * The brief deadline from PR 1. Column is room_briefs.deadline, an ISO time.
- * No table or no row means the room cannot stall.
+ * Stalled uses the room brief deadline from the brief module.
+ * No brief means the room cannot stall.
  */
 function deadlinePassed(deps: RoomDeps, roomId: string): boolean {
-  const table = deps.db
-    .prepare("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = 'room_briefs'")
-    .get() as { ok: number } | undefined;
-  if (!table) return false;
-  const row = deps.db.prepare("SELECT deadline FROM room_briefs WHERE room_id = ?").get(roomId) as
-    | { deadline: string }
-    | undefined;
-  if (!row || typeof row.deadline !== "string") return false;
-  const at = Date.parse(row.deadline);
+  const brief = readBrief(deps, roomId);
+  if (!brief) return false;
+  const at = Date.parse(brief.deadline);
   if (Number.isNaN(at)) return false;
   return deps.clock.now().getTime() >= at;
 }
