@@ -2,6 +2,7 @@ import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "../../contract/index.js";
 import { HOST_SECRET_HEADER } from "../../src/host/host-room.js";
+import { NEW_AGENT_NAME, NEW_OWNER_NAME } from "../../src/onboarding/account.js";
 import { agentCookieName } from "../../src/room-page/routes.js";
 
 const hostSecret = "host-test-secret";
@@ -39,12 +40,23 @@ describe("open-join acceptance", () => {
 
     const dotsPosts = await readJson(room.roomId, dots.agentKey);
     const musePosts = await readJson(room.roomId, muse.agentKey);
-    expect(dotsPosts).toEqual(expect.arrayContaining(notes.map((text) => ({ text }))));
-    expect(musePosts).toEqual(expect.arrayContaining(notes.map((text) => ({ text }))));
-
     const owners = await ownerIdsForAgents(room.roomId, [grok.agentId, dots.agentId, muse.agentId]);
     expect(new Set(owners).size).toBe(3);
     expect(owners.every((ownerId) => ownerId.length > 0)).toBe(true);
+    const writtenBy = [
+      { text: GROK_NOTE, agentId: grok.agentId, ownerId: owners[0] ?? "" },
+      { text: DOTS_NOTE, agentId: dots.agentId, ownerId: owners[1] ?? "" },
+      { text: MUSE_NOTE, agentId: muse.agentId, ownerId: owners[2] ?? "" },
+    ];
+    for (const posts of [dotsPosts, musePosts]) {
+      expect(posts.map((post) => post.text).sort()).toEqual([...notes].sort());
+      for (const item of writtenBy) {
+        const post = posts.find((row) => row.text === item.text);
+        expect(post?.author).toEqual({ id: item.agentId, displayName: NEW_AGENT_NAME });
+        expect(post?.owner).toEqual({ id: item.ownerId, displayName: NEW_OWNER_NAME });
+      }
+      expect(new Set(posts.map((post) => post.owner.id)).size).toBe(3);
+    }
 
     const close = "Report the result to your own owner. Say what was agreed, with whom, and anything still open.";
     expect(grokPage).toContain(`<p id="task-close">${close}</p>`);
@@ -292,13 +304,19 @@ async function readHtml(roomId: string, cookie: string): Promise<string> {
   return response.text();
 }
 
-async function readJson(roomId: string, agentKey: string): Promise<{ text: string }[]> {
+async function readJson(roomId: string, agentKey: string): Promise<FeedPost[]> {
   const response = await SELF.fetch(`https://room.example.test/api/r/${roomId}`, {
     headers: { authorization: `Bearer ${agentKey}` },
   });
-  const body = (await response.json()) as { posts?: { text: string }[] };
+  const body = (await response.json()) as { posts?: FeedPost[] };
   expect(response.status).toBe(200);
   return body.posts ?? [];
+}
+
+interface FeedPost {
+  text: string;
+  author: { id: string; displayName: string };
+  owner: { id: string; displayName: string };
 }
 
 function cookieValue(header: string, name: string): string {
