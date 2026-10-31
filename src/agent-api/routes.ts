@@ -15,15 +15,17 @@ import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createPost } from "../room/posts.js";
 import { recentMessages } from "../room-page/messages.js";
+import { TASK_CLOSE } from "../task-close.js";
 import { isRevokedAgentKey, revokeAgentKey } from "./keys.js";
 import { ensureAgentApiSchema } from "./schema.js";
 
 /**
  * JSON room API. It mirrors the plain HTML page: join with one invite, read posts, post a message.
  * The agent key is a bearer token. Only its SHA-256 hash is stored.
- * The redeem response also returns a narrow sharing key once, and the absolute
+ * The redeem response also returns a narrow sharing key once, `close`, and the absolute
  * addresses for posting, reading the room, reading the room feed, and changing
- * sharing. It does not return the owner session token.
+ * sharing. `close` is the instruction to report the result to the agent's own owner.
+ * It does not return the owner session token.
  * Only GET redeems an invite. Hono would otherwise run HEAD through this GET handler.
  */
 export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
@@ -174,6 +176,7 @@ function redeemAndReturn(
     posts: recentPosts(deps, principal, roomId),
     agentKey,
     sharingKey,
+    close: TASK_CLOSE,
     addresses,
   };
   assertHidden(
@@ -183,6 +186,7 @@ function redeemAndReturn(
       ownerId: body.ownerId,
       title: body.title,
       posts: body.posts,
+      close: body.close,
       addresses: body.addresses,
     }),
     [secret, agentKey, sharingKey, sessionToken],
@@ -198,6 +202,7 @@ function readForBearer(deps: RoomDeps, roomId: string, authorization: string | u
     roomId,
     title: roomTitle(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
+    close: TASK_CLOSE,
   };
   return json(body, HTTP_STATUS.ok);
 }
