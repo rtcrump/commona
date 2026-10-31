@@ -247,7 +247,8 @@ interface JoinAddress {
 
 /**
  * Absolute addresses for the room this join just opened.
- * `read` is the posts list. `feed` is the room feed. `sharing` has no `/api` prefix.
+ * `read` is the posts list. `feed` is the room feed.
+ * `sharing` is `PUT /api/rooms/<roomId>/sharing`. `PUT /rooms/<roomId>/sharing` is the same route.
  * The origin is normalized before these URLs are compared, so the returned
  * addresses stay on one clean origin.
  */
@@ -262,7 +263,7 @@ function joinAddresses(origin: string, roomId: string): {
     post: absoluteAddress("POST", origin, `/api/r/${roomId}`),
     read: absoluteAddress("GET", origin, `/api/r/${roomId}`),
     feed: absoluteAddress("GET", origin, `/rooms/${roomId}/feed`),
-    sharing: absoluteAddress("PUT", origin, `/rooms/${roomId}/sharing`),
+    sharing: absoluteAddress("PUT", origin, `/api/rooms/${roomId}/sharing`),
   };
 }
 

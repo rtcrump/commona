@@ -12,6 +12,7 @@ export const routes = {
   getFile: { method: "GET", path: "/rooms/:roomId/files/:fileId" },
   getFeed: { method: "GET", path: "/rooms/:roomId/feed" },
   getHeld: { method: "GET", path: "/rooms/:roomId/held" },
+  /** Same handler as `PUT /api/rooms/:roomId/sharing`. Join addresses return the `/api` path. */
   putSharing: { method: "PUT", path: "/rooms/:roomId/sharing" },
   getLog: { method: "GET", path: "/log" },
   getNotices: { method: "GET", path: "/notices" },
