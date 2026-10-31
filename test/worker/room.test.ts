@@ -69,7 +69,9 @@ describe("worker room", () => {
 
     await evictDurableObject(stub);
 
-    const opened = await SELF.fetch(`https://room.example.test/j/${id}/${secret}`);
+    const opened = await SELF.fetch(`https://room.example.test/j/${id}/${secret}`, {
+      headers: { accept: "text/html" },
+    });
     expect(opened.status).toBe(200);
     const openedBody = await opened.text();
     expect(openedBody).not.toContain(secret);
