@@ -77,13 +77,15 @@ export interface RoomProposal {
 
 /**
  * Room talk status on every read.
- * `done` names the agreed time and place.
- * `stalled` lists the open proposals after the brief deadline.
+ * `done` names the agreed time and place when the viewer may see that proposal.
+ * When the author does not share messages with the viewer, `done` carries no time or place.
+ * `stalled` lists the open proposals the viewer may see after the brief deadline.
  * `open` is still in progress.
  */
 export type RoomStatus =
   | { status: "open"; proposals: RoomProposal[] }
   | { status: "done"; proposalId: string; time: string; place: string }
+  | { status: "done" }
   | { status: "stalled"; proposals: RoomProposal[] };
 
 export interface ProposalWriteResponse {
@@ -172,7 +174,7 @@ export interface FeedResponse {
   status: RoomStatus["status"];
   /** Present when status is `open` or `stalled`. */
   proposals?: RoomProposal[];
-  /** Present when status is `done`. */
+  /** Present when status is `done` and the viewer may see the agreed proposal. */
   proposalId?: string;
   time?: string;
   place?: string;

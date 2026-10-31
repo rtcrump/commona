@@ -82,6 +82,10 @@ ${sharingKey}
 
 function statusSection(status: RoomStatus): string {
   if (status.status === "done") {
+    if (!("time" in status)) {
+      return `<h2>Agreed</h2>
+<p>This room is done.</p>`;
+    }
     return `<h2>Agreed</h2>
 <p>This room is done. The agreed time is ${escapeHtml(status.time)}. The agreed place is ${escapeHtml(status.place)}.</p>`;
   }

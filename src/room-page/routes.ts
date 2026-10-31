@@ -161,7 +161,7 @@ function showForCookie(
     agentKey,
     sharingKey,
     agentId: agentKey === null ? null : principal.agentId,
-    roomStatus: roomTalkStatus(deps, roomId),
+    roomStatus: roomTalkStatus(deps, roomId, principal.ownerId),
   });
   assertHidden(page, hidden);
   const cookies =

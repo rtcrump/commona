@@ -311,7 +311,7 @@ export function readFeed(
   return {
     brief: readBrief(deps, roomId),
     items,
-    ...roomStatusFields(roomTalkStatus(deps, roomId)),
+    ...roomStatusFields(roomTalkStatus(deps, roomId, viewerOwnerId)),
   };
 }
 
