@@ -101,6 +101,7 @@ function purgeRoom(db: RoomDeps["db"], roomId: string): void {
   deleteWhere(db, "notices", "DELETE FROM notices WHERE room_id = ?", roomId);
   deleteWhere(db, "wakes", "DELETE FROM wakes WHERE room_id = ?", roomId);
   deleteWhere(db, "proposal_responses", "DELETE FROM proposal_responses WHERE room_id = ?", roomId);
+  deleteWhere(db, "room_talk_done", "DELETE FROM room_talk_done WHERE room_id = ?", roomId);
   deleteWhere(db, "proposals", "DELETE FROM proposals WHERE room_id = ?", roomId);
   deleteWhere(db, "files", "DELETE FROM files WHERE room_id = ?", roomId);
   if (tableExists(db, "posts")) {

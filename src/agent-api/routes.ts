@@ -141,7 +141,7 @@ function redeemAndReturn(
     title: roomTitle(deps, roomId),
     brief: readBrief(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
-    ...roomStatusFields(roomTalkStatus(deps, roomId)),
+    ...roomStatusFields(roomTalkStatus(deps, roomId, principal.ownerId)),
     guide: renderJoinGuide(),
     agentKey,
     sharingKey,
@@ -170,7 +170,7 @@ function readForBearer(deps: RoomDeps, roomId: string, authorization: string | u
     title: roomTitle(deps, roomId),
     brief: readBrief(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
-    ...roomStatusFields(roomTalkStatus(deps, roomId)),
+    ...roomStatusFields(roomTalkStatus(deps, roomId, principal.ownerId)),
   };
   return json(body, HTTP_STATUS.ok);
 }

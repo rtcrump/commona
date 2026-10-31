@@ -12,6 +12,7 @@ describe("worker propose and agree", () => {
   it("returns a proposal id, keeps plain text, and marks the room done when every member agrees", async () => {
     const created = await hostRoom("Fake lunch room", 1, futureDeadline());
     const guest = await join(created);
+    await grantMessages(created.ownerToken, created.roomId, created.ownerId, guest.ownerId);
 
     const plain = await post(created.roomId, created.credential, { text: NOTE });
     expect(plain.status).toBe(201);
@@ -137,14 +138,30 @@ async function post(roomId: string, token: string, body: unknown): Promise<Respo
   });
 }
 
-async function join(created: { roomId: string; id: string; secret: string }): Promise<{ agentKey: string }> {
+async function join(
+  created: { roomId: string; id: string; secret: string },
+): Promise<{ agentKey: string; ownerId: string }> {
   const opened = await SELF.fetch(
     `https://room.example.test/api/r/${created.roomId}/${created.id}/${created.secret}`,
   );
   expect(opened.status).toBe(200);
-  const body = (await opened.json()) as { agentKey?: string };
+  const body = (await opened.json()) as { agentKey?: string; ownerId?: string };
   expect(body.agentKey).toBeTruthy();
-  return { agentKey: body.agentKey ?? "" };
+  expect(body.ownerId).toBeTruthy();
+  return { agentKey: body.agentKey ?? "", ownerId: body.ownerId ?? "" };
+}
+
+async function grantMessages(token: string, roomId: string, fromOwnerId: string, toOwnerId: string): Promise<void> {
+  const response = await SELF.fetch(`https://room.example.test/api/rooms/${roomId}/sharing`, {
+    method: "PUT",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ fromOwnerId, toOwnerId, level: "messages" }),
+  });
+  expect(response.status).toBe(200);
+  await response.arrayBuffer();
 }
 
 function futureDeadline(): string {
@@ -155,7 +172,7 @@ async function hostRoom(
   title: string,
   inviteCount: number,
   deadline: string,
-): Promise<{ roomId: string; id: string; secret: string; credential: string; ownerId: string }> {
+): Promise<{ roomId: string; id: string; secret: string; credential: string; ownerId: string; ownerToken: string }> {
   const response = await SELF.fetch("https://room.example.test/host/room", {
     method: "POST",
     headers: {
@@ -180,6 +197,7 @@ async function hostRoom(
     roomId?: string;
     credential?: string;
     ownerId?: string;
+    ownerToken?: string;
   };
   const link = created.invites?.[0] ?? "";
   const parts = new URL(link).pathname.split("/");
@@ -189,6 +207,7 @@ async function hostRoom(
     secret: parts[3] ?? "",
     credential: created.credential ?? "",
     ownerId: created.ownerId ?? "",
+    ownerToken: created.ownerToken ?? "",
   };
 }
 

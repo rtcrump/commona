@@ -1,6 +1,7 @@
 import {
   AuditAction,
   AuditResult,
+  feedIncludes,
   HTTP_STATUS,
   isId,
   MAX_MESSAGE_CHARS,
@@ -40,6 +41,16 @@ CREATE TABLE IF NOT EXISTS proposals (
 );
 CREATE INDEX IF NOT EXISTS proposals_room ON proposals (room_id, created_at, id);
 
+-- Written once, when the members then in the room have all agreed. A later join does not clear it.
+CREATE TABLE IF NOT EXISTS room_talk_done (
+  room_id TEXT PRIMARY KEY,
+  proposal_id TEXT NOT NULL,
+  author_owner_id TEXT NOT NULL,
+  time_label TEXT NOT NULL,
+  place TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS proposal_responses (
   proposal_id TEXT NOT NULL,
   room_id TEXT NOT NULL,
@@ -70,10 +81,18 @@ type PostWriter = (
 
 interface ProposalRow {
   id: string;
+  author_owner_id: string;
   time_label: string;
   place: string;
   body_text: string;
   created_at: string;
+}
+
+interface DoneRow {
+  proposal_id: string;
+  author_owner_id: string;
+  time_label: string;
+  place: string;
 }
 
 interface ResponseRow {
@@ -95,25 +114,29 @@ export function ensureProposalSchema(db: RoomDeps["db"]): void {
 }
 
 /**
- * Done when every current member has agreed to the same proposal.
+ * Done when every member at the time of agreement has agreed to the same proposal.
+ * That outcome is stored, so a member who joins later does not reopen the room.
  * Stalled when the room brief deadline has passed without that.
  * The deadline column is the one the brief stores on room_briefs.
+ *
+ * Proposal text, time, and place are returned only when the author shares messages
+ * with `viewerOwnerId`. That is the feed predicate: level(room, author, viewer).
  */
-export function roomTalkStatus(deps: RoomDeps, roomId: string): RoomStatus {
+export function roomTalkStatus(deps: RoomDeps, roomId: string, viewerOwnerId: string): RoomStatus {
   ensureProposalSchema(deps.db);
+  const stored = loadDone(deps, roomId);
+  if (stored) return showDone(deps, roomId, stored, viewerOwnerId);
   const members = memberIds(deps, roomId);
   const proposals = proposalRows(deps, roomId);
   const agreed = agreedAgents(deps, roomId);
   const done = proposals.find((row) => everyoneAgreed(members, agreed.get(row.id)));
   if (done) {
-    return {
-      status: "done",
-      proposalId: done.id,
-      time: done.time_label,
-      place: done.place,
-    };
+    storeDone(deps, roomId, done);
+    return showDone(deps, roomId, doneRow(done), viewerOwnerId);
   }
-  const open = proposals.map(toProposal);
+  const open = proposals
+    .filter((row) => viewerMaySeeProposal(deps, roomId, row.author_owner_id, viewerOwnerId))
+    .map(toProposal);
   if (deadlinePassed(deps, roomId)) return { status: "stalled", proposals: open };
   return { status: "open", proposals: open };
 }
@@ -127,6 +150,7 @@ export function roomStatusFields(status: RoomStatus): {
   place?: string;
 } {
   if (status.status === "done") {
+    if (!("time" in status)) return { status: "done" };
     return {
       status: "done",
       proposalId: status.proposalId,
@@ -142,7 +166,7 @@ export function roomStatusFields(status: RoomStatus): {
  * The refusal is audited. The proposal text is not copied into the log.
  */
 export function refuseIfRoomClosed(deps: RoomDeps, principal: AuthPrincipal, roomId: string): void {
-  const status = roomTalkStatus(deps, roomId);
+  const status = roomTalkStatus(deps, roomId, principal.ownerId);
   if (status.status === "open") return;
   const message = status.status === "done" ? "This room is done." : "This room is stalled.";
   deps.audit.append({
@@ -229,6 +253,7 @@ function writeReply(
     .prepare("SELECT kind FROM proposal_responses WHERE proposal_id = ? AND agent_id = ?")
     .get(parsed.proposalId, principal.agentId) as { kind: string } | undefined;
   if (existing?.kind === parsed.kind) {
+    if (parsed.kind === "agree") rememberDoneIfComplete(deps, roomId);
     return {
       httpStatus: HTTP_STATUS.ok,
       body: { outcome: "accepted", proposalId: parsed.proposalId, kind: parsed.kind },
@@ -237,17 +262,21 @@ function writeReply(
   const sentence = parsed.kind === "agree" ? AGREE_TEXT : COUNTER_TEXT;
   const posted = writePost(deps, principal, roomId, { text: sentence });
   if (posted.outcome !== "accepted") throw RoomHttpError.badRequest();
-  deps.db
-    .prepare(
-      `INSERT INTO proposal_responses (proposal_id, room_id, agent_id, owner_id, kind, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(proposal_id, agent_id) DO UPDATE SET
-         kind = excluded.kind,
-         owner_id = excluded.owner_id,
-         room_id = excluded.room_id,
-         created_at = excluded.created_at`,
-    )
-    .run(parsed.proposalId, roomId, principal.agentId, principal.ownerId, parsed.kind, nowStamp(deps));
+  const record = deps.db.transaction(() => {
+    deps.db
+      .prepare(
+        `INSERT INTO proposal_responses (proposal_id, room_id, agent_id, owner_id, kind, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(proposal_id, agent_id) DO UPDATE SET
+           kind = excluded.kind,
+           owner_id = excluded.owner_id,
+           room_id = excluded.room_id,
+           created_at = excluded.created_at`,
+      )
+      .run(parsed.proposalId, roomId, principal.agentId, principal.ownerId, parsed.kind, nowStamp(deps));
+    if (parsed.kind === "agree") rememberDoneIfComplete(deps, roomId);
+  });
+  record();
   return {
     httpStatus: existing ? HTTP_STATUS.ok : HTTP_STATUS.created,
     body: { outcome: "accepted", proposalId: parsed.proposalId, kind: parsed.kind },
@@ -292,9 +321,64 @@ function memberIds(deps: RoomDeps, roomId: string): string[] {
 function proposalRows(deps: RoomDeps, roomId: string): ProposalRow[] {
   return deps.db
     .prepare(
-      "SELECT id, time_label, place, body_text, created_at FROM proposals WHERE room_id = ? ORDER BY created_at, id",
+      `SELECT id, author_owner_id, time_label, place, body_text, created_at
+       FROM proposals WHERE room_id = ? ORDER BY created_at, id`,
     )
     .all(roomId) as ProposalRow[];
+}
+
+/** The feed rule. `from` is the proposal author and `to` is the viewer. */
+function viewerMaySeeProposal(deps: RoomDeps, roomId: string, authorOwnerId: string, viewerOwnerId: string): boolean {
+  return feedIncludes({
+    held: false,
+    level: deps.sharing.level(roomId, authorOwnerId, viewerOwnerId),
+    itemKind: "message",
+    viewerOwnerId,
+    authorOwnerId,
+  });
+}
+
+function loadDone(deps: RoomDeps, roomId: string): DoneRow | undefined {
+  return deps.db
+    .prepare(
+      `SELECT proposal_id, author_owner_id, time_label, place
+       FROM room_talk_done WHERE room_id = ?`,
+    )
+    .get(roomId) as DoneRow | undefined;
+}
+
+function storeDone(deps: RoomDeps, roomId: string, row: ProposalRow): void {
+  deps.db
+    .prepare(
+      `INSERT INTO room_talk_done (
+        room_id, proposal_id, author_owner_id, time_label, place, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(room_id) DO NOTHING`,
+    )
+    .run(roomId, row.id, row.author_owner_id, row.time_label, row.place, nowStamp(deps));
+}
+
+/** Seal the outcome on the agree that completes it, before any later join. */
+function rememberDoneIfComplete(deps: RoomDeps, roomId: string): void {
+  if (loadDone(deps, roomId)) return;
+  const members = memberIds(deps, roomId);
+  const agreed = agreedAgents(deps, roomId);
+  const done = proposalRows(deps, roomId).find((row) => everyoneAgreed(members, agreed.get(row.id)));
+  if (done) storeDone(deps, roomId, done);
+}
+
+function doneRow(row: ProposalRow): DoneRow {
+  return {
+    proposal_id: row.id,
+    author_owner_id: row.author_owner_id,
+    time_label: row.time_label,
+    place: row.place,
+  };
+}
+
+function showDone(deps: RoomDeps, roomId: string, row: DoneRow, viewerOwnerId: string): RoomStatus {
+  if (!viewerMaySeeProposal(deps, roomId, row.author_owner_id, viewerOwnerId)) return { status: "done" };
+  return { status: "done", proposalId: row.proposal_id, time: row.time_label, place: row.place };
 }
 
 function agreedAgents(deps: RoomDeps, roomId: string): Map<string, Set<string>> {
