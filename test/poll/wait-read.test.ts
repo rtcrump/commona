@@ -3,7 +3,12 @@ import { join as joinPath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { rememberBriefPostCap } from "../../src/agent-api/limit.js";
-import { NEWER_MESSAGES_SQL, SINCE_START } from "../../src/room-page/messages.js";
+import {
+  NEWER_MESSAGES_SQL,
+  RECENT_MESSAGE_LIMIT,
+  RECENT_MESSAGE_MAX_BATCHES,
+  SINCE_START,
+} from "../../src/room-page/messages.js";
 import { call, createInvite, startJoinHarness, type JoinHarness } from "../onboarding/harness.js";
 
 const FREE = "Tuesday noon is free";
@@ -128,6 +133,133 @@ describe("wait for news, house rules, and the task cap", () => {
     expect(JSON.parse(again.body)).toMatchObject({ posts: [], cursor: arrived });
     expect(again.body.includes(HIDDEN)).toBe(false);
   }, 15_000);
+
+  it("returns no posts when the key is revoked during a wait", async () => {
+    room = await startJoinHarness();
+    const reader = await join(room);
+    const author = await join(room);
+    const seen = await postLine(room, author.agentKey, FREE);
+    const db = room.db;
+    const readCount = (): number => {
+      const row = db
+        .prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'read' AND agent_id = ?")
+        .get(reader.agentId) as { n: number };
+      return Number(row.n);
+    };
+    const before = readCount();
+    const pending = fetch(`${room.baseUrl}/api/r/${room.roomId}?since=${seen}&wait=25`, {
+      headers: { authorization: `Bearer ${reader.agentKey}` },
+    });
+    await delay(50);
+    const revoked = await call(room.baseUrl, "DELETE", `/api/r/${room.roomId}/agents/${reader.agentId}`, {
+      token: room.owner,
+    });
+    expect(revoked.status).toBe(200);
+    const late = await postLine(room, author.agentKey, PARK);
+    const waited = await pending;
+    const body = await waited.text();
+    expect(waited.status).toBe(401);
+    expect(JSON.parse(body)).toEqual({ error: { code: "unauthorized", message: "Missing or invalid token." } });
+    expect(body.includes(PARK)).toBe(false);
+    expect(body.includes(late)).toBe(false);
+    expect(readCount()).toBe(before);
+    const fresh = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?since=${seen}`, {
+      token: reader.agentKey,
+    });
+    expect(fresh.status).toBe(401);
+    expect(fresh.body.includes(PARK)).toBe(false);
+    const authorRead = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?since=${seen}`, {
+      token: author.agentKey,
+    });
+    expect(authorRead.status).toBe(200);
+    expect(JSON.parse(authorRead.body)).toMatchObject({ posts: [{ id: late, text: PARK }], cursor: late });
+  }, 15_000);
+
+  it("returns a visible post that follows a long run of hidden posts", async () => {
+    room = await startJoinHarness();
+    const reader = await join(room);
+    const hiddenRows = RECENT_MESSAGE_LIMIT * RECENT_MESSAGE_MAX_BATCHES;
+    const first = "post_visible_before_hidden";
+    const second = "post_visible_after_hidden";
+    insertNote(room, first, reader.agentId, reader.ownerId, FREE, stampAt(0));
+    const insertHidden = room.db.prepare(
+      `INSERT INTO posts (
+         id, room_id, author_agent_id, author_owner_id, text, reply_to_id, thread_id, round, held,
+         block_category, block_location, created_at
+       ) VALUES (?, ?, 'A1', 'O1', ?, NULL, ?, 1, 0, NULL, NULL, ?)`,
+    );
+    const write = room.db.transaction(() => {
+      for (let index = 1; index <= hiddenRows; index += 1) {
+        const id = `post_hid_${String(index).padStart(3, "0")}`;
+        insertHidden.run(id, room.roomId, `Hidden note ${String(index).padStart(3, "0")}`, id, stampAt(index));
+      }
+    });
+    write();
+    insertNote(room, second, reader.agentId, reader.ownerId, PARK, stampAt(hiddenRows + 1));
+
+    const opened = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?since=${SINCE_START}`, {
+      token: reader.agentKey,
+    });
+    expect(opened.status).toBe(200);
+    expect(JSON.parse(opened.body)).toEqual({
+      roomId: room.roomId,
+      title: "Room",
+      posts: [
+        { id: first, text: FREE },
+        { id: second, text: PARK },
+      ],
+      cursor: second,
+    });
+    expect(opened.body.includes("Hidden note")).toBe(false);
+    expect(opened.body.includes("post_hid_")).toBe(false);
+
+    const caughtUp = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?since=${second}`, {
+      token: reader.agentKey,
+    });
+    expect(JSON.parse(caughtUp.body)).toMatchObject({ posts: [], cursor: second });
+    expect(caughtUp.body.includes("Hidden note")).toBe(false);
+  });
+
+  it("does not skip a later post that shares the cursor timestamp", async () => {
+    room = await startJoinHarness();
+    const reader = await join(room);
+    const highId = "post_same_z";
+    const lowId = "post_same_a";
+    const stamp = "2026-04-04T08:30:00.000Z";
+    expect(lowId < highId).toBe(true);
+    insertNote(room, highId, reader.agentId, reader.ownerId, "Napkins are on the table", stamp);
+    const opened = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?since=${SINCE_START}`, {
+      token: reader.agentKey,
+    });
+    expect(opened.status).toBe(200);
+    expect(JSON.parse(opened.body)).toMatchObject({
+      posts: [{ id: highId, text: "Napkins are on the table" }],
+      cursor: highId,
+    });
+
+    insertNote(room, lowId, reader.agentId, reader.ownerId, "Forks are in the drawer", stamp);
+    const stamps = room.db
+      .prepare("SELECT created_at FROM posts WHERE room_id = ? AND id IN (?, ?) ORDER BY id")
+      .all(room.roomId, highId, lowId) as { created_at: string }[];
+    expect(stamps.map((row) => row.created_at)).toEqual([stamp, stamp]);
+
+    const newer = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?since=${highId}`, {
+      token: reader.agentKey,
+    });
+    expect(newer.status).toBe(200);
+    expect(JSON.parse(newer.body)).toMatchObject({
+      posts: [{ id: lowId, text: "Forks are in the drawer" }],
+      cursor: lowId,
+    });
+    expect(newer.body.includes("Napkins are on the table")).toBe(false);
+
+    const caughtUp = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?since=${lowId}`, {
+      token: reader.agentKey,
+    });
+    expect(JSON.parse(caughtUp.body)).toMatchObject({ posts: [], cursor: lowId });
+    expect(caughtUp.body.includes("Napkins are on the table")).toBe(false);
+    expect(caughtUp.body.includes(highId)).toBe(false);
+  });
 
   it("returns house rules on join, including the brief and the calendar limit", async () => {
     room = await startJoinHarness();
@@ -334,6 +466,30 @@ async function postLine(room: JoinHarness, key: string, text: string): Promise<s
   });
   expect(posted.status).toBe(201);
   return (JSON.parse(posted.body) as { post: { id: string } }).post.id;
+}
+
+function insertNote(
+  room: JoinHarness,
+  id: string,
+  agentId: string,
+  ownerId: string,
+  text: string,
+  createdAt: string,
+): void {
+  room.db
+    .prepare(
+      `INSERT INTO posts (
+         id, room_id, author_agent_id, author_owner_id, text, reply_to_id, thread_id, round, held,
+         block_category, block_location, created_at
+       ) VALUES (?, ?, ?, ?, ?, NULL, ?, 1, 0, NULL, NULL, ?)`,
+    )
+    .run(id, room.roomId, agentId, ownerId, text, id, createdAt);
+}
+
+function stampAt(index: number): string {
+  const minute = Math.floor(index / 60);
+  const second = index % 60;
+  return `2026-04-03T00:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}.000Z`;
 }
 
 function seedHostPost(room: JoinHarness, text: string): void {

@@ -208,6 +208,9 @@ async function readForBearer(
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
     await sleep(Math.min(WAIT_POLL_MS, remaining));
+    // The room owner can revoke this key while the read is waiting.
+    // Check the bearer again before reading, so a revoked key gets no posts.
+    requireAgent(deps, authorization);
     page = messagesSince(deps, principal, roomId, since);
   }
   recordRoomRead(deps, principal, roomId);
