@@ -1,5 +1,5 @@
 import { HTTP_STATUS, isId, readBearerToken, type AuthPrincipal } from "../../contract/index.js";
-import type { CommonaHono } from "../http/types.js";
+import type { AppContext, CommonaHono } from "../http/types.js";
 import { readCookie, SESSION_COOKIE } from "../join/cookies.js";
 import { deleteOwnedRoom } from "./delete-room.js";
 import type { RoomDeps } from "./deps.js";
@@ -60,12 +60,9 @@ export function registerRoomRoutes(app: CommonaHono, deps: RoomDeps): void {
     return c.json(file, HTTP_STATUS.ok);
   });
 
-  app.put("/rooms/:roomId/sharing", (c) => {
-    absentRoom(deps, c.req.param("roomId"));
-    const principal = sharingPrincipal(deps, c.req.header("authorization"), c.req.header("cookie"));
-    const sharing = updateSharing(deps, principal, c.req.param("roomId"), c.get("parsedBody"));
-    return c.json(sharing, HTTP_STATUS.ok);
-  });
+  // Agents call /api/rooms/:roomId/sharing. /rooms/:roomId/sharing is the same handler.
+  app.put("/rooms/:roomId/sharing", (c) => changeSharing(deps, c, c.req.param("roomId")));
+  app.put("/api/rooms/:roomId/sharing", (c) => changeSharing(deps, c, c.req.param("roomId")));
 
   app.get("/rooms/:roomId/held", (c) => {
     absentRoom(deps, c.req.param("roomId"));
@@ -73,6 +70,13 @@ export function registerRoomRoutes(app: CommonaHono, deps: RoomDeps): void {
     const held = readHeld(deps, principal, c.req.param("roomId"));
     return c.json(held, HTTP_STATUS.ok);
   });
+}
+
+function changeSharing(deps: RoomDeps, c: AppContext, roomId: string) {
+  absentRoom(deps, roomId);
+  const principal = sharingPrincipal(deps, c.req.header("authorization"), c.req.header("cookie"));
+  const sharing = updateSharing(deps, principal, roomId, c.get("parsedBody"));
+  return c.json(sharing, HTTP_STATUS.ok);
 }
 
 /** A room id that is not stored is 404 before auth, so a deleted room does not look like a bad key. */
