@@ -200,12 +200,26 @@ export function revokeInvite(deps: RoomDeps, principal: AuthPrincipal, roomId: s
   const creatingAgent = principal.kind === "agent" && row?.created_by_agent_id === principal.agentId;
   const roomCreatorAgent =
     principal.kind === "agent" && room !== undefined && principal.ownerId === room.created_by_owner_id;
+  // An owner token stores no agent id. That owner, and the room creator's owner
+  // token, may revoke it. An agent is still only the creating agent or an agent
+  // of the room creator, so a sibling cannot revoke by owner id alone.
+  const creatingOwner =
+    principal.kind === "owner" &&
+    row !== undefined &&
+    row.created_by_agent_id === null &&
+    row.created_by_owner_id === principal.ownerId;
+  const roomCreatorOwner =
+    principal.kind === "owner" &&
+    row !== undefined &&
+    row.created_by_agent_id === null &&
+    room !== undefined &&
+    principal.ownerId === room.created_by_owner_id;
   const allowed =
     row !== undefined &&
     row.room_id === roomId &&
     room !== undefined &&
     isMember(deps, principal, roomId) &&
-    (creatingAgent || roomCreatorAgent);
+    (creatingAgent || roomCreatorAgent || creatingOwner || roomCreatorOwner);
   if (!row || !allowed || row.used_at !== null || row.revoked_at !== null) {
     refuse(deps, { room: UNSCOPED_ROOM, ...actor, itemId: isInviteId(inviteId) ? inviteId : undefined });
   }

@@ -630,4 +630,136 @@ describe.sequential("invite links", () => {
       await room.stop();
     }
   });
+
+  it("lets the creating owner and the room creator revoke an owner-minted invite", async () => {
+    const clock = manualClock();
+    const room = await openHarness(clock);
+    try {
+      room.db
+        .prepare(
+          `INSERT INTO agents (id, owner_id, display_name, email, webhook_url, event_target, token_hash)
+           VALUES ('A2b', 'O2', 'Sibling Agent', 'sibling@example.test', NULL, NULL, NULL)`,
+        )
+        .run();
+      room.db
+        .prepare("INSERT INTO memberships (room_id, agent_id, owner_id, created_at) VALUES (?, 'A2b', 'O2', ?)")
+        .run(room.roomId, "2026-04-01T12:00:00.000Z");
+      const joined = await call(room.baseUrl, "POST", `/rooms/${room.roomId}/members`, {
+        token: room.outsider,
+        body: { agentId: "AX" },
+      });
+      expect(joined.status).toBe(201);
+      const sibling = room.tokens.issueAgentToken("A2b");
+      const ownersAgent = room.tokens.issueAgentToken("A2");
+
+      const mint = async (token: string) => {
+        const created = await call(room.baseUrl, "POST", `/rooms/${room.roomId}/invites`, {
+          token,
+          body: {},
+        });
+        expect(created.status).toBe(201);
+        const id = (json(created) as { invite: { id: string } }).invite.id;
+        const opened = await call(room.baseUrl, "GET", linkPath(created));
+        return { id, secret: inviteSecret(opened) };
+      };
+      const revoke = (token: string, id: string) =>
+        call(room.baseUrl, "DELETE", `/rooms/${room.roomId}/invites/${id}`, { token });
+      const stillOpen = (id: string) => {
+        const row = room.db.prepare("SELECT revoked_at FROM invites WHERE id = ?").get(id) as {
+          revoked_at: string | null;
+        };
+        expect(row.revoked_at).toBeNull();
+      };
+      const revokeAudit = (id: string) => {
+        const stored = room.db.prepare("SELECT revoked_at FROM invites WHERE id = ?").get(id) as {
+          revoked_at: string;
+        };
+        return room.db
+          .prepare(
+            `SELECT action, result, room, owner_id, agent_id
+             FROM audit_log
+             WHERE action = 'setting_change' AND result = 'ok' AND detail_json = ? AND ts = ?`,
+          )
+          .get(JSON.stringify({ itemId: id }), stored.revoked_at) as {
+          action: string;
+          result: string;
+          room: string;
+          owner_id: string;
+          agent_id: string;
+        };
+      };
+
+      const byOwner = await mint(room.ownerTwo);
+      const minted = room.db
+        .prepare("SELECT created_by_owner_id, created_by_agent_id FROM invites WHERE id = ?")
+        .get(byOwner.id) as { created_by_owner_id: string; created_by_agent_id: string | null };
+      expect(minted).toEqual({ created_by_owner_id: "O2", created_by_agent_id: null });
+
+      const siblingHit = await revoke(sibling, byOwner.id);
+      expect(siblingHit.status).toBe(403);
+      expect(json(siblingHit)).toEqual(GENERIC);
+      const agentHit = await revoke(ownersAgent, byOwner.id);
+      expect(agentHit.status).toBe(403);
+      expect(json(agentHit)).toEqual(GENERIC);
+      const otherOwner = await revoke(room.outsider, byOwner.id);
+      expect(otherOwner.status).toBe(403);
+      expect(json(otherOwner)).toEqual(GENERIC);
+      stillOpen(byOwner.id);
+
+      clock.advance(1000);
+      const byRoomCreator = await revoke(room.owner, byOwner.id);
+      expect(byRoomCreator.status).toBe(200);
+      expect(json(byRoomCreator)).toEqual({ revoked: true });
+      const redeemedAfterRoomCreator = await call(room.baseUrl, "POST", `/j/${byOwner.id}/accept`, {
+        cookie: `commona_invite=${byOwner.secret}`,
+        body: {},
+      });
+      expect(redeemedAfterRoomCreator.status).toBe(403);
+      expect(json(redeemedAfterRoomCreator)).toEqual(GENERIC);
+      expect(revokeAudit(byOwner.id)).toEqual({
+        action: "setting_change",
+        result: "ok",
+        room: room.roomId,
+        owner_id: "O1",
+        agent_id: "owner:O1",
+      });
+
+      const byCreator = await mint(room.ownerTwo);
+      clock.advance(1000);
+      const creatingOwner = await revoke(room.ownerTwo, byCreator.id);
+      expect(creatingOwner.status).toBe(200);
+      expect(json(creatingOwner)).toEqual({ revoked: true });
+      const redeemedAfterCreator = await call(room.baseUrl, "POST", `/j/${byCreator.id}/accept`, {
+        cookie: `commona_invite=${byCreator.secret}`,
+        body: {},
+      });
+      expect(redeemedAfterCreator.status).toBe(403);
+      expect(json(redeemedAfterCreator)).toEqual(GENERIC);
+      expect(revokeAudit(byCreator.id)).toEqual({
+        action: "setting_change",
+        result: "ok",
+        room: room.roomId,
+        owner_id: "O2",
+        agent_id: "owner:O2",
+      });
+
+      const byAgent = await mint(ownersAgent);
+      const agentMinted = room.db
+        .prepare("SELECT created_by_owner_id, created_by_agent_id FROM invites WHERE id = ?")
+        .get(byAgent.id) as { created_by_owner_id: string; created_by_agent_id: string | null };
+      expect(agentMinted).toEqual({ created_by_owner_id: "O2", created_by_agent_id: "A2" });
+      expect((await revoke(sibling, byAgent.id)).status).toBe(403);
+      expect((await revoke(room.ownerTwo, byAgent.id)).status).toBe(403);
+      expect((await revoke(room.owner, byAgent.id)).status).toBe(403);
+      expect((await revoke(room.outsider, byAgent.id)).status).toBe(403);
+      stillOpen(byAgent.id);
+      clock.advance(1000);
+      const agentRevoke = await revoke(ownersAgent, byAgent.id);
+      expect(agentRevoke.status).toBe(200);
+      expect(json(agentRevoke)).toEqual({ revoked: true });
+      expect(room.audit.verify().ok).toBe(true);
+    } finally {
+      await room.stop();
+    }
+  });
 });
