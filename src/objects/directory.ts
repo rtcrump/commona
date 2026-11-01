@@ -1,5 +1,12 @@
 import { DurableObject, type DurableObjectState } from "cloudflare:workers";
-import { systemClock } from "../../contract/index.js";
+import {
+  allowInsecureLocalWebhook,
+  ContractError,
+  systemClock,
+  verifyWakeSignature,
+  WAKE_RETRY_DELAYS_MS,
+  type WakeEmail,
+} from "../../contract/index.js";
 import { createAuditLog } from "../audit/log.js";
 import { createTokenStore } from "../auth/store.js";
 import { createSqliteDatabase } from "../db/adapter.js";
@@ -15,6 +22,11 @@ import { feedRoomId, reserveAgentPoll } from "../poll/agent-poll.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { createSharingDirectory } from "../sharing/index.js";
+import { registerAgentWebhook } from "../wakeup/register.js";
+import { signingSecretFor } from "../wakeup/secret.js";
+import { createWakeService, type WakeService } from "../wakeup/service.js";
+import { sendSmtp, smtpFromEnv, type SmtpEndpoint } from "../wakeup/smtp.js";
+import { registerWorkerMailTransport } from "../wakeup/smtp-worker.js";
 
 interface DurableRoomStorage extends DurableSqlStorage {
   deleteAlarm(): Promise<void>;
@@ -27,17 +39,34 @@ interface DurableRoomStorage extends DurableSqlStorage {
  * Rooms, keys, invites, and the audit chain stay in one database, which is
  * what the Node server did. The free plan only offers this SQLite kind.
  */
+interface WakeFetchRecord {
+  url: string;
+  method: string;
+  body: string;
+  headers: Record<string, string>;
+}
 
 export class DirectoryObject extends DurableObject<CommonaEnv> {
   private deps!: RoomDeps;
   private app!: CommonaHono;
+  private wake!: WakeService;
+  private smtpEndpoint?: SmtpEndpoint;
+  private fetchOverride?: typeof fetch;
+  private mailOverride?: (email: WakeEmail) => Promise<void>;
+  private recordedFetches: WakeFetchRecord[] = [];
+  private recordedStatus = 200;
+  private capturedMail: WakeEmail[] = [];
 
   constructor(ctx: DurableObjectState, env: CommonaEnv) {
     super(ctx, env);
     this.boot();
   }
 
-  /** Open SQLite, then build the HTTP app. */
+  /**
+   * Open SQLite, then build the same HTTP app as Node, including wake delivery.
+   * One webhook attempt runs in this request. A retry waits on the object alarm,
+   * because the free plan cannot spend the 2s, 8s, and 20s gaps inside the request.
+   */
   private boot(): void {
     const db = createSqliteDatabase(new DurableSqlDriver(this.storage()));
     try {
@@ -47,18 +76,69 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     }
     prepareDatabase(db);
     const clock = systemClock;
+    const audit = createAuditLog(db, clock);
+    const notices = createOwnerNotifier(db, clock);
+    const env = this.workerProcessEnv();
+    this.smtpEndpoint = smtpFromEnv(env);
+    registerWorkerMailTransport();
+    const wake = createWakeService({
+      db,
+      clock,
+      audit,
+      notices,
+      allowInsecureLocalhost: allowInsecureLocalWebhook(env),
+      fetchImpl: (input, init) => (this.fetchOverride ?? fetch)(input, init),
+      sendMail: (email) => this.dispatchMail(email),
+      deferRetry: (wakeId, delayMs) => this.deferWake(wakeId, delayMs),
+      ...(this.smtpEndpoint ? { smtp: this.smtpEndpoint } : {}),
+    });
+    this.wake = wake;
     const deps: RoomDeps = {
       db,
       clock,
       tokens: createTokenStore(db),
-      audit: createAuditLog(db, clock),
+      audit,
       sharing: createSharingDirectory(db),
       guard,
-      notices: createOwnerNotifier(db, clock),
+      notices,
+      wakeQueue: wake,
+      deliverWake: (wakeId) => this.deliverWake(wakeId),
+      ...(this.smtpEndpoint ? { smtp: this.smtpEndpoint } : {}),
       clearAlarmIfEmpty: () => this.clearAlarmIfEmpty(),
     };
     this.deps = deps;
     this.app = createHttpApp(deps);
+  }
+
+  /** Keep the background delivery alive after the HTTP response is returned. */
+  private deliverWake(wakeId: string): Promise<void> {
+    const pending = this.wake.deliver(wakeId).then(
+      () => undefined,
+      () => undefined,
+    );
+    this.ctx.waitUntil(pending);
+    return pending;
+  }
+
+  private async dispatchMail(email: WakeEmail): Promise<void> {
+    if (this.mailOverride) {
+      await this.mailOverride(email);
+      return;
+    }
+    if (!this.smtpEndpoint) throw new Error("smtp is not configured");
+    await sendSmtp(this.smtpEndpoint, email);
+  }
+
+  /** Bindings only. Process env is not copied in, so a local shell cannot widen webhook http. */
+  private workerProcessEnv(): NodeJS.ProcessEnv {
+    const env = this.env;
+    return {
+      ...(typeof env.COMMONA_SMTP_HOST === "string" ? { COMMONA_SMTP_HOST: env.COMMONA_SMTP_HOST } : {}),
+      ...(typeof env.COMMONA_SMTP_PORT === "string" ? { COMMONA_SMTP_PORT: env.COMMONA_SMTP_PORT } : {}),
+      ...(typeof env.COMMONA_ALLOW_INSECURE_WEBHOOKS === "string"
+        ? { COMMONA_ALLOW_INSECURE_WEBHOOKS: env.COMMONA_ALLOW_INSECURE_WEBHOOKS }
+        : {}),
+    };
   }
 
   /**
@@ -67,10 +147,81 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
    */
   private async clearAlarmIfEmpty(): Promise<void> {
     await this.ctx.blockConcurrencyWhile(async () => {
+      this.dropOrphanWakeAlarms();
       const row = this.deps.db.prepare("SELECT COUNT(*) AS n FROM rooms").get() as { n: number } | undefined;
-      if (Number(row?.n ?? 0) !== 0) return;
+      if (Number(row?.n ?? 0) !== 0) {
+        const pending = this.deps.db.prepare("SELECT COUNT(*) AS n FROM wake_alarms").get() as { n: number } | undefined;
+        if (Number(pending?.n ?? 0) === 0) return;
+        await this.armWakeAlarm();
+        return;
+      }
+      this.deps.db.prepare("DELETE FROM wake_alarms").run();
       await this.storage().deleteAlarm();
     });
+  }
+
+  /**
+   * The platform calls this when the alarm is due. A test may run it early.
+   * Webhook retries live here so one request does not sleep for 2s, 8s, and 20s.
+   */
+  async alarm(): Promise<void> {
+    await this.deliverScheduledWakes(Date.now());
+    await this.armWakeAlarm();
+  }
+
+  private async deferWake(wakeId: string, delayMs: number): Promise<void> {
+    const due = Date.now() + delayMs;
+    this.deps.db
+      .prepare(
+        `INSERT INTO wake_alarms (wake_id, due_ms) VALUES (?, ?)
+         ON CONFLICT(wake_id) DO UPDATE SET due_ms = excluded.due_ms`,
+      )
+      .run(wakeId, due);
+    await this.armWakeAlarm();
+  }
+
+  private async deliverScheduledWakes(nowMs: number): Promise<void> {
+    this.dropOrphanWakeAlarms();
+    let ids = this.wakeIdsDue(nowMs);
+    if (ids.length === 0) ids = this.wakeIdsDue(Number.MAX_SAFE_INTEGER).slice(0, 1);
+    for (const wakeId of ids) {
+      this.deps.db.prepare("DELETE FROM wake_alarms WHERE wake_id = ?").run(wakeId);
+      try {
+        await this.wake.deliver(wakeId);
+      } catch (error) {
+        if (error instanceof ContractError && error.message === "wake not found") continue;
+        const due = Date.now() + WAKE_RETRY_DELAYS_MS[0];
+        this.deps.db
+          .prepare(
+            `INSERT INTO wake_alarms (wake_id, due_ms) VALUES (?, ?)
+             ON CONFLICT(wake_id) DO UPDATE SET due_ms = excluded.due_ms`,
+          )
+          .run(wakeId, due);
+        throw error;
+      }
+    }
+  }
+
+  private dropOrphanWakeAlarms(): void {
+    this.deps.db.prepare("DELETE FROM wake_alarms WHERE wake_id NOT IN (SELECT id FROM wakes)").run();
+  }
+
+  private wakeIdsDue(nowMs: number): string[] {
+    const rows = this.deps.db
+      .prepare("SELECT wake_id AS wakeId FROM wake_alarms WHERE due_ms <= ? ORDER BY due_ms, wake_id")
+      .all(nowMs) as { wakeId: string }[];
+    return rows.map((row) => row.wakeId);
+  }
+
+  /** Keep the earliest wake retry. An earlier alarm set for another reason stays. */
+  private async armWakeAlarm(): Promise<void> {
+    const row = this.deps.db.prepare("SELECT MIN(due_ms) AS due FROM wake_alarms").get() as
+      | { due: number | null }
+      | undefined;
+    if (row?.due == null) return;
+    const existing = await this.storage().getAlarm();
+    if (existing !== null && existing <= row.due) return;
+    await this.storage().setAlarm(row.due);
   }
 
   private storage(): DurableRoomStorage {
@@ -213,6 +364,109 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
       room: row.room,
       detailJson: row.detail_json,
     }));
+  }
+
+  /** Save a webhook for a test. The signing secret stays in the object. */
+  saveAgentWebhook(agentId: string, url: string): void {
+    registerAgentWebhook(this.deps.db, agentId, url, {
+      allowInsecureLocalhost: allowInsecureLocalWebhook(this.workerProcessEnv()),
+    });
+  }
+
+  /** Wake rows a test can read. The signing secret is not a column here. */
+  wakeRows(): {
+    id: string;
+    roomId: string;
+    recipientAgentId: string;
+    authorAgentId: string;
+    itemKind: string;
+    state: string;
+    attempts: number;
+  }[] {
+    const rows = this.deps.db
+      .prepare(
+        `SELECT id, room_id AS roomId, recipient_agent_id AS recipientAgentId,
+                author_agent_id AS authorAgentId, item_kind AS itemKind, state, attempts
+         FROM wakes ORDER BY created_at, recipient_agent_id, id`,
+      )
+      .all() as {
+      id: string;
+      roomId: string;
+      recipientAgentId: string;
+      authorAgentId: string;
+      itemKind: string;
+      state: string;
+      attempts: number;
+    }[];
+    return rows;
+  }
+
+  /** Scheduled webhook retries. `dueMs` is the wall-clock time the alarm is waiting for. */
+  wakeAlarmRows(): { wakeId: string; dueMs: number }[] {
+    return this.deps.db
+      .prepare("SELECT wake_id AS wakeId, due_ms AS dueMs FROM wake_alarms ORDER BY due_ms, wake_id")
+      .all() as { wakeId: string; dueMs: number }[];
+  }
+
+  scheduledAlarm(): Promise<number | null> {
+    return this.storage().getAlarm();
+  }
+
+  /**
+   * Record wake POSTs inside the object and answer them with `status`.
+   * Production leaves this unset and uses the real fetch.
+   */
+  recordWakeFetches(status: number): void {
+    this.recordedFetches = [];
+    this.recordedStatus = status;
+    this.fetchOverride = async (input, init) => {
+      const request = new Request(input, init);
+      const body = await request.text();
+      const headers: Record<string, string> = {};
+      request.headers.forEach((value, key) => {
+        headers[key] = value;
+      });
+      this.recordedFetches.push({ url: request.url, method: request.method, body, headers });
+      return new Response("ok", { status: this.recordedStatus });
+    };
+  }
+
+  setRecordedWakeStatus(status: number): void {
+    this.recordedStatus = status;
+  }
+
+  wakeFetches(): WakeFetchRecord[] {
+    return this.recordedFetches.map((row) => ({ ...row, headers: { ...row.headers } }));
+  }
+
+  /** Keep fallback mail in the object. The signing secret is not part of the message. */
+  captureWakeMail(): void {
+    this.capturedMail = [];
+    this.mailOverride = (email) => {
+      this.capturedMail.push(email);
+      return Promise.resolve();
+    };
+  }
+
+  wakeMail(): WakeEmail[] {
+    return this.capturedMail.map((email) => ({ ...email }));
+  }
+
+  /**
+   * Check a captured webhook inside the object.
+   * The signing secret is not returned.
+   */
+  wakeSignatureMatches(agentId: string, timestamp: string, rawBody: string, signature: string): boolean {
+    const secret = signingSecretFor(this.deps.db, "agent", agentId);
+    return verifyWakeSignature({ secret, timestamp, rawBody, signature, nowMs: Date.now() });
+  }
+
+  clearWakeTestHooks(): void {
+    this.fetchOverride = undefined;
+    this.mailOverride = undefined;
+    this.recordedFetches = [];
+    this.capturedMail = [];
+    this.recordedStatus = 200;
   }
 }
 
