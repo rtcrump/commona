@@ -4,5 +4,5 @@
 - `.github/workflows/conventions.yml` — runs the self-test, then checks PR commits + labels, merge readiness (informational until branch protection exists), and commits pushed to main.
 - Run locally: `python3 scripts/test_check_conventions.py`.
 - The checker script and its tests are copied unchanged. Bot email in `BOT_EMAILS` is `commona-bot@users.noreply.github.com`.
-- The squash-merge commit on main must carry `QA:` and `Approved-by: trafford`. The merge step adds them to the squash message, otherwise the push-to-main check fails.
+- PRs land with a normal merge commit. The merge commit message carries `QA:` and `Approved-by: trafford`. The merge step adds them to the merge commit message, otherwise the push-to-main check fails.
 - This checker does not edit `README.md`. The agent-written badge stays on the milestone README.
