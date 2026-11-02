@@ -15,7 +15,7 @@ import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
 
 /**
- * The room route for `PUT /rooms/:roomId/sharing`.
+ * The room route for `PUT /rooms/:roomId/sharing` and `PUT /api/rooms/:roomId/sharing`.
  * `SharingDirectory.update` decides whether the caller may write.
  * This route writes the audit row. A `ContractError` is HTTP 400 and is not audited.
  * A successful write, its audit row, and the default-sharing marker deletion commit together.

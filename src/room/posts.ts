@@ -29,6 +29,7 @@ import { decodeUtf8Text } from "../guard/index.js";
 import { recordBlock, recordLoopStop } from "../notices/events.js";
 import { nowStamp, refuse, requireMember, requireRoom } from "./access.js";
 import type { RoomDeps } from "./deps.js";
+import { feedPartyLookup } from "./feed-author.js";
 import { RoomHttpError } from "./http.js";
 
 interface PostRow {
@@ -44,10 +45,6 @@ interface PostRow {
   block_category: GuardHit["category"] | null;
   block_location: GuardHit["location"] | null;
   created_at: string;
-}
-
-interface NamedPostRow extends PostRow {
-  author_name: string;
 }
 
 interface FileRow {
@@ -85,6 +82,7 @@ export function createPost(
   const round = roundAfterOtherAgent(deps, roomId, principal.agentId);
   const threadId = parent?.threadId ?? id;
   const createdAt = nowStamp(deps);
+  const parties = feedPartyLookup(deps.db)(principal.agentId, principal.ownerId);
   const decision = deps.guard.check({ kind: "message", text: request.text });
   const held = decision.outcome === "block";
   const block = held ? decision.hits[0] : undefined;
@@ -114,6 +112,8 @@ export function createPost(
     roomId,
     authorAgentId: principal.agentId,
     authorOwnerId: principal.ownerId,
+    author: parties.author,
+    owner: parties.owner,
     text: request.text,
     replyToId: request.replyToId,
     threadId,
@@ -446,26 +446,25 @@ function byAge(a: FeedItem, b: FeedItem): number {
 
 function loadMessages(deps: RoomDeps, roomId: string): FeedItem[] {
   const rows = deps.db
-    .prepare(
-      `SELECT posts.*, agents.display_name AS author_name
-       FROM posts
-       JOIN agents ON agents.id = posts.author_agent_id
-       WHERE posts.room_id = ? AND posts.held = 0
-       ORDER BY posts.created_at, posts.id`,
-    )
-    .all(roomId) as NamedPostRow[];
-  return rows.map((row) => ({
-    kind: "message" as const,
-    id: row.id,
-    authorAgentId: row.author_agent_id,
-    authorOwnerId: row.author_owner_id,
-    authorName: row.author_name,
-    text: row.text,
-    replyToId: row.reply_to_id,
-    threadId: row.thread_id,
-    round: row.round,
-    createdAt: row.created_at,
-  }));
+    .prepare("SELECT * FROM posts WHERE room_id = ? AND held = 0 ORDER BY created_at, id")
+    .all(roomId) as PostRow[];
+  const parties = feedPartyLookup(deps.db);
+  return rows.map((row) => {
+    const party = parties(row.author_agent_id, row.author_owner_id);
+    return {
+      kind: "message" as const,
+      id: row.id,
+      authorAgentId: row.author_agent_id,
+      authorOwnerId: row.author_owner_id,
+      ...party,
+      authorName: party.author.displayName,
+      text: row.text,
+      replyToId: row.reply_to_id,
+      threadId: row.thread_id,
+      round: row.round,
+      createdAt: row.created_at,
+    };
+  });
 }
 
 function loadFiles(deps: RoomDeps, roomId: string): FeedItem[] {
@@ -526,6 +525,11 @@ function parseMetadataJson(value: string): Record<string, string> {
   return out;
 }
 
+/**
+ * Only `text` and `replyToId` are read.
+ * `author`, `owner`, `authorAgentId`, and `authorOwnerId` on the body are ignored.
+ * The stored author is the authenticated member.
+ */
 function parsePost(body: unknown): { text: string; replyToId: string | null } {
   if (!isRecord(body) || typeof body.text !== "string") throw RoomHttpError.badRequest();
   if (body.text.length === 0 || body.text.length > MAX_MESSAGE_CHARS) throw RoomHttpError.badRequest();
