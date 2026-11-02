@@ -269,7 +269,7 @@ describe("worker agent json api", () => {
     const waited = await pending;
     expect(waited.status).toBe(200);
     const waitedBody = (await waited.json()) as { posts: { id: string; text: string }[]; cursor: string };
-    expect(waitedBody.posts).toEqual([{ id: second, text: "The park is free at noon" }]);
+    expect(waitedBody.posts).toMatchObject([{ id: second, text: "The park is free at noon" }]);
 
     const bad = await SELF.fetch(`https://room.example.test/api/r/${created.roomId}?since=nope`, {
       headers: { authorization: `Bearer ${reader.agentKey}` },

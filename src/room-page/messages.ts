@@ -47,10 +47,11 @@ LIMIT ?
  * Posts inserted after a cursor, oldest first.
  * `seq` is the SQLite rowid. It only increases when a post is inserted, so a
  * later post cannot fall behind a cursor already issued when it shares that
- * post's millisecond timestamp. No file rows and no file content.
+ * post's millisecond timestamp. The author columns are the stored member ids
+ * used to label the post. No file rows and no file content.
  */
 export const NEWER_MESSAGES_SQL = `
-SELECT text, author_owner_id, created_at, id, rowid AS seq
+SELECT text, author_owner_id, author_agent_id, created_at, id, rowid AS seq
 FROM posts
 WHERE room_id = ? AND held = 0
   AND rowid > ?
@@ -73,9 +74,9 @@ type NewerRow = RecentRow & {
   seq: number;
 };
 
-export interface SinceMessage {
+/** One incremental post. Same stored author and owner as a page post, plus its id. */
+export interface SinceMessage extends RoomMessagePost {
   id: string;
-  text: string;
 }
 
 export interface SincePage {
@@ -141,6 +142,7 @@ export function recentMessages(deps: RoomDeps, principal: AuthPrincipal, roomId:
 
 /**
  * Visible posts newer than `since`, oldest first, and the cursor to use next.
+ * Each post includes the stored author and owner, the same labels as the page read.
  * `since` is the start marker or a post id in this room. A bad cursor throws.
  * Hidden posts are not returned and do not move the cursor. The scan keeps
  * going through them. The recent page stops after ten batches, and that cap
@@ -159,6 +161,7 @@ export function messagesSince(
   if (position === null) throw new BadReadCursor();
   const visible: SinceMessage[] = [];
   const levels = new Map<string, string>();
+  const parties = feedPartyLookup(deps.db);
   const stmt = deps.db.prepare(NEWER_MESSAGES_SQL);
   let after = position.seq;
   let lastVisibleId = since;
@@ -168,7 +171,8 @@ export function messagesSince(
     for (const row of rows) {
       if (visible.length >= RECENT_MESSAGE_LIMIT) break;
       if (!messageVisible(deps, roomId, principal, row.author_owner_id, levels)) continue;
-      visible.push({ id: row.id, text: row.text });
+      const named = parties(row.author_agent_id, row.author_owner_id);
+      visible.push({ id: row.id, text: row.text, author: named.author, owner: named.owner });
       lastVisibleId = row.id;
     }
     const last = rows[rows.length - 1];

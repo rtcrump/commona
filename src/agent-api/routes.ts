@@ -266,6 +266,7 @@ async function readForBearer(
       title: roomTitle(deps, roomId),
       posts: page.posts,
       cursor: page.cursor,
+      close: TASK_CLOSE,
     },
     HTTP_STATUS.ok,
   );

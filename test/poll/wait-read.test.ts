@@ -9,7 +9,9 @@ import {
   RECENT_MESSAGE_MAX_BATCHES,
   SINCE_START,
 } from "../../src/room-page/messages.js";
+import { TASK_CLOSE } from "../../src/task-close.js";
 import { call, createInvite, startJoinHarness, type JoinHarness } from "../onboarding/harness.js";
+import { openRoomSharing } from "../room/fakes.js";
 
 const FREE = "Tuesday noon is free";
 const PARK = "The park is free at noon";
@@ -37,7 +39,7 @@ describe("wait for news, house rules, and the task cap", () => {
     });
     expect(opened.status).toBe(200);
     const page = JSON.parse(opened.body) as SinceBody;
-    expect(page.posts).toEqual([
+    expect(page.posts).toMatchObject([
       { id: first, text: FREE },
       { id: second, text: PARK },
     ]);
@@ -201,7 +203,7 @@ describe("wait for news, house rules, and the task cap", () => {
       token: reader.agentKey,
     });
     expect(opened.status).toBe(200);
-    expect(JSON.parse(opened.body)).toEqual({
+    expect(JSON.parse(opened.body)).toMatchObject({
       roomId: room.roomId,
       title: "Room",
       posts: [
@@ -260,6 +262,85 @@ describe("wait for news, house rules, and the task cap", () => {
     expect(caughtUp.body.includes("Napkins are on the table")).toBe(false);
     expect(caughtUp.body.includes(highId)).toBe(false);
   });
+
+  it("labels each newer post with the stored author and owner", async () => {
+    room = await startJoinHarness();
+    openRoomSharing(room.sharing, room.roomId, "O1", "O2");
+    const ownerA = room.tokens.issueAgentToken("A1");
+    const ownerB = room.tokens.issueAgentToken("A2");
+    const fromA = await postLine(room, ownerA, FREE);
+    const fromB = await postLine(room, ownerB, PARK);
+
+    const opened = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?since=${SINCE_START}`, {
+      token: ownerA,
+    });
+    expect(opened.status).toBe(200);
+    expect((JSON.parse(opened.body) as SinceBody).posts).toEqual([
+      {
+        id: fromA,
+        text: FREE,
+        author: { id: "A1", displayName: "Agent One" },
+        owner: { id: "O1", displayName: "Owner One" },
+      },
+      {
+        id: fromB,
+        text: PARK,
+        author: { id: "A2", displayName: "Agent Two" },
+        owner: { id: "O2", displayName: "Owner Two" },
+      },
+    ]);
+
+    const newer = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?since=${fromA}`, {
+      token: ownerA,
+    });
+    expect(newer.status).toBe(200);
+    expect((JSON.parse(newer.body) as SinceBody).posts).toEqual([
+      {
+        id: fromB,
+        text: PARK,
+        author: { id: "A2", displayName: "Agent Two" },
+        owner: { id: "O2", displayName: "Owner Two" },
+      },
+    ]);
+    expect(newer.body.includes("Agent One")).toBe(false);
+  });
+
+  it("tells each agent to report the task result to its own owner when a since read ends", async () => {
+    expect(TASK_CLOSE).toBe(
+      "Report the result to your own owner. Say what was agreed, with whom, and anything still open.",
+    );
+    room = await startJoinHarness();
+    const reader = await join(room);
+    const author = await join(room);
+    const seen = await postLine(room, author.agentKey, FREE);
+
+    const opened = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?since=${SINCE_START}`, {
+      token: reader.agentKey,
+    });
+    expect(opened.status).toBe(200);
+    const page = JSON.parse(opened.body) as SinceBody & { close?: string };
+    expect(page.close).toBe(TASK_CLOSE);
+    expect(page.posts.map((post) => post.text)).toEqual([FREE]);
+
+    const caughtUp = await call(room.baseUrl, "GET", `/api/r/${room.roomId}?since=${seen}`, {
+      token: reader.agentKey,
+    });
+    expect(caughtUp.status).toBe(200);
+    const empty = JSON.parse(caughtUp.body) as SinceBody & { close?: string };
+    expect(empty.posts).toEqual([]);
+    expect(empty.close).toBe(TASK_CLOSE);
+
+    const pending = fetch(`${room.baseUrl}/api/r/${room.roomId}?since=${seen}&wait=25`, {
+      headers: { authorization: `Bearer ${reader.agentKey}` },
+    });
+    await delay(50);
+    const arrived = await postLine(room, author.agentKey, PARK);
+    const waited = await pending;
+    const waitedBody = JSON.parse(await waited.text()) as SinceBody & { close?: string };
+    expect(waited.status).toBe(200);
+    expect(waitedBody.posts).toEqual([expect.objectContaining({ id: arrived, text: PARK })]);
+    expect(waitedBody.close).toBe(TASK_CLOSE);
+  }, 15_000);
 
   it("returns house rules on join, including the brief and the calendar limit", async () => {
     room = await startJoinHarness();
@@ -447,8 +528,14 @@ interface Joined {
 }
 
 interface SinceBody {
-  posts: { id: string; text: string }[];
+  posts: {
+    id: string;
+    text: string;
+    author?: { id: string; displayName: string };
+    owner?: { id: string; displayName: string };
+  }[];
   cursor: string;
+  close?: string;
 }
 
 async function join(room: JoinHarness): Promise<Joined> {
