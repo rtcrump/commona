@@ -4,7 +4,9 @@ import {
   ContractError,
   systemClock,
   verifyWakeSignature,
+  WAKE_HEADER_WAKE_ID,
   WAKE_RETRY_DELAYS_MS,
+  WakeState,
   type WakeEmail,
 } from "../../contract/index.js";
 import { createAuditLog } from "../audit/log.js";
@@ -56,6 +58,8 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
   private recordedFetches: WakeFetchRecord[] = [];
   private recordedStatus = 200;
   private capturedMail: WakeEmail[] = [];
+  /** Alarm rows observed while a webhook request was in flight, keyed by wake id. */
+  private alarmsDuringFetch = new Map<string, { wakeId: string; dueMs: number }[]>();
 
   constructor(ctx: DurableObjectState, env: CommonaEnv) {
     super(ctx, env);
@@ -161,12 +165,14 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
   }
 
   /**
-   * The platform calls this when the alarm is due. A test may run it early.
+   * The platform calls this when the alarm is due. A test may run it sooner.
+   * Only a wake whose due_ms has arrived is delivered. An alarm left behind
+   * after a room delete does not skip another room's backoff.
    * Webhook retries live here so one request does not sleep for 2s, 8s, and 20s.
    */
   async alarm(): Promise<void> {
     await this.deliverScheduledWakes(Date.now());
-    await this.armWakeAlarm();
+    await this.armWakeAlarm(true);
   }
 
   private async deferWake(wakeId: string, delayMs: number): Promise<void> {
@@ -180,16 +186,24 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     await this.armWakeAlarm();
   }
 
+  /**
+   * Deliver wakes whose deadline has arrived. The scheduling row stays until
+   * that delivery reaches a terminal state. A restart while the webhook or
+   * mail call is still running can retry the same row. A retry replaces the
+   * row with the next deadline before it returns.
+   */
   private async deliverScheduledWakes(nowMs: number): Promise<void> {
     this.dropOrphanWakeAlarms();
-    let ids = this.wakeIdsDue(nowMs);
-    if (ids.length === 0) ids = this.wakeIdsDue(Number.MAX_SAFE_INTEGER).slice(0, 1);
+    const ids = this.wakeIdsDue(nowMs);
     for (const wakeId of ids) {
-      this.deps.db.prepare("DELETE FROM wake_alarms WHERE wake_id = ?").run(wakeId);
       try {
-        await this.wake.deliver(wakeId);
+        const result = await this.wake.deliver(wakeId);
+        if (result.state !== WakeState.Pending) this.deleteWakeAlarm(wakeId);
       } catch (error) {
-        if (error instanceof ContractError && error.message === "wake not found") continue;
+        if (error instanceof ContractError && error.message === "wake not found") {
+          this.deleteWakeAlarm(wakeId);
+          continue;
+        }
         const due = Date.now() + WAKE_RETRY_DELAYS_MS[0];
         this.deps.db
           .prepare(
@@ -200,6 +214,10 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
         throw error;
       }
     }
+  }
+
+  private deleteWakeAlarm(wakeId: string): void {
+    this.deps.db.prepare("DELETE FROM wake_alarms WHERE wake_id = ?").run(wakeId);
   }
 
   private dropOrphanWakeAlarms(): void {
@@ -213,14 +231,19 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     return rows.map((row) => row.wakeId);
   }
 
-  /** Keep the earliest wake retry. An earlier alarm set for another reason stays. */
-  private async armWakeAlarm(): Promise<void> {
+  /**
+   * Keep the earliest wake retry. An earlier alarm set for another reason stays.
+   * After the handler itself runs, that fired alarm is spent, so the next real
+   * deadline is armed even when the stored alarm time is earlier.
+   */
+  private async armWakeAlarm(afterFire = false): Promise<void> {
     const row = this.deps.db.prepare("SELECT MIN(due_ms) AS due FROM wake_alarms").get() as
       | { due: number | null }
       | undefined;
     if (row?.due == null) return;
     const existing = await this.storage().getAlarm();
-    if (existing !== null && existing <= row.due) return;
+    if (existing === row.due) return;
+    if (!afterFire && existing !== null && existing <= row.due) return;
     await this.storage().setAlarm(row.due);
   }
 
@@ -413,14 +436,39 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
   }
 
   /**
+   * Test hook. Moves one scheduled retry to `dueMs`.
+   * Production alarm delivery does not call this. Tests use it so they do not
+   * wait out the 2s, 8s, and 20s backoff, and so two rooms can sit at known deadlines.
+   */
+  setWakeDue(wakeId: string, dueMs: number): void {
+    const result = this.deps.db.prepare("UPDATE wake_alarms SET due_ms = ? WHERE wake_id = ?").run(dueMs, wakeId);
+    if (result.changes !== 1) throw new Error("wake alarm is not scheduled");
+  }
+
+  /**
+   * Test hook. Pushes every scheduled wake except `keep` out to `dueMs`.
+   * A test can then be the earliest remaining retry without delivering another room.
+   */
+  postponeOtherWakes(keep: readonly string[], dueMs: number): void {
+    const held = new Set(keep);
+    for (const row of this.wakeAlarmRows()) {
+      if (held.has(row.wakeId)) continue;
+      this.deps.db.prepare("UPDATE wake_alarms SET due_ms = ? WHERE wake_id = ?").run(dueMs, row.wakeId);
+    }
+  }
+
+  /**
    * Record wake POSTs inside the object and answer them with `status`.
    * Production leaves this unset and uses the real fetch.
    */
   recordWakeFetches(status: number): void {
     this.recordedFetches = [];
     this.recordedStatus = status;
+    this.alarmsDuringFetch = new Map();
     this.fetchOverride = async (input, init) => {
       const request = new Request(input, init);
+      const wakeId = request.headers.get(WAKE_HEADER_WAKE_ID);
+      if (wakeId) this.alarmsDuringFetch.set(wakeId, this.wakeAlarmRows());
       const body = await request.text();
       const headers: Record<string, string> = {};
       request.headers.forEach((value, key) => {
@@ -437,6 +485,11 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
 
   wakeFetches(): WakeFetchRecord[] {
     return this.recordedFetches.map((row) => ({ ...row, headers: { ...row.headers } }));
+  }
+
+  /** Scheduling rows seen while this wake's webhook request was in flight. */
+  alarmsDuringFetchFor(wakeId: string): { wakeId: string; dueMs: number }[] {
+    return (this.alarmsDuringFetch.get(wakeId) ?? []).map((row) => ({ ...row }));
   }
 
   /** Keep fallback mail in the object. The signing secret is not part of the message. */
@@ -467,6 +520,7 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     this.recordedFetches = [];
     this.capturedMail = [];
     this.recordedStatus = 200;
+    this.alarmsDuringFetch = new Map();
   }
 }
 

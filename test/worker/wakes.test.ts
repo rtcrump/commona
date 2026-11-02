@@ -143,6 +143,7 @@ describe("worker wakes", () => {
 
     await runInDurableObject(directory(), (instance) => {
       instance.setRecordedWakeStatus(200);
+      instance.setWakeDue(wakeId, Date.now());
     });
     expect(await runDurableObjectAlarm(directory())).toBe(true);
     const done = await waitForWakes(room.roomId, (found) => found.some((row) => row.state === "webhook_succeeded"));
@@ -162,12 +163,16 @@ describe("worker wakes", () => {
       instance.captureWakeMail();
     });
     await postNote(room.roomId, room.guestKey, note);
-    await waitForWakes(room.roomId, (found) => found[0]?.attempts === 1);
+    const pending = await waitForWakes(room.roomId, (found) => found[0]?.attempts === 1);
+    const wakeId = pending[0]?.id ?? "";
 
+    await releaseWake(wakeId);
     expect(await runDurableObjectAlarm(directory())).toBe(true);
     await waitForWakes(room.roomId, (found) => found[0]?.attempts === 2);
+    await releaseWake(wakeId);
     expect(await runDurableObjectAlarm(directory())).toBe(true);
     await waitForWakes(room.roomId, (found) => found[0]?.attempts === 3);
+    await releaseWake(wakeId);
     expect(await runDurableObjectAlarm(directory())).toBe(true);
 
     const rows = await waitForWakes(room.roomId, (found) => found[0]?.state === "email_sent");
@@ -195,15 +200,128 @@ describe("worker wakes", () => {
     expect(roomAudit.filter((row) => row.action === "wake_fallback_email" && row.result === "fell_back")).toHaveLength(1);
     expect(JSON.stringify(mail)).not.toContain(room.guestKey);
   });
+
+  it("leaves a later retry queued when an earlier room alarm fires", async () => {
+    const later = await openRoom();
+    const earlier = await openRoom();
+    await runInDurableObject(directory(), (instance) => {
+      instance.saveAgentWebhook(later.hostAgentId, webhookUrl);
+      instance.saveAgentWebhook(earlier.hostAgentId, webhookUrl);
+      instance.recordWakeFetches(500);
+    });
+    await postNote(later.roomId, later.guestKey, note);
+    await postNote(earlier.roomId, earlier.guestKey, note);
+    const laterPending = await waitForWakes(
+      later.roomId,
+      (found) => found.length === 1 && found[0]?.state === "pending" && found[0]?.attempts === 1,
+    );
+    const earlierPending = await waitForWakes(
+      earlier.roomId,
+      (found) => found.length === 1 && found[0]?.state === "pending" && found[0]?.attempts === 1,
+    );
+    const laterId = laterPending[0]?.id ?? "";
+    const earlierId = earlierPending[0]?.id ?? "";
+    const now = Date.now();
+    const earlierDue = now + 5_000;
+    const laterDue = now + 60_000;
+    await runInDurableObject(directory(), (instance) => {
+      instance.setWakeDue(earlierId, earlierDue);
+      instance.setWakeDue(laterId, laterDue);
+      instance.postponeOtherWakes([earlierId, laterId], now + 120_000);
+    });
+
+    await deleteRoom(earlier.roomId, earlier.hostKey);
+
+    const scheduled = await runInDurableObject(directory(), (instance) => instance.scheduledAlarm());
+    const queued = await runInDurableObject(directory(), (instance) => instance.wakeAlarmRows());
+    expect(scheduled).not.toBeNull();
+    expect(scheduled ?? 0).toBeLessThan(laterDue);
+    expect(queued[0]).toEqual({ wakeId: laterId, dueMs: laterDue });
+    expect(queued.some((row) => row.wakeId === earlierId)).toBe(false);
+    const before = await runInDurableObject(directory(), (instance) => instance.wakeFetches());
+    expect(before.filter((hit) => hit.body.includes(later.roomId))).toHaveLength(1);
+
+    expect(await runDurableObjectAlarm(directory())).toBe(true);
+
+    const rows = await runInDurableObject(directory(), (instance) => instance.wakeRows());
+    expect(rows.filter((row) => row.roomId === later.roomId)).toEqual([
+      expect.objectContaining({ id: laterId, state: "pending", attempts: 1 }),
+    ]);
+    const after = await runInDurableObject(directory(), (instance) => instance.wakeFetches());
+    expect(after.filter((hit) => hit.body.includes(later.roomId))).toHaveLength(1);
+    const still = await runInDurableObject(directory(), (instance) => instance.wakeAlarmRows());
+    expect(still.find((row) => row.wakeId === laterId)).toEqual({ wakeId: laterId, dueMs: laterDue });
+    const armed = await runInDurableObject(directory(), (instance) => instance.scheduledAlarm());
+    expect(armed).toBe(laterDue);
+
+    await runInDurableObject(directory(), (instance) => {
+      instance.setRecordedWakeStatus(200);
+      instance.setWakeDue(laterId, Date.now());
+    });
+    expect(await runDurableObjectAlarm(directory())).toBe(true);
+    const done = await waitForWakes(later.roomId, (found) => found[0]?.state === "webhook_succeeded");
+    expect(done).toEqual([expect.objectContaining({ id: laterId, state: "webhook_succeeded", attempts: 2 })]);
+  });
+
+  it("keeps the scheduling row while the webhook request is in flight", async () => {
+    const room = await openRoom();
+    await runInDurableObject(directory(), (instance) => {
+      instance.saveAgentWebhook(room.hostAgentId, webhookUrl);
+      instance.recordWakeFetches(500);
+    });
+    await postNote(room.roomId, room.guestKey, note);
+    const pending = await waitForWakes(
+      room.roomId,
+      (found) => found.length === 1 && found[0]?.state === "pending" && found[0]?.attempts === 1,
+    );
+    const wakeId = pending[0]?.id ?? "";
+    await runInDurableObject(directory(), (instance) => {
+      instance.recordWakeFetches(200);
+    });
+    await releaseWake(wakeId);
+
+    expect(await runDurableObjectAlarm(directory())).toBe(true);
+
+    const during = await runInDurableObject(directory(), (instance) => instance.alarmsDuringFetchFor(wakeId));
+    const held = during.find((row) => row.wakeId === wakeId);
+    expect(held).toBeDefined();
+    expect(held?.dueMs ?? Number.MAX_SAFE_INTEGER).toBeLessThanOrEqual(Date.now());
+    const done = await waitForWakes(room.roomId, (found) => found[0]?.state === "webhook_succeeded");
+    expect(done).toEqual([expect.objectContaining({ id: wakeId, state: "webhook_succeeded", attempts: 2 })]);
+    const after = await runInDurableObject(directory(), (instance) => instance.wakeAlarmRows());
+    expect(after.filter((row) => row.wakeId === wakeId)).toEqual([]);
+    const fetches = await runInDurableObject(directory(), (instance) => instance.wakeFetches());
+    expect(fetches).toHaveLength(1);
+    expect(JSON.stringify(fetches)).not.toContain(room.guestKey);
+    expect(JSON.stringify(fetches)).not.toContain(room.hostKey);
+  });
 });
 
 function directory(): { fetch(request: Request): Promise<Response> } {
   return env.DIRECTORY.get(env.DIRECTORY.idFromName("global"));
 }
 
+async function releaseWake(wakeId: string): Promise<void> {
+  await runInDurableObject(directory(), (instance) => {
+    instance.setWakeDue(wakeId, Date.now());
+  });
+}
+
+async function deleteRoom(roomId: string, hostKey: string): Promise<void> {
+  const deleted = await SELF.fetch(`https://room.example.test/rooms/${roomId}`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${hostKey}` },
+  });
+  const text = await deleted.text();
+  expect(deleted.status).toBe(200);
+  expect(text).not.toContain(hostSecret);
+  expect(text.includes(hostKey)).toBe(false);
+}
+
 async function openRoom(): Promise<{
   roomId: string;
   hostAgentId: string;
+  hostKey: string;
   guestAgentId: string;
   guestKey: string;
 }> {
@@ -218,7 +336,12 @@ async function openRoom(): Promise<{
   const body = await response.text();
   expect(response.status).toBe(201);
   expect(body.includes(hostSecret)).toBe(false);
-  const created = JSON.parse(body) as { invites?: string[]; roomId?: string; agentId?: string };
+  const created = JSON.parse(body) as {
+    invites?: string[];
+    roomId?: string;
+    agentId?: string;
+    credential?: string;
+  };
   const link = created.invites?.[0] ?? "";
   const secret = new URL(link).pathname.split("/")[3] ?? "";
   const roomId = created.roomId ?? "";
@@ -231,6 +354,7 @@ async function openRoom(): Promise<{
   return {
     roomId,
     hostAgentId: created.agentId ?? "",
+    hostKey: created.credential ?? "",
     guestAgentId: joined.agentId,
     guestKey: joined.agentKey,
   };
