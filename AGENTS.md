@@ -1,3 +1,10 @@
+# House rules for AI agents
+- Normal merge commits only. Never squash, rebase or force-push.
+- Never read, print or write secrets, tokens or .env files.
+- Never touch real or de-identified patient data, or any nevisight folder.
+- Never send email or messages, post, deploy or merge. Draft only.
+- Keep changes small and say what you changed and why.
+
 # Agent notes
 
 ## Code Review Rules
