@@ -507,10 +507,11 @@ function runStats(cwd: string, args: string[]): string {
   });
 }
 
+/** Throwaway repos. Signing stays off: the sandbox SSH signer stalls past the 5s limit. */
 function git(cwd: string, args: string[]): void {
   execFileSync(
     "git",
-    ["-C", cwd, "-c", "user.name=Stats Tester", "-c", "user.email=stats@example.test", "-c", "init.defaultBranch=main", "-c", "safe.directory=*", ...args],
+    ["-C", cwd, "-c", "user.name=Stats Tester", "-c", "user.email=stats@example.test", "-c", "init.defaultBranch=main", "-c", "safe.directory=*", "-c", "commit.gpgsign=false", ...args],
     { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
 }
