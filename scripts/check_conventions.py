@@ -20,7 +20,8 @@ AGENT_RE = re.compile(
 HUMAN_RE = re.compile(r"^human/[A-Za-z0-9._-]+$")
 QA_RE = re.compile(r"^chatgpt round [123] (pass|fail)$")
 BOT_EMAILS = {"commona-bot@users.noreply.github.com"}  # [Assumed] real bot identity set at G2
-# Sync merges ("Merge branch ...") are skipped. The other two land a PR.
+# Subject prefixes are a fallback for a streamed message, which has no parent
+# graph. Git history uses the parent count instead: two or more parents is a merge.
 MERGE_PREFIXES = ("Merge pull request #", "Merge branch ", "Merge PR #")
 LANDING_PREFIXES = ("Merge pull request #", "Merge PR #")
 # Main mode accepts every commit reachable from this tip. m1-integration
@@ -121,21 +122,47 @@ def main_landing_errors(msg):
     return errs + main_trailer_gaps(keys)
 
 
-def check_commit(email, msg, mode, *, grandfathered=False, landing=False):
-    """`landing` is a first-parent non-merge (squash or direct push).
+def _commit_is_merge(subject, parents):
+    """A merge has two or more parents. The subject is not what makes it one.
 
-    In main mode the QA and Approved-by trailers are required on the commit
-    that lands the PR: a `Merge pull request` / `Merge PR` commit, or a
-    first-parent non-merge. Agent commits inside the PR are not landing
-    commits and do not need those trailers. Commits grandfathered from
+    `parents` is None only for a streamed message. Then the subject prefixes
+    are the only signal, and `Merge branch` stays a sync merge.
+    """
+    if parents is not None:
+        return parents >= 2
+    return subject.startswith(MERGE_PREFIXES)
+
+
+def _merge_lands(subject, parents, on_first_parent):
+    """True when this merge is the commit that landed on main.
+
+    With a parent count, that is the first-parent line only. An inner
+    `Merge pull request` or `Merge PR` does not land. When the line is
+    unknown, do not exempt the merge. A stream has no parent count, so a
+    landing-prefix subject is treated as the landing merge.
+    """
+    if parents is not None:
+        if on_first_parent is None:
+            return True
+        return on_first_parent
+    return subject.startswith(LANDING_PREFIXES)
+
+
+def check_commit(email, msg, mode, *, grandfathered=False, landing=False, parents=None, on_first_parent=None):
+    """`landing` is a non-merge that landed on main.
+
+    That is a first-parent squash or direct push, or any non-merge record in
+    a main-mode stream (the stream has no parent graph). A merge needs the
+    QA and Approved-by trailers only when it is that landing commit. Agent
+    commits inside the PR do not. Commits grandfathered from
     MAIN_GRANDFATHER_TIP, including GRANDFATHERED_SQUASH, are accepted.
     """
     if mode == "main" and grandfathered:
         return []
     errs = []
     subject = msg.split("\n", 1)[0]
-    if subject.startswith(MERGE_PREFIXES):
-        if mode == "main" and subject.startswith(LANDING_PREFIXES):
+    if _commit_is_merge(subject, parents):
+        if mode == "main" and _merge_lands(subject, parents, on_first_parent):
             errs.extend(main_landing_errors(msg))
         return errs
     if len(subject) > 72:
@@ -202,11 +229,19 @@ def parse_commit_stream(text):
 
 
 def run_commits(commits, mode):
+    """Check a stream. It has no parent graph, so topology cannot be read.
+
+    In main mode each non-merge record is a landing commit. A squash or
+    direct push without QA and Approved-by fails, which is what this entry
+    point did before landing trailers moved onto the merge. Merge subjects
+    still follow the message fallback inside check_commit.
+    """
     failed = human_any = False
+    landing = mode == "main"
     for i, (email, msg) in enumerate(commits):
         if re.search(r"^Authored-by: human/", msg, re.M):
             human_any = True
-        for e in check_commit(email, msg, mode):
+        for e in check_commit(email, msg, mode, landing=landing):
             failed = True
             first = msg.splitlines()[0] if msg else ""
             print(f"commit {i+1} ({first}): {e}")
@@ -214,29 +249,32 @@ def run_commits(commits, mode):
 
 
 def _git_records(base, head):
-    cmd = ["git", "log", "--format=%x1e%H%n%ae%n%B", f"{base}..{head}"]
+    cmd = ["git", "log", "--format=%x1e%H%n%P%n%ae%n%B", f"{base}..{head}"]
     out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
     records = []
     for chunk in out.split("\x1e"):
         chunk = chunk.strip("\n")
         if not chunk.strip():
             continue
-        parts = chunk.split("\n", 2)
+        parts = chunk.split("\n", 3)
         sha = parts[0].strip()
-        email = parts[1].strip() if len(parts) > 1 else ""
-        msg = parts[2] if len(parts) > 2 else ""
-        records.append((sha, email, msg))
+        parent_line = parts[1].strip() if len(parts) > 1 else ""
+        email = parts[2].strip() if len(parts) > 2 else ""
+        msg = parts[3] if len(parts) > 3 else ""
+        parents = len(parent_line.split()) if parent_line else 0
+        records.append((sha, email, msg, parents))
     return records
 
 
 def run_git(base, head, mode):
     """Main mode uses the first-parent line to see what landed.
 
-    A merge commit on that line needs QA and Approved-by. So does a
+    A merge is a commit with two or more parents, not a subject prefix.
+    One on the first-parent line needs QA and Approved-by. So does a
     non-merge on that line (a squash, or a commit pushed straight on).
-    Commits that arrived only as the second parent are the agent commits
-    inside the PR and do not need those trailers. Grandfathered commits
-    are not re-checked.
+    Commits that arrived only as the other parent, including an inner
+    `Merge pull request` or `Merge PR`, do not need those trailers.
+    Grandfathered commits are not re-checked.
     """
     records = _git_records(base, head)
     first = set()
@@ -249,12 +287,19 @@ def run_git(base, head, mode):
         first = set(listed.split())
         grand = grandfathered_shas()
     failed = human_any = False
-    for i, (sha, email, msg) in enumerate(records):
+    for i, (sha, email, msg, parents) in enumerate(records):
         if re.search(r"^Authored-by: human/", msg, re.M):
             human_any = True
         subject = msg.split("\n", 1)[0]
-        landing = sha in first and not subject.startswith(MERGE_PREFIXES)
-        for e in check_commit(email, msg, mode, grandfathered=sha in grand, landing=landing):
+        on_first = sha in first if mode == "main" else None
+        landing = on_first is True and parents < 2
+        for e in check_commit(
+            email, msg, mode,
+            grandfathered=sha in grand,
+            landing=landing,
+            parents=parents,
+            on_first_parent=on_first,
+        ):
             failed = True
             print(f"commit {i+1} ({subject}): {e}")
     return failed, human_any

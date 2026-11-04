@@ -17,7 +17,7 @@ Every commit must declare authorship, exactly one of:
 Optional while the PR is open. **Required on the commit that lands on main**, not on the commits inside the pull request. PRs land with a normal merge commit (`Merge pull request #...` or `Merge PR #...`). That merge commit carries:
 - `QA: chatgpt round <1|2|3> pass` (a `fail` value may appear on branch commits, never on the landing commit)
 - `Approved-by: trafford`
-A non-merge commit on the first-parent line (a squash, or a commit pushed straight to the branch) is also a landing commit and needs the same two trailers. `Merge branch ...` is a sync merge and is skipped.
+A merge is a commit with more than one parent. The subject line is not what decides that. Landing trailers are required on a merge only when it sits on the first-parent line. A merge that arrived inside the pull request does not need them, including `Merge branch ...` and an inner `Merge pull request` or `Merge PR`. A non-merge commit on the first-parent line (a squash, or a commit pushed straight to the branch) needs the same two trailers. The `commits --mode main` stream has no parent graph, so each record is checked as a landing commit.
 Allowed trailer keys are only those above plus `Co-authored-by:` and `Refs: T<n>` (spec id). Unknown `*-by:`-style keys fail (stops typos like `Authored-By-Agent`).
 Commits reachable from `4bbbbe4` are grandfathered. That history includes the squash of PR #63 (`d376da6`), which has neither trailer.
 
