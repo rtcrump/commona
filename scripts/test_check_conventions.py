@@ -13,10 +13,10 @@ def msg(subject, *trailer_blocks, body="Body text."):
     return f"{subject}\n\n{body}\n\n{t}" if t else f"{subject}\n\n{body}"
 
 class Commits(unittest.TestCase):
-    def ok(self, m, mode="pr", email=BOT):
-        self.assertEqual(cc.check_commit(email, m, mode), [], m)
-    def bad(self, m, needle, mode="pr", email=BOT):
-        errs = cc.check_commit(email, m, mode)
+    def ok(self, m, mode="pr", email=BOT, **kw):
+        self.assertEqual(cc.check_commit(email, m, mode, **kw), [], m)
+    def bad(self, m, needle, mode="pr", email=BOT, **kw):
+        errs = cc.check_commit(email, m, mode, **kw)
         self.assertTrue(any(needle in e for e in errs), f"{needle!r} not in {errs}")
 
     # must pass
@@ -24,7 +24,14 @@ class Commits(unittest.TestCase):
     def test_pass_agent_refs(self): self.ok(msg("test(audit): L2 tamper test", AG, "Refs: T1"))
     def test_pass_community(self): self.ok(msg("fix(wake): retry jitter", "Authored-by-agent: community/some-user/cursor\nModel: m"))
     def test_pass_human(self): self.ok(msg("fix(ci): emergency pin", "Authored-by: human/trafford"), email="t@example.test")
-    def test_pass_main(self): self.ok(msg("feat(room): join auth", AG, MAIN), mode="main")
+    def test_pass_main(self): self.ok(msg("feat(room): join auth", AG, MAIN), mode="main", landing=True)
+    def test_pass_inner_on_main(self): self.ok(msg("feat(room): join auth", AG), mode="main")
+    def test_pass_landing_merge(self):
+        self.ok("Merge PR #8: room\n\nQA: chatgpt round 2 pass\nApproved-by: trafford", mode="main")
+    def test_pass_github_merge(self):
+        self.ok("Merge pull request #8 from o/b\n\nQA: chatgpt round 1 pass\nApproved-by: trafford", mode="main")
+    def test_merge_branch_skipped_on_main(self):
+        self.ok("Merge branch 'm1-integration' into cursor/feature\n", mode="main")
     def test_pass_qa_fail_on_branch(self): self.ok(msg("fix(nameblock): p5", AG, "QA: chatgpt round 1 fail"))
     def test_merge_commit_skipped(self): self.ok("Merge pull request #3 from x/y\n\nwhatever")
     def test_pass_grok_agent(self): self.ok(msg("feat(room): x", "Authored-by-agent: grok/grok-build\nModel: grok-build"))
@@ -82,9 +89,17 @@ class Commits(unittest.TestCase):
     def test_fail_round4(self): self.bad(msg("feat(room): x", AG, "QA: chatgpt round 4 pass"), "bad QA")
     def test_fail_wrong_approver(self): self.bad(msg("feat(room): x", AG, "Approved-by: someone"), "must be 'trafford'")
     def test_fail_dup(self): self.bad(msg("feat(room): x", AG, "Model: other"), "more than once")
-    def test_fail_main_no_qa(self): self.bad(msg("feat(room): x", AG, "Approved-by: trafford"), "needs 'QA", mode="main")
-    def test_fail_main_qa_fail(self): self.bad(msg("feat(room): x", AG, "QA: chatgpt round 3 fail\nApproved-by: trafford"), "needs 'QA", mode="main")
-    def test_fail_main_no_approval(self): self.bad(msg("feat(room): x", AG, "QA: chatgpt round 1 pass"), "Approved-by: trafford", mode="main")
+    def test_fail_main_no_qa(self): self.bad(msg("feat(room): x", AG, "Approved-by: trafford"), "needs 'QA", mode="main", landing=True)
+    def test_fail_main_qa_fail(self): self.bad(msg("feat(room): x", AG, "QA: chatgpt round 3 fail\nApproved-by: trafford"), "needs 'QA", mode="main", landing=True)
+    def test_fail_main_no_approval(self): self.bad(msg("feat(room): x", AG, "QA: chatgpt round 1 pass"), "Approved-by: trafford", mode="main", landing=True)
+    def test_fail_main_merge_no_qa(self):
+        self.bad("Merge PR #8: room\n\nApproved-by: trafford", "needs 'QA", mode="main")
+    def test_fail_main_merge_no_approval(self):
+        self.bad("Merge pull request #8 from o/b\n\nQA: chatgpt round 1 pass", "Approved-by: trafford", mode="main")
+    def test_fail_main_merge_qa_fail(self):
+        self.bad("Merge PR #8: room\n\nQA: chatgpt round 3 fail\nApproved-by: trafford", "needs 'QA", mode="main")
+    def test_fail_main_merge_wrong_key(self):
+        self.bad("Merge PR #8: room\n\nQA: chatgpt round 1 pass\nApprover: trafford", "unknown trailer", mode="main")
     def test_fail_malformed_line(self): self.bad(msg("feat(room): x", AG + "\nnot a trailer"), "malformed")
     def test_fail_body_between_trailers(self):
         self.bad(
@@ -152,6 +167,93 @@ class RealGit(unittest.TestCase):
         self.commit("feat(room): b", AG + "\n" + MAIN)
         self.g("reset", "-q", "--hard", "HEAD")  # keep both; base..head includes the bad one
         self.assertEqual(self.cli("main").returncode, 1)
+
+    def _land(self, branch, number, trailers):
+        self.g("checkout", "-q", "-b", branch)
+        self.commit(f"feat(room): part {number}", AG)
+        self.g("checkout", "-q", "main")
+        message = f"Merge PR #{number}: part {number}\n\n{trailers}"
+        self.g("merge", "--no-ff", "-q", "-m", message, branch)
+
+    def test_main_merge_history(self):
+        self._land("f1", 1, MAIN)
+        self._land("f2", 2, "QA: chatgpt round 1 pass\nApproved-by: trafford")
+        r = self.cli("main")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("PASS", r.stdout)
+
+    def test_main_merge_rejects_bad_inner_commit(self):
+        self.g("checkout", "-q", "-b", "feature")
+        self.commit("wip", "")
+        self.g("checkout", "-q", "main")
+        self.g("merge", "--no-ff", "-q", "-m", f"Merge PR #9: wip\n\n{MAIN}", "feature")
+        r = self.cli("main")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("missing authorship", r.stdout)
+
+    def test_main_merge_missing_qa(self):
+        self._land("feature", 4, "Approved-by: trafford")
+        r = self.cli("main")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("needs 'QA", r.stdout)
+
+    def test_main_merge_missing_approval(self):
+        self.g("checkout", "-q", "-b", "feature")
+        self.commit("feat(room): a", AG)
+        self.g("checkout", "-q", "main")
+        self.g("merge", "--no-ff", "-q", "-m",
+               "Merge pull request #5 from example/feature\n\nQA: chatgpt round 2 pass", "feature")
+        r = self.cli("main")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("Approved-by: trafford", r.stdout)
+
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+class Grandfather(unittest.TestCase):
+    """Squash d376da6 (PR #63) has no landing trailers. Main mode accepts it on purpose."""
+
+    def test_squash_d376da6_is_exempt_on_purpose(self):
+        self.assertEqual(cc.GRANDFATHERED_SQUASH, "d376da6a263f2d3bb064d889c540b336d949e8ea")
+        ancestor = subprocess.run(
+            ["git", "-C", REPO, "merge-base", "--is-ancestor", cc.GRANDFATHERED_SQUASH, cc.MAIN_GRANDFATHER_TIP],
+        )
+        self.assertEqual(ancestor.returncode, 0)
+        here = os.getcwd()
+        os.chdir(REPO)
+        try:
+            self.assertIn(cc.GRANDFATHERED_SQUASH, cc.grandfathered_shas())
+        finally:
+            os.chdir(here)
+        msg = subprocess.run(
+            ["git", "-C", REPO, "log", "-1", "--format=%B", cc.GRANDFATHERED_SQUASH],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        email = subprocess.run(
+            ["git", "-C", REPO, "log", "-1", "--format=%ae", cc.GRANDFATHERED_SQUASH],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertNotIn("Approved-by: trafford", msg)
+        bare = cc.check_commit(email, msg, "main", landing=True)
+        self.assertTrue(any("needs 'QA" in e for e in bare), bare)
+        self.assertTrue(any("Approved-by: trafford" in e for e in bare), bare)
+        self.assertEqual(cc.check_commit(email, msg, "main", grandfathered=True, landing=True), [])
+
+    def test_main_mode_passes_m1_integration_history(self):
+        roots = subprocess.run(
+            ["git", "-C", REPO, "rev-list", "--max-parents=0", cc.MAIN_GRANDFATHER_TIP],
+            capture_output=True, text=True, check=True,
+        ).stdout.split()
+        self.assertEqual(roots, ["3644ae956a37d0bd31312b8092b5d66b3810ce3e"])
+        script = os.path.join(REPO, "scripts", "check_conventions.py")
+        r = subprocess.run(
+            [sys.executable, script, "git", "--base", roots[0], "--head", cc.MAIN_GRANDFATHER_TIP, "--mode", "main"],
+            cwd=REPO, capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stdout.strip(), "PASS")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

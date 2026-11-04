@@ -20,6 +20,14 @@ AGENT_RE = re.compile(
 HUMAN_RE = re.compile(r"^human/[A-Za-z0-9._-]+$")
 QA_RE = re.compile(r"^chatgpt round [123] (pass|fail)$")
 BOT_EMAILS = {"commona-bot@users.noreply.github.com"}  # [Assumed] real bot identity set at G2
+# Sync merges ("Merge branch ...") are skipped. The other two land a PR.
+MERGE_PREFIXES = ("Merge pull request #", "Merge branch ", "Merge PR #")
+LANDING_PREFIXES = ("Merge pull request #", "Merge PR #")
+# Main mode accepts every commit reachable from this tip. m1-integration
+# was here when landing trailers moved onto the merge commit. The set
+# includes squash d376da6 (PR #63), which has neither QA nor Approved-by.
+MAIN_GRANDFATHER_TIP = "4bbbbe494f288a9eb7e41038cce846da215b0b9b"
+GRANDFATHERED_SQUASH = "d376da6a263f2d3bb064d889c540b336d949e8ea"
 CRITICAL = ("src/sharing/", "src/guard/", "src/audit/", "src/auth/", "src/room/membership")
 AUTHOR_LABELS = {"agent:cursor", "agent:community", "agent:grok-build", "human-edit"}
 QA_LABELS = {"qa-round-1", "qa-round-2", "qa-round-3"}
@@ -86,10 +94,49 @@ def trailers(msg):
     return earlier + parsed, bad
 
 
-def check_commit(email, msg, mode):
+def main_trailer_gaps(keys):
+    """Missing landing trailers. `fail` is not enough on the commit that lands."""
+    errs = []
+    qa = keys.get("QA", [None])[0]
+    if not qa or not QA_RE.match(qa) or not qa.endswith(" pass"):
+        errs.append("commit on main needs 'QA: chatgpt round <n> pass'")
+    if keys.get("Approved-by", [None])[0] != "trafford":
+        errs.append("commit on main needs 'Approved-by: trafford'")
+    return errs
+
+
+def main_landing_errors(msg):
+    """Trailer rules for a merge commit that lands a PR. No subject or authorship rule."""
+    errs = []
+    tr, bad = trailers(msg)
+    errs += [f"malformed trailer line: {b!r}" for b in bad]
+    keys = {}
+    for k, v in tr:
+        if k not in ALLOWED:
+            errs.append(f"unknown trailer key: {k!r}")
+        keys.setdefault(k, []).append(v)
+    for k in ("QA", "Approved-by"):
+        if len(keys.get(k, [])) > 1:
+            errs.append(f"trailer {k} appears more than once")
+    return errs + main_trailer_gaps(keys)
+
+
+def check_commit(email, msg, mode, *, grandfathered=False, landing=False):
+    """`landing` is a first-parent non-merge (squash or direct push).
+
+    In main mode the QA and Approved-by trailers are required on the commit
+    that lands the PR: a `Merge pull request` / `Merge PR` commit, or a
+    first-parent non-merge. Agent commits inside the PR are not landing
+    commits and do not need those trailers. Commits grandfathered from
+    MAIN_GRANDFATHER_TIP, including GRANDFATHERED_SQUASH, are accepted.
+    """
+    if mode == "main" and grandfathered:
+        return []
     errs = []
     subject = msg.split("\n", 1)[0]
-    if subject.startswith(("Merge pull request #", "Merge branch ")):
+    if subject.startswith(MERGE_PREFIXES):
+        if mode == "main" and subject.startswith(LANDING_PREFIXES):
+            errs.extend(main_landing_errors(msg))
         return errs
     if len(subject) > 72:
         errs.append(f"subject longer than 72 chars: {subject!r}")
@@ -127,12 +174,20 @@ def check_commit(email, msg, mode):
     appr = keys.get("Approved-by", [None])[0]
     if appr and appr != "trafford":
         errs.append(f"Approved-by must be 'trafford': {appr!r}")
-    if mode == "main":
-        if not qa or not qa.endswith(" pass"):
-            errs.append("commit on main needs 'QA: chatgpt round <n> pass'")
-        if appr != "trafford":
-            errs.append("commit on main needs 'Approved-by: trafford'")
+    if mode == "main" and landing:
+        errs.extend(main_trailer_gaps(keys))
     return errs
+
+
+def grandfathered_shas():
+    """Commits main mode accepts as already landed. Empty outside this repo."""
+    probe = subprocess.run(["git", "cat-file", "-e", MAIN_GRANDFATHER_TIP], capture_output=True)
+    if probe.returncode != 0:
+        return set()
+    out = subprocess.run(
+        ["git", "rev-list", MAIN_GRANDFATHER_TIP], capture_output=True, text=True, check=True
+    ).stdout
+    return set(out.split())
 
 
 def parse_commit_stream(text):
@@ -155,6 +210,53 @@ def run_commits(commits, mode):
             failed = True
             first = msg.splitlines()[0] if msg else ""
             print(f"commit {i+1} ({first}): {e}")
+    return failed, human_any
+
+
+def _git_records(base, head):
+    cmd = ["git", "log", "--format=%x1e%H%n%ae%n%B", f"{base}..{head}"]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    records = []
+    for chunk in out.split("\x1e"):
+        chunk = chunk.strip("\n")
+        if not chunk.strip():
+            continue
+        parts = chunk.split("\n", 2)
+        sha = parts[0].strip()
+        email = parts[1].strip() if len(parts) > 1 else ""
+        msg = parts[2] if len(parts) > 2 else ""
+        records.append((sha, email, msg))
+    return records
+
+
+def run_git(base, head, mode):
+    """Main mode uses the first-parent line to see what landed.
+
+    A merge commit on that line needs QA and Approved-by. So does a
+    non-merge on that line (a squash, or a commit pushed straight on).
+    Commits that arrived only as the second parent are the agent commits
+    inside the PR and do not need those trailers. Grandfathered commits
+    are not re-checked.
+    """
+    records = _git_records(base, head)
+    first = set()
+    grand = set()
+    if mode == "main":
+        listed = subprocess.run(
+            ["git", "rev-list", "--first-parent", f"{base}..{head}"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        first = set(listed.split())
+        grand = grandfathered_shas()
+    failed = human_any = False
+    for i, (sha, email, msg) in enumerate(records):
+        if re.search(r"^Authored-by: human/", msg, re.M):
+            human_any = True
+        subject = msg.split("\n", 1)[0]
+        landing = sha in first and not subject.startswith(MERGE_PREFIXES)
+        for e in check_commit(email, msg, mode, grandfathered=sha in grand, landing=landing):
+            failed = True
+            print(f"commit {i+1} ({subject}): {e}")
     return failed, human_any
 
 
@@ -206,9 +308,7 @@ def main(argv=None):
     if a.cmd == "commits":
         failed, _ = run_commits(parse_commit_stream(sys.stdin.read()), a.mode)
     elif a.cmd == "git":
-        out = subprocess.run(["git", "log", "--format=%x1e%ae%n%B", f"{a.base}..{a.head}"],
-                             capture_output=True, text=True, check=True).stdout
-        failed, human = run_commits(parse_commit_stream(out), a.mode)
+        failed, human = run_git(a.base, a.head, a.mode)
         if a.human_out:
             with open(a.human_out, "w") as f:
                 f.write("1" if human else "0")
