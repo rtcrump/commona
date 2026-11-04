@@ -1,4 +1,4 @@
-import { env, runDurableObjectAlarm, runInDurableObject, SELF } from "cloudflare:test";
+import { env, evictDurableObject, runDurableObjectAlarm, runInDurableObject, SELF } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   WAKE_EVENT_TYPE,
@@ -263,6 +263,73 @@ describe("worker wakes", () => {
     expect(done).toEqual([expect.objectContaining({ id: laterId, state: "webhook_succeeded", attempts: 2 })]);
   });
 
+  it("retries the first send after a reset once the recovery deadline passes", async () => {
+    // The webhook call records the recovery row, then stops. No attempt is
+    // stored and deferRetry does not run. Eviction drops the in-memory service.
+    const room = await openRoom();
+    await runInDurableObject(directory(), (instance) => {
+      instance.saveAgentWebhook(room.hostAgentId, webhookUrl);
+      instance.recordWakeFetches(200);
+      instance.resetNextWakeSend();
+    });
+
+    let evicted = false;
+    try {
+      await postNote(room.roomId, room.guestKey, note);
+      const started = await waitForResetSend(room.roomId);
+      const wakeId = started.wakeId;
+      const dueMs = started.dueMs;
+      const remaining = dueMs - Date.now();
+      expect(remaining).toBeGreaterThan(1_000);
+      expect(remaining).toBeLessThanOrEqual(WAKE_RETRY_DELAYS_MS[0] + 500);
+      expect(started.attempts).toBe(0);
+      expect(started.state).toBe("pending");
+
+      await evictDurableObject(directory());
+      evicted = true;
+
+      const stored = await runInDurableObject(directory(), (instance) => instance.wakeAlarmRows());
+      expect(stored.find((row) => row.wakeId === wakeId)).toEqual({ wakeId, dueMs });
+      const parked = await runInDurableObject(directory(), (instance) => instance.wakeRows());
+      expect(parked.filter((row) => row.roomId === room.roomId)).toEqual([
+        expect.objectContaining({ id: wakeId, state: "pending", attempts: 0 }),
+      ]);
+
+      await runInDurableObject(directory(), (instance) => {
+        instance.recordWakeFetches(200);
+        instance.postponeOtherWakes([wakeId], Date.now() + 120_000);
+      });
+      expect(await runDurableObjectAlarm(directory())).toBe(true);
+      const early = await runInDurableObject(directory(), (instance) => instance.wakeRows());
+      expect(early.filter((row) => row.roomId === room.roomId)).toEqual([
+        expect.objectContaining({ id: wakeId, state: "pending", attempts: 0 }),
+      ]);
+      expect(await runInDurableObject(directory(), (instance) => instance.wakeFetches())).toEqual([]);
+      expect(await runInDurableObject(directory(), (instance) => instance.scheduledAlarm())).toBe(dueMs);
+
+      await runInDurableObject(directory(), (instance) => {
+        instance.setWakeDue(wakeId, Date.now());
+      });
+      expect(await runDurableObjectAlarm(directory())).toBe(true);
+      const done = await waitForWakes(room.roomId, (found) => found[0]?.state === "webhook_succeeded");
+      expect(done).toEqual([expect.objectContaining({ id: wakeId, state: "webhook_succeeded", attempts: 1 })]);
+      const fetches = await runInDurableObject(directory(), (instance) => instance.wakeFetches());
+      expect(fetches).toHaveLength(1);
+      expect(JSON.parse(fetches[0]?.body ?? "")).toMatchObject({
+        wakeId,
+        roomId: room.roomId,
+        content: { kind: "message", text: note },
+      });
+      const after = await runInDurableObject(directory(), (instance) => instance.wakeAlarmRows());
+      expect(after.filter((row) => row.wakeId === wakeId)).toEqual([]);
+      expect(JSON.stringify(fetches)).not.toContain(room.guestKey);
+      expect(JSON.stringify(fetches)).not.toContain(room.hostKey);
+      expect(JSON.stringify(fetches)).not.toContain(hostSecret);
+    } finally {
+      if (!evicted) await evictDurableObject(directory()).catch(() => undefined);
+    }
+  });
+
   it("keeps the scheduling row while the webhook request is in flight", async () => {
     const room = await openRoom();
     await runInDurableObject(directory(), (instance) => {
@@ -381,6 +448,26 @@ interface WakeRow {
   roomId: string;
   state: string;
   attempts: number;
+}
+
+async function waitForResetSend(
+  roomId: string,
+): Promise<{ wakeId: string; dueMs: number; state: string; attempts: number }> {
+  let last: { wakeId: string; dueMs: number; state: string; attempts: number } | undefined;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const rows = await runInDurableObject(directory(), (instance) => instance.wakeRows());
+    const wake = rows.find((row) => row.roomId === roomId);
+    if (wake) {
+      const during = await runInDurableObject(directory(), (instance) => instance.alarmsDuringFetchFor(wake.id));
+      const held = during.find((row) => row.wakeId === wake.id);
+      if (held) {
+        last = { wakeId: wake.id, dueMs: held.dueMs, state: wake.state, attempts: wake.attempts };
+        return last;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return last ?? { wakeId: "", dueMs: 0, state: "", attempts: -1 };
 }
 
 async function waitForWakes(roomId: string, ready: (rows: WakeRow[]) => boolean): Promise<WakeRow[]> {

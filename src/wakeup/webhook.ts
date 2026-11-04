@@ -28,6 +28,17 @@ export interface WebhookFailure {
 export type WebhookAttempt = WebhookSuccess | WebhookFailure;
 
 /**
+ * The send was abandoned before a response. Not a network failure, so the
+ * caller does not count an attempt or schedule a new retry.
+ */
+export class WakeSendStopped extends Error {
+  constructor() {
+    super("wake send stopped");
+    this.name = "WakeSendStopped";
+  }
+}
+
+/**
  * POST one wake.
  * The URL is checked again here, so a row that bypassed registration still cannot use plain http.
  * The body bytes that are signed are the body bytes that are sent.
@@ -74,7 +85,8 @@ export async function postWakeWebhook(args: {
       return { ok: true, httpStatus: response.status };
     }
     return { ok: false, reasonCode: ReasonCode.WebhookHttp, httpStatus: response.status };
-  } catch {
+  } catch (error) {
+    if (error instanceof WakeSendStopped) throw error;
     if (controller.signal.aborted) {
       return { ok: false, reasonCode: ReasonCode.WebhookTimeout };
     }

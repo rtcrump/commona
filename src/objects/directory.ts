@@ -29,6 +29,7 @@ import { signingSecretFor } from "../wakeup/secret.js";
 import { createWakeService, type WakeService } from "../wakeup/service.js";
 import { sendSmtp, smtpFromEnv, type SmtpEndpoint } from "../wakeup/smtp.js";
 import { registerWorkerMailTransport } from "../wakeup/smtp-worker.js";
+import { WakeSendStopped } from "../wakeup/webhook.js";
 
 interface DurableRoomStorage extends DurableSqlStorage {
   deleteAlarm(): Promise<void>;
@@ -60,6 +61,8 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
   private capturedMail: WakeEmail[] = [];
   /** Alarm rows observed while a webhook request was in flight, keyed by wake id. */
   private alarmsDuringFetch = new Map<string, { wakeId: string; dueMs: number }[]>();
+  /** Test hook. The next webhook call records the deadline, then the send stops. */
+  private resetNextSend = false;
 
   constructor(ctx: DurableObjectState, env: CommonaEnv) {
     super(ctx, env);
@@ -91,7 +94,7 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
       audit,
       notices,
       allowInsecureLocalhost: allowInsecureLocalWebhook(env),
-      fetchImpl: (input, init) => (this.fetchOverride ?? fetch)(input, init),
+      fetchImpl: (input, init) => this.fetchWake(input, init),
       sendMail: (email) => this.dispatchMail(email),
       deferRetry: (wakeId, delayMs) => this.deferWake(wakeId, delayMs),
       ...(this.smtpEndpoint ? { smtp: this.smtpEndpoint } : {}),
@@ -114,14 +117,75 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     this.app = createHttpApp(deps);
   }
 
-  /** Keep the background delivery alive after the HTTP response is returned. */
+  /**
+   * Keep the background delivery alive after the HTTP response is returned.
+   * A recovery deadline is stored before the send. A reset while the webhook
+   * or mail call is in flight leaves that row, and the alarm retries it once
+   * the deadline passes. The row is removed when delivery reaches a terminal
+   * state. A failed attempt replaces it with the next retry.
+   */
   private deliverWake(wakeId: string): Promise<void> {
-    const pending = this.wake.deliver(wakeId).then(
-      () => undefined,
-      () => undefined,
-    );
+    const pending = this.deliverWakeOnce(wakeId);
     this.ctx.waitUntil(pending);
     return pending;
+  }
+
+  private async deliverWakeOnce(wakeId: string): Promise<void> {
+    await this.persistRecoveryDeadline(wakeId);
+    try {
+      const result = await this.wake.deliver(wakeId);
+      if (result.state !== WakeState.Pending) await this.finishRecoveryDeadline(wakeId);
+    } catch (error) {
+      if (error instanceof ContractError && error.message === "wake not found") {
+        await this.finishRecoveryDeadline(wakeId);
+      }
+    }
+  }
+
+  /**
+   * The first retry delay. Insert ignores a row that is already scheduled so
+   * a later retry keeps its own deadline. The alarm is armed before the send.
+   */
+  private async persistRecoveryDeadline(wakeId: string): Promise<void> {
+    const due = Date.now() + WAKE_RETRY_DELAYS_MS[0];
+    this.deps.db
+      .prepare(
+        `INSERT INTO wake_alarms (wake_id, due_ms) VALUES (?, ?)
+         ON CONFLICT(wake_id) DO NOTHING`,
+      )
+      .run(wakeId, due);
+    await this.armWakeAlarm();
+  }
+
+  /**
+   * Drop a finished wake's recovery row. Clear or move the platform alarm
+   * only when it was this row's deadline, so an earlier alarm set for
+   * another reason stays.
+   */
+  private async finishRecoveryDeadline(wakeId: string): Promise<void> {
+    const row = this.deps.db.prepare("SELECT due_ms AS dueMs FROM wake_alarms WHERE wake_id = ?").get(wakeId) as
+      | { dueMs: number }
+      | undefined;
+    this.deleteWakeAlarm(wakeId);
+    const next = this.deps.db.prepare("SELECT MIN(due_ms) AS due FROM wake_alarms").get() as
+      | { due: number | null }
+      | undefined;
+    const existing = await this.storage().getAlarm();
+    if (next?.due != null) {
+      if (existing === next.due) return;
+      if (existing === null || (row !== undefined && existing === row.dueMs)) await this.storage().setAlarm(next.due);
+      return;
+    }
+    if (row !== undefined && existing === row.dueMs) await this.storage().deleteAlarm();
+  }
+
+  private fetchWake(input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): ReturnType<typeof fetch> {
+    if (!this.resetNextSend) return (this.fetchOverride ?? fetch)(input, init);
+    this.resetNextSend = false;
+    const request = new Request(input, init);
+    const wakeId = request.headers.get(WAKE_HEADER_WAKE_ID);
+    if (wakeId) this.alarmsDuringFetch.set(wakeId, this.wakeAlarmRows());
+    throw new WakeSendStopped();
   }
 
   private async dispatchMail(email: WakeEmail): Promise<void> {
@@ -458,6 +522,15 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
   }
 
   /**
+   * Test hook. The next webhook call records the scheduling rows, then stops
+   * the send without a retry. Evicting the object drops the in-memory attempt.
+   * Storage stays.
+   */
+  resetNextWakeSend(): void {
+    this.resetNextSend = true;
+  }
+
+  /**
    * Record wake POSTs inside the object and answer them with `status`.
    * Production leaves this unset and uses the real fetch.
    */
@@ -521,6 +594,7 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     this.capturedMail = [];
     this.recordedStatus = 200;
     this.alarmsDuringFetch = new Map();
+    this.resetNextSend = false;
   }
 }
 
