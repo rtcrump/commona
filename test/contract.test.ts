@@ -102,6 +102,14 @@ describe("audit contract", () => {
     expect(() => assertDetail({ text: "hidden" } as never)).toThrow(/not allowed/);
   });
 
+  it("allows a short display name and rejects a label that is not that shape", () => {
+    expect(() => assertDetail({ displayName: "Riley" })).not.toThrow();
+    expect(() => assertDetail({ displayName: "Anne-Marie" })).not.toThrow();
+    expect(() => assertDetail({ displayName: "R".repeat(41) })).toThrow(/displayName/);
+    expect(() => assertDetail({ displayName: "Riley 2" })).toThrow(/displayName/);
+    expect(() => assertDetail({ displayName: "Riley\nLee" })).toThrow(/displayName/);
+  });
+
   it("seals a chain and reports the tampered index", () => {
     const first = sealAuditRecord(GENESIS_PREV_HASH, base);
     const second = sealAuditRecord(first.hash, {
