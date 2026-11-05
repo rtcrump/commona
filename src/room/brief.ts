@@ -1,4 +1,11 @@
-import { AuditAction, AuditResult, isIsoTimestamp, ReasonCode, type AuthPrincipal } from "../../contract/index.js";
+import {
+  AuditAction,
+  AuditResult,
+  isIsoTimestamp,
+  ReasonCode,
+  type AuthPrincipal,
+  type ContentGuard,
+} from "../../contract/index.js";
 import { actorId, nowStamp, refuse } from "./access.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
@@ -45,10 +52,14 @@ export function readBrief(deps: RoomDeps, roomId: string): RoomBrief | null {
     .prepare("SELECT task, end_condition, deadline FROM room_briefs WHERE room_id = ?")
     .get(roomId) as { task: string; end_condition: string; deadline: string } | undefined;
   if (!row) return null;
-  return { task: row.task, endCondition: row.end_condition, deadline: row.deadline };
+  const brief = { task: row.task, endCondition: row.end_condition, deadline: row.deadline };
+  // A blocked name is not shown. The row is not copied into a response or a log.
+  if (briefNamesBlocked(deps.guard, brief)) return null;
+  return brief;
 }
 
 export function saveBrief(deps: RoomDeps, roomId: string, brief: RoomBrief): void {
+  assertBriefAllowed(deps.guard, brief);
   ensureBriefSchema(deps.db);
   deps.db
     .prepare(
@@ -65,10 +76,12 @@ export function saveBrief(deps: RoomDeps, roomId: string, brief: RoomBrief): voi
  * The brief object on a host request. A missing brief is omitted.
  * A present brief that fails the checks throws, and the caller creates no room.
  */
-export function optionalBrief(body: unknown, now: Date): RoomBrief | undefined {
+export function optionalBrief(body: unknown, now: Date, guard: ContentGuard): RoomBrief | undefined {
   if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
   if (!("brief" in body)) return undefined;
-  return parseBrief((body as { brief?: unknown }).brief, now);
+  const brief = parseBrief((body as { brief?: unknown }).brief, now);
+  assertBriefAllowed(guard, brief);
+  return brief;
 }
 
 export function parseBrief(value: unknown, now: Date): RoomBrief {
@@ -109,11 +122,12 @@ export function setBrief(deps: RoomDeps, principal: AuthPrincipal, roomId: strin
   let brief: RoomBrief;
   try {
     brief = parseBrief(body, deps.clock.now());
+    assertBriefAllowed(deps.guard, brief);
+    saveBrief(deps, roomId, brief);
   } catch (error) {
     if (error instanceof BriefInputError) throw RoomHttpError.badRequest();
     throw error;
   }
-  saveBrief(deps, roomId, brief);
   deps.audit.append({
     ts: nowStamp(deps),
     room: roomId,
@@ -124,6 +138,21 @@ export function setBrief(deps: RoomDeps, principal: AuthPrincipal, roomId: strin
     detail: { itemId: roomId },
   });
   return brief;
+}
+
+/**
+ * The same check an ordinary post uses. A block throws before the text is saved.
+ * The error does not include the text.
+ */
+function assertBriefAllowed(guard: ContentGuard, brief: RoomBrief): void {
+  if (briefNamesBlocked(guard, brief)) throw new BriefInputError("Invalid request.");
+}
+
+function briefNamesBlocked(guard: ContentGuard, brief: RoomBrief): boolean {
+  return (
+    guard.check({ kind: "message", text: brief.task }).outcome === "block" ||
+    guard.check({ kind: "message", text: brief.endCondition }).outcome === "block"
+  );
 }
 
 function requireBriefText(raw: string, message: string): string {
