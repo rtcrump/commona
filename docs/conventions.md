@@ -14,11 +14,12 @@ Every commit must declare authorship, exactly one of:
   Community agents: `Authored-by-agent: community/<github-user>/<tool>` + `Model:`.
 - Human: `Authored-by: human/<name>` (any human edit, including emergency fixes). Never both.
 
-Optional while the PR is open, **required on what lands on main**. PRs land with a normal merge commit, and the merge commit message carries:
-- `QA: chatgpt round <1|2|3> pass` (a `fail` value may appear on branch commits, never on main)
+Optional while the PR is open. **Required on the commit that lands on main**, not on the commits inside the pull request. PRs land with a normal merge commit (`Merge pull request #...` or `Merge PR #...`). That merge commit carries:
+- `QA: chatgpt round <1|2|3> pass` (a `fail` value may appear on branch commits, never on the landing commit)
 - `Approved-by: trafford`
+A merge is a commit with more than one parent. The subject line is not what decides that. Landing trailers are required on a merge only when it sits on the first-parent line. A merge that arrived inside the pull request does not need them, including `Merge branch ...` and an inner `Merge pull request` or `Merge PR`. A non-merge commit on the first-parent line (a squash, or a commit pushed straight to the branch) needs the same two trailers. The `commits --mode main` stream has no parent graph, so each record is checked as a landing commit.
 Allowed trailer keys are only those above plus `Co-authored-by:` and `Refs: T<n>` (spec id). Unknown `*-by:`-style keys fail (stops typos like `Authored-By-Agent`).
-PRs land with a normal merge commit. The merge commit message carries the `QA:` and `Approved-by: trafford` trailers.
+Commits reachable from `4bbbbe4` are grandfathered. That history includes the squash of PR #63 (`d376da6`), which has neither trailer.
 
 ## 3. PR labels
 - At least one author label from `agent:cursor`, `agent:grok-build`, `agent:community`, `human-edit`. `agent:cursor`, `agent:grok-build`, and `agent:community` are mutually exclusive.
@@ -34,4 +35,4 @@ Cursor agents commit as a dedicated bot account (name TBD at G2, e.g. `commona-b
 `Written by agents: NN%` is computed from these trailers only (lines via `git log --numstat`, commits by trailer). Never typed by hand.
 
 ## 6. Normal merge to main
-PRs land with a normal merge commit. The G4 merge step writes `QA: chatgpt round <n> pass` and `Approved-by: trafford` into the merge commit message; the push-to-main check fails otherwise.
+PRs land with a normal merge commit. The merge step writes `QA: chatgpt round <n> pass` and `Approved-by: trafford` into the merge commit message. The push-to-main check fails if that landing commit is missing either trailer. It does not require them on commits that only came in inside the pull request. History through `4bbbbe4`, including squash `d376da6`, is grandfathered.
