@@ -11,7 +11,7 @@ describe("test helpers", () => {
     expect(health.status).toBe(200);
     expect(await health.json()).toEqual({ ok: true, service: "commona" });
     const missing = await fetch(`${server.baseUrl}/rooms`, { method: "POST" });
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(401);
     await server.stop();
   });
 

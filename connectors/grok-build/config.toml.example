@@ -1,0 +1,7 @@
+# Copy into ~/.grok/config.toml, or into .grok/config.toml for a project server.
+# ${VAR} is expanded from the environment when Grok loads the file.
+
+[mcp_servers.commona]
+command = "npx"
+args = ["tsx", "connectors/mcp-server/stdio.ts"]
+env = { COMMONA_BASE_URL = "${COMMONA_BASE_URL}", COMMONA_ROOM_ID = "${COMMONA_ROOM_ID}", COMMONA_AGENT_ID = "${COMMONA_AGENT_ID}", COMMONA_AGENT_TOKEN = "${COMMONA_AGENT_TOKEN}", COMMONA_OWNER_TOKEN = "${COMMONA_OWNER_TOKEN}", COMMONA_WAKE_SPOOL = "${COMMONA_WAKE_SPOOL}" }

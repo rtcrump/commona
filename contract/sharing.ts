@@ -38,6 +38,14 @@ export function isSharingLevel(value: unknown): value is SharingLevel {
 }
 
 /**
+ * The only write a narrow sharing key may make.
+ * The current edge must be messages, and the requested edge must be none.
+ */
+export function narrowSharingAllowed(current: SharingLevel, next: SharingLevel): boolean {
+  return current === SharingLevel.Messages && next === SharingLevel.None;
+}
+
+/**
  * Whether a viewer may see an item of this kind.
  * An owner's own items are always visible at this layer. Held items are excluded
  * earlier, by {@link feedIncludes}.
@@ -97,7 +105,10 @@ export interface SharingRow {
 /** Refusal from {@link SharingDirectory.update}. The room route audits this. It is not a thrown error. */
 export interface SharingUpdateRefusal {
   allowed: false;
-  reasonCode: typeof ReasonCode.AgentCannotChangeSharing | typeof ReasonCode.NotOwner;
+  reasonCode:
+    | typeof ReasonCode.AgentCannotChangeSharing
+    | typeof ReasonCode.NotOwner
+    | typeof ReasonCode.SharingNarrow;
 }
 
 export type SharingUpdateResult = { allowed: true; sharing: SharingRow } | SharingUpdateRefusal;
@@ -124,6 +135,9 @@ export interface SharingDirectory {
    * An agent token is refused with `agent_cannot_change_sharing`, even when that
    * agent belongs to `fromOwnerId`. An owner token is allowed only when its id
    * is `fromOwnerId`; otherwise the reason is `not_owner`.
+   * A narrow sharing key is allowed only when {@link narrowSharingAllowed} is true
+   * for its own outbound edge. Any other write is `sharing_narrow`, or `not_owner`
+   * when `fromOwnerId` is not the key's owner.
    * The sharing module does not write the audit row. The room route does.
    */
   update(

@@ -1,4 +1,4 @@
-/** Agent-to-agent replies send wakes for rounds 1, 2, and 3. Round 4 is stored and not woken. */
+/** Agent-to-agent exchanges send wakes for rounds 1, 2, and 3. Round 4 is stored and not woken. */
 export const DEFAULT_MAX_AGENT_ROUNDS = 3;
 
 export function roundForPost(args: {

@@ -5,23 +5,29 @@
   "description": "Open-source multi-owner room where cloud agents owned by different people collaborate.",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.5.0"
   },
   "scripts": {
-    "start": "tsx src/index.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "start": "wrangler dev",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-onboarding-pages.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
-    "test": "vitest run",
-    "m1": "tsx scripts/m1-placeholder.ts",
+    "test": "node --experimental-sqlite ./node_modules/vitest/vitest.mjs run --config vitest.config.ts && node ./node_modules/vitest/vitest.mjs run --config vitest.workers.config.ts",
+    "m1": "node --experimental-sqlite --import tsx scripts/m1.ts",
+    "demo:lunch": "node --experimental-sqlite --import tsx scripts/demo-lunch.ts",
+    "room:new": "tsx scripts/room-new.ts",
+    "room:delete": "tsx scripts/room-delete.ts",
+    "stats": "tsx scripts/agent-written.ts --write --include-workdir",
+    "stats:check": "tsx scripts/agent-written.ts --check",
     "check:fake-data": "bash scripts/check-fake-data.sh",
     "check:conventions": "python3 scripts/test_check_conventions.py"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
-    "fastify": "^5.6.1"
+    "hono": "^4.13.13"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.23.0",
+    "@cloudflare/workers-types": "^5.20261018.1",
     "@eslint/js": "^9.36.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.18.6",
@@ -29,6 +35,13 @@
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.44.0",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11",
+    "wrangler": "^4.151.1"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "esbuild@0.28.2": true,
+    "workerd@1.20260815.1": true,
+    "workerd@1.20261012.1": true
   }
 }

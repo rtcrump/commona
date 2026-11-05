@@ -1,0 +1,172 @@
+name: claude-safety-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, labeled]
+
+# Least privilege. Claude may comment on the pull request. It cannot push:
+# contents stays read, the checkout does not persist credentials, and the
+# action is not given commit or push tools.
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: claude-safety-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Decide whether to review
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "${PR}" in
+            ''|*[!0-9]*) printf '%s\n' "PR number is not an integer" >&2; exit 1 ;;
+          esac
+          case "${REPO}" in
+            */*/*|'') printf '%s\n' "refusing repository" >&2; exit 1 ;;
+          esac
+          owner="${REPO%%/*}"
+          name="${REPO#*/}"
+          case "${owner}" in
+            ''|*[!A-Za-z0-9_.-]*) printf '%s\n' "refusing repository owner" >&2; exit 1 ;;
+          esac
+          case "${name}" in
+            ''|*[!A-Za-z0-9_.-]*) printf '%s\n' "refusing repository name" >&2; exit 1 ;;
+          esac
+          # Keep the file list out of the checkout. The commit check below
+          # treats any worktree change as Claude writing code.
+          case "${RUNNER_TEMP}" in
+            ''|*[!A-Za-z0-9._/-]*) printf '%s\n' "refusing runner temp" >&2; exit 1 ;;
+          esac
+          file_list="${RUNNER_TEMP}/changed-files.txt"
+          gh api --paginate "repos/${REPO}/pulls/${PR}/files" --jq '.[].filename' > "${file_list}"
+          result="$(LABELS_JSON="${LABELS_JSON}" python3 .github/scripts/safety_core_gate.py --files "${file_list}" --paths .github/safety-core-paths.txt)"
+          case "${result}" in
+            true) ;;
+            false)
+              printf '%s\n' "review=false" >> "${GITHUB_OUTPUT}"
+              exit 0
+              ;;
+            *) printf '%s\n' "refusing gate result" >&2; exit 1 ;;
+          esac
+          if [ -z "${CLAUDE_TOKEN}" ]; then
+            echo "::notice title=Claude safety review skipped::CLAUDE_CODE_OAUTH_TOKEN is not set. This safety-core pull request was not sent to Claude."
+            printf '%s\n' "review=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          printf '%s\n' "review=true" >> "${GITHUB_OUTPUT}"
+
+      # The prompt receives the pull request number only. Title, body, and
+      # branch names are not interpolated here. Reviewers comment; they do not commit.
+      - name: Claude safety review
+        id: claude
+        if: steps.gate.outputs.review == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          # Agent pushes arrive as cursor[bot]. The action rejects every bot
+          # unless it is named here. The match strips a trailing [bot], and
+          # this does not allow any other bot.
+          allowed_bots: "cursor[bot]"
+          use_commit_signing: "false"
+          include_fix_links: "false"
+          prompt: |
+            Review pull request ${{ github.event.pull_request.number }} in ${{ github.repository }} for safety-core defects only.
+            The branch is already checked out. Read the diff with gh pr diff and gh pr view. Then read only the safety-core files that diff touches, plus AGENTS.md, SECURITY.md, and .github/safety-core-paths.txt.
+            Flag P0 or P1 when a change could leak data across owners; let a patient name, health number, or date of birth through, apart from the known limits in SECURITY.md; edit, delete, or truncate audit entries undetected; bypass the loop limit; or skip join auth. Real data in fixtures is P0. Changing acceptance test wording is P1. Known limits and style nits are not findings.
+            A clean review has no P0 and no P1.
+            Do not commit. Do not push. Do not edit files. Do not open a branch or a pull request. Reviewers only review.
+            Do not retry a tool that was denied.
+            Post one pull request comment with the verdict (clean or fail) and the findings, then stop.
+          # No --json-schema here. A JSON object in claude_args is passed through
+          # a shell, and brace expansion deletes a closing brace, so the CLI
+          # rejects the schema. The archive step reads the execution log instead.
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --disallowedTools "Edit,Write,NotebookEdit,Bash(git commit:*),Bash(git push:*),Bash(git rebase:*),Bash(gh pr merge:*)"
+          settings: |
+            {"permissions":{"deny":["Edit","Write","NotebookEdit"]}}
+
+      - name: Refuse a Claude commit
+        if: steps.gate.outputs.review == 'true'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          case "${HEAD_SHA}" in
+            *[!0-9a-fA-F]*|'') printf '%s\n' "refusing head sha" >&2; exit 1 ;;
+          esac
+          if [ "$(git rev-parse HEAD)" != "${HEAD_SHA}" ]; then
+            printf '%s\n' "Claude created a commit. Reviewers do not push code." >&2
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain >&2
+            printf '%s\n' "Claude changed the worktree. Reviewers do not push code." >&2
+            exit 1
+          fi
+
+      - name: Check the commona-dev token
+        id: dev
+        if: steps.gate.outputs.review == 'true'
+        env:
+          DEV_TOKEN: ${{ secrets.COMMONA_DEV_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEV_TOKEN}" ]; then
+            echo "::notice title=Claude report skipped::COMMONA_DEV_TOKEN is not set, so the Claude review was not copied to commona-dev."
+            printf '%s\n' "file=false" >> "${GITHUB_OUTPUT}"
+          else
+            printf '%s\n' "file=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Check out commona-dev
+        if: steps.gate.outputs.review == 'true' && steps.dev.outputs.file == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: rtcrump/commona-dev
+          token: ${{ secrets.COMMONA_DEV_TOKEN }}
+          path: dev
+          fetch-depth: 0
+
+      - name: File the Claude review
+        if: steps.gate.outputs.review == 'true' && steps.dev.outputs.file == 'true'
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          RID: ${{ github.run_id }}
+          REVIEWER: claude
+          TITLE: ${{ github.event.pull_request.title }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          COMMIT_ID: ${{ github.event.pull_request.head.sha }}
+          HTML_URL: ${{ github.event.pull_request.html_url }}
+          KIND: claude
+          STATUS: blocking
+          BODY_FILE: review-body.txt
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/claude_review_body.py > review-body.txt
+          bash .github/scripts/write-review-report.sh
+          bash .github/scripts/file-qa-report.sh

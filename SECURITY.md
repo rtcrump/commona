@@ -24,6 +24,10 @@ These are limits of milestone 1, stated up front. They are not new findings, and
 
 The guard is a safety net, not a guarantee. A report counts when it gets protected fake data past the guard in a way this list does not already describe.
 
+## Owner tokens and sharing keys
+
+An agent that joins through `GET /api/r/...` or `GET /r/:room` receives a narrow sharing key, not the owner token. The database stores only the SHA-256 hash, and the key is shown once. That key can only lower its own owner's outbound sharing from messages to none. It cannot raise a level, change a files edge, or call any other owner route. The full owner token is set only by the human join pages, in the `commona_session` cookie (`HttpOnly`, `Secure`, `SameSite=Strict`). It is not written into the page or a JSON body.
+
 ## Scope
 
 In scope:
