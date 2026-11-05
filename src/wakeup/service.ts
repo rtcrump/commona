@@ -1,5 +1,4 @@
 import type BetterSqlite3 from "better-sqlite3";
-import { setTimeout as delay } from "node:timers/promises";
 import {
   AuditAction,
   AuditResult,
@@ -30,6 +29,7 @@ import {
   type OwnerNotifier,
   type SharingLevel,
   type WakeAddress,
+  type WakeEmail,
   type WakeEnqueueInput,
   type WakeEvent,
   type WakeFileContent,
@@ -57,8 +57,18 @@ export interface WakeServiceOptions {
   /** Defaults to the contract's 5 second webhook timeout. */
   timeoutMs?: number;
   sleep?: (ms: number) => Promise<void>;
-  /** Required for email to succeed. A missing endpoint fails the email step. */
+  /** Required for email to succeed when `sendMail` is omitted. A missing endpoint fails the email step. */
   smtp?: SmtpEndpoint;
+  /**
+   * Sends the fallback message. The Worker passes this so delivery does not import `node:net`.
+   * When omitted, `smtp` is sent with the registered mail transport.
+   */
+  sendMail?: (email: WakeEmail) => Promise<void>;
+  /**
+   * When set, a webhook attempt that will be retried is handed here instead of sleeping.
+   * The Worker schedules a Durable Object alarm and returns. Node leaves this unset and waits.
+   */
+  deferRetry?: (wakeId: string, delayMs: number) => Promise<void>;
   /**
    * Off unless the caller sets it. http is then allowed only for localhost or 127.0.0.1.
    * The no-argument server passes the process flag. Tests that use a loopback sink set this.
@@ -290,6 +300,12 @@ export function createWakeService(options: WakeServiceOptions): WakeService {
               detail: baseDetail(row, webhookDetail(result, attempt)),
               ts: now(),
             });
+            if (options.deferRetry) {
+              await options.deferRetry(row.id, delayMs);
+              const parked = loadWake(db, wakeId);
+              if (!parked) return { wakeId, state: WakeState.Failed, attempts };
+              return snapshot(parked);
+            }
             await sleep(delayMs);
             const fresh = loadWake(db, wakeId);
             if (!fresh) return { wakeId, state: WakeState.Failed, attempts };
@@ -306,10 +322,15 @@ export function createWakeService(options: WakeServiceOptions): WakeService {
 
     const emailDetail = baseDetail(row, lastWebhook ? webhookDetail(lastWebhook, attempts) : {});
     try {
-      if (!options.smtp) throw new Error("smtp is not configured");
       if (!isMailbox(address.email)) throw new Error("recipient email is invalid");
       const email = buildWakeEmail(event, address.email);
-      await sendSmtp(options.smtp, email);
+      if (options.sendMail) {
+        await options.sendMail(email);
+      } else if (options.smtp) {
+        await sendSmtp(options.smtp, email);
+      } else {
+        throw new Error("smtp is not configured");
+      }
       safeWakeLog(log, signingSecret, "info", `wake email sent wakeId=${row.id} roomId=${row.roomId}`);
       return commit(row, {
         state: WakeState.EmailSent,
@@ -629,4 +650,10 @@ function parseEvent(payloadJson: string): WakeEvent {
 
 function isMailbox(value: string): boolean {
   return /^[^\s@]+@[^\s@]+$/.test(value) && !/[\r\n]/.test(value);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
