@@ -7,25 +7,30 @@ import {
   type AuthPrincipal,
   type CreatePostResponse,
 } from "../../contract/index.js";
-import { publicOrigin } from "../http/public-origin.js";
+import { normalizeOrigin, PUBLIC_ORIGIN_MESSAGE, PublicOriginError, publicOrigin } from "../http/public-origin.js";
 import type { CommonaHono } from "../http/types.js";
 import { renderJoinGuide } from "../join/agent-guide.js";
+import { JOIN_NAME_HINT, presentedName } from "../join/agent-name.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { ensureInviteSchema } from "../join/schema.js";
 import { readBrief, setBrief } from "../room/brief.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
+import { renameJoinedAgent } from "../room/membership.js";
 import { createPost } from "../room/posts.js";
 import { recentMessages } from "../room-page/messages.js";
+import { TASK_CLOSE } from "../task-close.js";
 import { isRevokedAgentKey, revokeAgentKey } from "./keys.js";
 import { ensureAgentApiSchema } from "./schema.js";
 
 /**
  * JSON room API. It mirrors the plain HTML page: join with one invite, read posts, post a message.
  * The agent key is a bearer token. Only its SHA-256 hash is stored.
- * The redeem response also returns a narrow sharing key once, and the absolute
- * addresses for posting, reading the room, reading the room feed, and changing
- * sharing. It does not return the owner session token.
+ * The redeem response also returns a narrow sharing key once, the room brief,
+ * `close`, and the absolute addresses for posting, reading the room, reading
+ * the room feed, changing sharing, and setting this agent's display name.
+ * `close` is the instruction to report the result to the agent's own owner.
+ * It does not return the owner session token.
  * Only GET redeems an invite. Hono would otherwise run HEAD through this GET handler.
  */
 export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
@@ -36,12 +41,15 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
     if (c.req.method !== "GET") {
       return json({ error: { code: "validation", message: "Open this invite with GET." } }, HTTP_STATUS.ok);
     }
+    const origin = joinOrigin(c.req.url, c.req.header("host"));
+    if (origin instanceof Response) return origin;
     return redeemAndReturn(
       deps,
       undefined,
       c.req.param("inviteId"),
       c.req.param("secret"),
-      publicOrigin(c.req.url, c.req.header("host")),
+      origin,
+      c.req.queries("name"),
     );
   });
 
@@ -54,6 +62,7 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
       authorization: c.req.header("authorization"),
       requestUrl: c.req.url,
       host: c.req.header("host"),
+      nameValues: c.req.queries("name"),
     }),
   );
   app.get("/api/r/:room", (c) =>
@@ -65,7 +74,11 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
       authorization: c.req.header("authorization"),
       requestUrl: c.req.url,
       host: c.req.header("host"),
+      nameValues: c.req.queries("name"),
     }),
+  );
+  app.put("/api/r/:room/name", (c) =>
+    handleRename(deps, c.req.param("room"), c.req.header("authorization"), c.get("parsedBody")),
   );
   app.post("/api/r/:room", (c) => handlePost(deps, c.req.param("room"), c.req.header("authorization"), c.get("parsedBody")));
   app.put("/api/r/:room/brief", (c) => {
@@ -79,6 +92,46 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
   );
 }
 
+function joinOrigin(url: string, host: string | undefined): string | Response {
+  try {
+    return publicOrigin(url, host);
+  } catch (error) {
+    if (error instanceof PublicOriginError) return originRejected();
+    throw error;
+  }
+}
+
+function originRejected(): Response {
+  return json({ error: { code: "validation", message: PUBLIC_ORIGIN_MESSAGE } }, HTTP_STATUS.badRequest);
+}
+
+function addressesBeforeRedeem(
+  deps: RoomDeps,
+  roomHint: string | undefined,
+  inviteId: string,
+  origin: string,
+): { roomId: string; addresses: ReturnType<typeof joinAddresses> } | Response | undefined {
+  const roomId = roomIdBeforeRedeem(deps, roomHint, inviteId);
+  if (!roomId) return undefined;
+  try {
+    return { roomId, addresses: joinAddresses(origin, roomId) };
+  } catch (error) {
+    if (error instanceof Error && error.message === "refusing to send an address") return originRejected();
+    throw error;
+  }
+}
+
+function roomIdBeforeRedeem(deps: RoomDeps, roomHint: string | undefined, inviteId: string): string | null {
+  ensureInviteSchema(deps.db);
+  if (!isInviteId(inviteId)) return null;
+  const row = deps.db.prepare("SELECT room_id FROM invites WHERE id = ?").get(inviteId) as
+    | { room_id: string }
+    | undefined;
+  if (!row || !isId(row.room_id)) return null;
+  if (roomHint !== undefined && roomHint !== row.room_id) return null;
+  return row.room_id;
+}
+
 function handleRead(
   deps: RoomDeps,
   input: {
@@ -89,6 +142,7 @@ function handleRead(
     authorization: string | undefined;
     requestUrl: string;
     host: string | undefined;
+    nameValues: readonly string[] | undefined;
   },
 ): Response {
   if (input.method !== "GET") {
@@ -99,7 +153,9 @@ function handleRead(
   }
   const secret = input.secret && input.secret.length > 0 ? input.secret : null;
   if (secret) {
-    return redeemAndReturn(deps, input.roomId, input.inviteId, secret, publicOrigin(input.requestUrl, input.host));
+    const origin = joinOrigin(input.requestUrl, input.host);
+    if (origin instanceof Response) return origin;
+    return redeemAndReturn(deps, input.roomId, input.inviteId, secret, origin, input.nameValues);
   }
   return readForBearer(deps, input.roomId, input.authorization);
 }
@@ -110,18 +166,28 @@ function redeemAndReturn(
   inviteId: string | null,
   secret: string,
   origin: string,
+  nameValues: readonly string[] | undefined,
 ): Response {
+  const presented = presentedName(nameValues);
   const id = inviteId ?? (roomHint === undefined ? null : inviteIdForSecret(deps, roomHint, secret));
   if (!id) return json(RoomHttpError.forbidden().body(), HTTP_STATUS.forbidden);
+  // Addresses are checked before redeem. A bad origin must fail while the invite is still unused.
+  const prepared = addressesBeforeRedeem(deps, roomHint, id, origin);
+  if (prepared instanceof Response) return prepared;
   let redeemed;
   try {
-    redeemed = redeemInvite(deps, id, secret, roomHint, { defaultRoomPosts: true });
+    // The name is classified here and checked inside redeemInvite, after the invite passes.
+    redeemed = redeemInvite(deps, id, secret, roomHint, {
+      defaultRoomPosts: true,
+      ...(presented.state === "invalid" ? { invalidAgentName: true } : {}),
+      ...(presented.state === "chosen" ? { agentName: presented.name } : {}),
+    });
   } catch (error) {
     if (error instanceof RoomHttpError) return json(error.body(), error.status);
     throw error;
   }
   const roomId = redeemed.member.roomId;
-  const addresses = joinAddresses(origin, roomId);
+  const addresses = prepared?.roomId === roomId ? prepared.addresses : joinAddresses(origin, roomId);
   const principal: AuthPrincipal = {
     kind: "agent",
     agentId: redeemed.agent.id,
@@ -137,12 +203,15 @@ function redeemAndReturn(
     roomId,
     agentId: principal.agentId,
     ownerId: principal.ownerId,
+    displayName: redeemed.agent.displayName,
+    naming: JOIN_NAME_HINT,
     title: roomTitle(deps, roomId),
     brief: readBrief(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
     guide: renderJoinGuide(),
     agentKey,
     sharingKey,
+    close: TASK_CLOSE,
     addresses,
   };
   assertHidden(
@@ -152,6 +221,7 @@ function redeemAndReturn(
       ownerId: body.ownerId,
       title: body.title,
       posts: body.posts,
+      close: body.close,
       addresses: body.addresses,
     }),
     [secret, agentKey, sharingKey, sessionToken],
@@ -168,8 +238,17 @@ function readForBearer(deps: RoomDeps, roomId: string, authorization: string | u
     title: roomTitle(deps, roomId),
     brief: readBrief(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
+    close: TASK_CLOSE,
   };
   return json(body, HTTP_STATUS.ok);
+}
+
+function handleRename(deps: RoomDeps, roomId: string, authorization: string | undefined, body: unknown): Response {
+  if (!isId(roomId) || !roomExists(deps, roomId)) {
+    return json(RoomHttpError.notFound().body(), HTTP_STATUS.notFound);
+  }
+  const principal = requireAgent(deps, authorization);
+  return json(renameJoinedAgent(deps, principal, roomId, body), HTTP_STATUS.ok);
 }
 
 function handlePost(deps: RoomDeps, roomId: string, authorization: string | undefined, body: unknown): Response {
@@ -219,12 +298,15 @@ interface JoinAddress {
  * Absolute addresses for the room this join just opened.
  * `read` is the posts list. `feed` is the room feed.
  * `sharing` is `PUT /api/rooms/<roomId>/sharing`. `PUT /rooms/<roomId>/sharing` is the same route.
+ * The origin is normalized before these URLs are compared, so the returned
+ * addresses stay on one clean origin.
  */
 function joinAddresses(origin: string, roomId: string): {
   post: JoinAddress;
   read: JoinAddress;
   feed: JoinAddress;
   sharing: JoinAddress;
+  name: JoinAddress;
 } {
   if (!isId(roomId)) throw new Error("refusing to send an address");
   return {
@@ -232,17 +314,20 @@ function joinAddresses(origin: string, roomId: string): {
     read: absoluteAddress("GET", origin, `/api/r/${roomId}`),
     feed: absoluteAddress("GET", origin, `/rooms/${roomId}/feed`),
     sharing: absoluteAddress("PUT", origin, `/api/rooms/${roomId}/sharing`),
+    name: absoluteAddress("PUT", origin, `/api/r/${roomId}/name`),
   };
 }
 
 function absoluteAddress(method: "GET" | "POST" | "PUT", origin: string, path: string): JoinAddress {
+  const base = normalizeOrigin(origin);
+  if (!base) throw new Error("refusing to send an address");
   let url: URL;
   try {
-    url = new URL(path, origin.endsWith("/") ? origin : `${origin}/`);
+    url = new URL(path, `${base}/`);
   } catch {
     throw new Error("refusing to send an address");
   }
-  if (url.origin !== origin || url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {
+  if (url.origin !== base || url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {
     throw new Error("refusing to send an address");
   }
   if (url.pathname !== path) throw new Error("refusing to send an address");

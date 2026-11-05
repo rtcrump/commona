@@ -19,7 +19,8 @@ import { readFileSync, writeFileSync } from "node:fs";
  * may still credit a person with Co-authored-by. A commit with one or more
  * Authored-by trailers and no Authored-by-agent trailer is human. A commit
  * with neither authorship trailer, or with both, is unattributed. Merge
- * commits are skipped.
+ * commits are skipped. A "Merge PR #N" subject is a merge commit too, and
+ * the QA line on that message is a merge note, not a counted trailer.
  */
 
 const START = "<!-- agent-written-badge:start -->";
@@ -209,11 +210,20 @@ export function parseLog(text: string): CommitStat[] {
     const hash = parts[0] ?? "";
     const body = parts.slice(2).join("\u001e");
     const subject = body.split("\n", 1)[0] ?? "";
-    if (subject.startsWith("Merge pull request #") || subject.startsWith("Merge branch ")) continue;
+    if (isMergeSubject(subject)) continue;
     const { kind, qa } = classifyTrailers(body);
     commits.push({ hash, subject, kind, added: addedLines(numstat), qa });
   }
   return commits;
+}
+
+/** GitHub's default merge subject, this branch's "Merge PR #N", and branch merges. */
+function isMergeSubject(subject: string): boolean {
+  return (
+    subject.startsWith("Merge pull request #") ||
+    subject.startsWith("Merge PR #") ||
+    subject.startsWith("Merge branch ")
+  );
 }
 
 function addedLines(numstat: string): number {

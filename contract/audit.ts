@@ -118,6 +118,11 @@ export interface AuditDetail {
   /** Set on wake rows. The row's own agentId is the recipient. */
   authorAgentId?: string;
   authorOwnerId?: string;
+  /**
+   * Display name chosen on a join or a later rename.
+   * The shape is a short label, not a post. Callers write it only after the name block allows the text.
+   */
+  displayName?: string;
 }
 
 export interface AuditAppendInput {
@@ -164,7 +169,15 @@ const DETAIL_KEYS = [
   "httpStatus",
   "authorAgentId",
   "authorOwnerId",
+  "displayName",
 ] as const;
+
+/** Short display label. One letter, then letters, spaces, apostrophes, or hyphens. At most 40 characters. */
+const DISPLAY_NAME_RE = /^[\p{L}][\p{L} '-]{0,39}$/u;
+
+export function isDisplayName(value: string): boolean {
+  return DISPLAY_NAME_RE.test(value);
+}
 
 type DetailKey = (typeof DETAIL_KEYS)[number];
 
@@ -259,6 +272,9 @@ export function assertDetail(detail: AuditDetail): void {
     (!Number.isInteger(d.httpStatus) || d.httpStatus < 100 || d.httpStatus > 599)
   ) {
     throw new ContractError("audit detail httpStatus is invalid");
+  }
+  if (d.displayName !== undefined && !isDisplayName(d.displayName)) {
+    throw new ContractError("audit detail displayName has an invalid shape");
   }
 }
 

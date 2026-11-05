@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { hashToken } from "../../contract/index.js";
 import { claimAgentHandoff, issueAgentHandoff } from "../../src/onboarding/handoff.js";
 import { agentCookieName } from "../../src/room-page/routes.js";
+import { TASK_CLOSE } from "../../src/task-close.js";
 import { call, cookieValue, createInvite, startJoinHarness, type JoinHarness } from "../onboarding/harness.js";
 
 const NOTE = "Bring napkins";
@@ -30,6 +31,7 @@ describe("agent json api", () => {
     expect(joined.title).toBe("Sunday lunch");
     expect(joined.posts).toEqual([]);
     expect(joined.agentId).toMatch(/^agent_/);
+    expect(joined.close).toBe(TASK_CLOSE);
     expect(/^[A-Za-z0-9_-]{20,}$/.test(joined.agentKey)).toBe(true);
     expect(opened.body.includes(secret)).toBe(false);
     expect(opened.body.includes(hashToken(secret))).toBe(false);
@@ -54,6 +56,7 @@ describe("agent json api", () => {
       title: "Sunday lunch",
       posts: [],
       brief: null,
+      close: TASK_CLOSE,
     });
 
     const reused = await call(room.baseUrl, "GET", `/api/r/${room.roomId}/${invite.id}/${secret}`);
@@ -364,6 +367,7 @@ interface Joined {
   title: string;
   posts: { text: string }[];
   agentKey: string;
+  close: string;
 }
 
 async function expect401(room: JoinHarness, key: string): Promise<void> {

@@ -1,7 +1,14 @@
-import { AuditAction, AuditResult, feedIncludes, formatTimestamp, type AuthPrincipal } from "../../contract/index.js";
+import {
+  AuditAction,
+  AuditResult,
+  feedIncludes,
+  formatTimestamp,
+  type AuthPrincipal,
+  type RoomMessagePost,
+} from "../../contract/index.js";
 import { requireMember } from "../room/access.js";
 import type { RoomDeps } from "../room/deps.js";
-import type { RoomPagePost } from "./page.js";
+import { feedPartyLookup } from "../room/feed-author.js";
 
 export const RECENT_MESSAGE_LIMIT = 20;
 /** Stop after this many batches. A page may show fewer than 20 messages. */
@@ -13,7 +20,7 @@ export const RECENT_MESSAGE_MAX_BATCHES = 10;
  * The cursor is (created_at, id). The index is posts_room_held_recent.
  */
 export const RECENT_MESSAGES_SQL = `
-SELECT text, author_owner_id, created_at, id
+SELECT text, author_owner_id, author_agent_id, created_at, id
 FROM posts
 WHERE room_id = ? AND held = 0
   AND (created_at, id) < (?, ?)
@@ -27,15 +34,17 @@ const CURSOR_START = "9999-99-99T99:99:99.999Z";
 type RecentRow = {
   text: string;
   author_owner_id: string;
+  author_agent_id: string;
   created_at: string;
   id: string;
 };
 
 /** Newest messages the viewer may see, oldest of that window first. Also audits the read. */
-export function recentMessages(deps: RoomDeps, principal: AuthPrincipal, roomId: string): RoomPagePost[] {
+export function recentMessages(deps: RoomDeps, principal: AuthPrincipal, roomId: string): RoomMessagePost[] {
   requireMember(deps, principal, roomId);
-  const visible: { text: string }[] = [];
+  const visible: RoomMessagePost[] = [];
   const levels = new Map<string, string>();
+  const parties = feedPartyLookup(deps.db);
   const stmt = deps.db.prepare(RECENT_MESSAGES_SQL);
   let cursorAt = CURSOR_START;
   let cursorId = CURSOR_START;
@@ -56,7 +65,10 @@ export function recentMessages(deps: RoomDeps, principal: AuthPrincipal, roomId:
         viewerOwnerId: principal.ownerId,
         authorOwnerId: row.author_owner_id,
       });
-      if (allowed) visible.push({ text: row.text });
+      if (allowed) {
+        const named = parties(row.author_agent_id, row.author_owner_id);
+        visible.push({ text: row.text, author: named.author, owner: named.owner });
+      }
     }
     const last = rows[rows.length - 1];
     if (!last) break;
