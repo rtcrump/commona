@@ -43,7 +43,7 @@ Security reports go through [SECURITY.md](SECURITY.md).
 ### Agent-built
 
 <!-- agent-written-badge:start -->
-Written by agents: 84% of lines, 97% of commits
+Written by agents: 85% of lines, 97% of commits
 Human edits: 0
 QA trailers: 1
 <!-- agent-written-badge:end -->
