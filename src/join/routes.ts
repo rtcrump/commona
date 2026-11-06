@@ -10,6 +10,8 @@ import {
   noteArrival,
   takePendingCheck,
 } from "../onboarding/connect.js";
+import { renderAgentGuide } from "./agent-guide.js";
+import { describeInvite, errorSentence } from "../onboarding/invite-view.js";
 import { openWelcome } from "../onboarding/join-flow.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
@@ -106,24 +108,14 @@ export function registerInviteRoutes(app: CommonaHono, deps: RoomDeps): void {
 
   function openInvite(c: Context<AppEnv>, presented: string): Response {
     const id = c.req.param("id") ?? "";
-    if (isInviteId(id) && !inviteRow(deps, id)) return missingInvite(c.req.header("accept"));
+    const accept = c.req.header("accept");
+    if (isInviteId(id) && !inviteRow(deps, id)) return missingInvite(accept);
     if (isInviteId(id)) inviteLog(`invite view id=${id}`);
     const secret = secretForCookie(deps, id, presented);
-    if (wantsJoinPage(c.req.header("accept"))) {
+    if (wantsJoinPage(accept)) {
       return sendJoinResult(openWelcome(deps, id, secret));
     }
-    const body = { ok: true as const };
-    if (secret) assertPublic(body, [secret, hashToken(secret)]);
-    const headers = new Headers({
-      "cache-control": "no-store",
-      "referrer-policy": "no-referrer",
-      "content-type": "application/json",
-    });
-    if (secret && /^[A-Za-z0-9_-]+$/.test(secret)) {
-      const maxAge = cookieMaxAge(deps, id);
-      headers.append("set-cookie", serializeCookie(INVITE_COOKIE, secret, "/j", maxAge));
-    }
-    return new Response(JSON.stringify(body), { status: HTTP_STATUS.ok, headers });
+    return agentInvite(deps, id, secret);
   }
 
   app.post("/connect/handoff", (c) => {
@@ -206,8 +198,9 @@ function inviteRow(deps: RoomDeps, id: string): boolean {
 }
 
 function missingInvite(accept: string | undefined): Response {
+  const sentence = "This link can't be used, so ask the person who sent it for a new link.";
   if (wantsJoinPage(accept)) {
-    return new Response(renderError("This link can't be used, so ask the person who sent it for a new link."), {
+    return new Response(renderError(sentence), {
       status: HTTP_STATUS.notFound,
       headers: {
         "content-type": "text/html; charset=utf-8",
@@ -216,13 +209,39 @@ function missingInvite(accept: string | undefined): Response {
       },
     });
   }
-  return new Response(JSON.stringify(RoomHttpError.notFound().body()), {
-    status: HTTP_STATUS.notFound,
-    headers: {
-      "content-type": "application/json",
-      "cache-control": "no-store",
-      "referrer-policy": "no-referrer",
-    },
+  return plainInvite(sentence, HTTP_STATUS.notFound);
+}
+
+/**
+ * Agent callers get plain text and do not redeem the invite.
+ * A browser Accept still takes the human page above.
+ * The User-Agent header is ignored. Cloudflare may block a default one before this runs.
+ */
+function agentInvite(deps: RoomDeps, id: string, secret: string | null): Response {
+  const view = describeInvite(deps, id);
+  if (view.status !== "open" || !secret) {
+    const status = view.status === "unknown" ? HTTP_STATUS.notFound : HTTP_STATUS.ok;
+    const sentence = view.status === "open" ? errorSentence({ ...view, status: "unknown" }) : errorSentence(view);
+    return plainInvite(sentence, status);
+  }
+  const text = renderAgentGuide({ roomTitle: view.roomTitle, inviteId: id, secret });
+  if (text.includes(hashToken(secret))) throw new Error("refusing to send a secret");
+  const headers = plainHeaders();
+  if (/^[A-Za-z0-9_-]+$/.test(secret)) {
+    headers.append("set-cookie", serializeCookie(INVITE_COOKIE, secret, "/j", cookieMaxAge(deps, id)));
+  }
+  return new Response(text, { status: HTTP_STATUS.ok, headers });
+}
+
+function plainInvite(sentence: string, status: number): Response {
+  return new Response(`${sentence}\n`, { status, headers: plainHeaders() });
+}
+
+function plainHeaders(): Headers {
+  return new Headers({
+    "content-type": "text/plain; charset=utf-8",
+    "cache-control": "no-store",
+    "referrer-policy": "no-referrer",
   });
 }
 
