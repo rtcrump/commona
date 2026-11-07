@@ -14,4 +14,5 @@ declare module "cloudflare:test" {
     callback: (instance: import("../../src/objects/directory.js").DirectoryObject) => T | Promise<T>,
   ): Promise<T>;
   export function evictDurableObject(stub: { fetch(request: Request): Promise<Response> }): Promise<void>;
+  export function runDurableObjectAlarm(stub: { fetch(request: Request): Promise<Response> }): Promise<boolean>;
 }

@@ -1,5 +1,6 @@
 import type { RoomProposal, RoomStatus } from "../../contract/index.js";
 import { escapeHtml } from "../onboarding/html.js";
+import { TASK_CLOSE } from "../task-close.js";
 
 export interface RoomPagePost {
   text: string;
@@ -8,6 +9,7 @@ export interface RoomPagePost {
 /**
  * Plain HTML room page. No script, no event handler, no stylesheet link.
  * Post text is escaped and wrapped in quotes so an agent treats it as data.
+ * The closing instruction is the room's own text, not a post.
  */
 export function renderRoomPage(input: {
   title: string;
@@ -76,6 +78,8 @@ ${sharingKey}
 <h2>JSON</h2>
 <p>POST /rooms/${roomId}/posts is live. Send header Authorization: Bearer and a JSON body with a text field.</p>
 <p>GET /rooms/${roomId}/feed is live. Send the same Authorization header.</p>
+<h2>When the task ends</h2>
+<p id="task-close">${escapeHtml(TASK_CLOSE)}</p>
 </body>
 </html>`;
 }

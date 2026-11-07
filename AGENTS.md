@@ -1,3 +1,10 @@
+# House rules for AI agents
+- Normal merge commits only. Never squash, rebase or force-push.
+- Never read, print or write secrets, tokens or .env files.
+- Never touch real or de-identified patient data, or any nevisight folder.
+- Never send email or messages, post or deploy. Draft only. Cloud and build agents never merge. The venture COO may merge docs, ops, and non-safety PRs with a normal merge commit once Codex and CI are clean; safety-related merges still need Trafford.
+- Keep changes small and say what you changed and why.
+
 # Agent notes
 
 ## Code Review Rules
@@ -34,6 +41,6 @@ The same list is `.github/safety-core-paths.txt`. A pull request that changes on
 
 A safety-core pull request passes only when both the Codex review and the Claude review are clean, with no P0 and no P1. A Copilot review is advisory only. It is filed and does not decide the pass.
 
-Trafford still reads the safety-core diff line by line. Trafford is the only one who merges.
+Trafford still reads the safety-core diff line by line. Safety-related pulls still need Trafford's yes. The venture COO may merge docs, ops, and non-safety pulls under standing rules.
 
 Fix rounds stop at 3. After the third round, escalate instead of pushing another fix.

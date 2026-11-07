@@ -50,6 +50,8 @@ describe("agent-written stats", () => {
     const log = [
       "COMMIT\u001eaaa\u001eh@example.test\u001eMerge pull request #4 from somewhere\n\nAuthored-by-agent: cursor/example\nModel: test\n\u001eEND",
       "1\t0\tignored.md",
+      "COMMIT\u001eddd\u001eh@example.test\u001eMerge PR #62: return absolute join addresses\n\nQA: node 227 pass\n\u001eEND",
+      "9\t0\talso-ignored.md",
       "COMMIT\u001ebbb\u001ea@example.test\u001efeat(data): add a line\n\nAuthored-by-agent: cursor/example\nModel: test\n\u001eEND",
       "3\t0\ta.md",
       "-\t-\tbin.dat",
@@ -507,10 +509,11 @@ function runStats(cwd: string, args: string[]): string {
   });
 }
 
+/** Throwaway repos. Signing stays off: the sandbox SSH signer stalls past the 5s limit. */
 function git(cwd: string, args: string[]): void {
   execFileSync(
     "git",
-    ["-C", cwd, "-c", "user.name=Stats Tester", "-c", "user.email=stats@example.test", "-c", "init.defaultBranch=main", "-c", "safe.directory=*", ...args],
+    ["-C", cwd, "-c", "user.name=Stats Tester", "-c", "user.email=stats@example.test", "-c", "init.defaultBranch=main", "-c", "safe.directory=*", "-c", "commit.gpgsign=false", ...args],
     { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
 }

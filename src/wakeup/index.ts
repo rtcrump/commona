@@ -1,3 +1,4 @@
+import "./smtp-node.js";
 export { buildWakeEmail, wakeEmailText, wireWakeEvent } from "./event.js";
 export type { WakeLog } from "./log.js";
 export { registerAgentWebhook } from "./register.js";

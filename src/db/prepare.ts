@@ -12,6 +12,18 @@ CREATE TABLE IF NOT EXISTS agent_polls (
 );
 `;
 
+/**
+ * Next webhook attempt for the Worker. The Node server sleeps inside deliver().
+ * A Durable Object cannot hold the request across the 2s, 8s, and 20s gaps, so the
+ * alarm reads this table. It is not part of the shared contract schema.
+ */
+const WAKE_ALARM_SQL = `
+CREATE TABLE IF NOT EXISTS wake_alarms (
+  wake_id TEXT PRIMARY KEY,
+  due_ms INTEGER NOT NULL
+);
+`;
+
 /** Apply the room schema, signing-secret columns, and the poll table. */
 export function prepareDatabase(db: Database.Database): void {
   db.exec(SCHEMA_SQL);
@@ -21,4 +33,5 @@ export function prepareDatabase(db: Database.Database): void {
     db.exec(step.sql);
   }
   db.exec(POLL_SQL);
+  db.exec(WAKE_ALARM_SQL);
 }

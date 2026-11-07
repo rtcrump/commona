@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../../src/app.js";
 import { createAuditLog } from "../../src/audit/index.js";
@@ -174,7 +175,147 @@ describe("room brief", () => {
       db.close();
     }
   });
+
+  it("refuses a brief that contains a blocked name and does not store, log, or show that text", async () => {
+    process.env.COMMONA_PUBLIC_ORIGIN = origin;
+    process.env.COMMONA_HOST_SECRET = hostSecret;
+    const clock = manualClock();
+    const db = openDatabase(":memory:");
+    const tokens = createTokenStore(db);
+    const audit = createAuditLog(db, clock);
+    const app = buildApp({ db, clock, tokens, audit, sharing: createSharingDirectory(db) });
+    const blocked = listedName();
+    const safe = {
+      task: "Agree a pretend lunch time and place",
+      endCondition: "Every member has agreed the same time and place",
+      deadline: deadline(clock, 7),
+    };
+    const blockedTask = `Ask ${blocked} to pick a time`;
+    const blockedEnd = `Done when ${blocked} agrees`;
+    try {
+      const roomsBefore = count(db, "SELECT COUNT(*) AS n FROM rooms");
+      for (const brief of [
+        { ...safe, task: blockedTask },
+        { ...safe, endCondition: blockedEnd },
+      ]) {
+        const refused = await postRoom(app, { title, hostName, inviteCount: 1, brief });
+        expect(refused.status).toBe(400);
+        expect((await refused.text()).includes(blocked)).toBe(false);
+        expect(count(db, "SELECT COUNT(*) AS n FROM rooms")).toBe(roomsBefore);
+      }
+      expect(databaseText(db).includes(blocked)).toBe(false);
+      expect(auditText(db).includes(blocked)).toBe(false);
+
+      const created = await postRoom(app, { title, hostName, inviteCount: 2, brief: safe });
+      expect(created.status).toBe(201);
+      const body = (await created.json()) as { invites: string[]; credential: string; roomId: string; ownerToken: string };
+      expect(databaseText(db).includes(blocked)).toBe(false);
+
+      for (const brief of [
+        { ...safe, task: blockedTask },
+        { ...safe, endCondition: blockedEnd },
+      ]) {
+        const replaced = await putBrief(app, body.roomId, body.ownerToken, brief);
+        expect(replaced.status).toBe(400);
+        expect((await replaced.text()).includes(blocked)).toBe(false);
+        expect(readStored(db, body.roomId)).toEqual(safe);
+      }
+      expect(databaseText(db).includes(blocked)).toBe(false);
+      expect(auditText(db).includes(blocked)).toBe(false);
+
+      db.prepare("UPDATE room_briefs SET task = ? WHERE room_id = ?").run(blockedTask, body.roomId);
+      const hiddenTask = await readRoom(app, body.roomId, body.credential);
+      expect(hiddenTask.status).toBe(200);
+      expect(hiddenTask.text.includes(blocked)).toBe(false);
+      expect((JSON.parse(hiddenTask.text) as { brief: unknown }).brief).toBeNull();
+
+      db.prepare("UPDATE room_briefs SET task = ?, end_condition = ? WHERE room_id = ?").run(
+        safe.task,
+        blockedEnd,
+        body.roomId,
+      );
+      const hiddenEnd = await readRoom(app, body.roomId, body.credential);
+      expect(hiddenEnd.text.includes(blocked)).toBe(false);
+      expect((JSON.parse(hiddenEnd.text) as { brief: unknown }).brief).toBeNull();
+
+      const feed = await app.fetch(
+        new Request(`${origin}/rooms/${body.roomId}/feed`, {
+          headers: { authorization: `Bearer ${body.credential}` },
+        }),
+      );
+      const feedText = await feed.text();
+      expect(feed.status).toBe(200);
+      expect(feedText.includes(blocked)).toBe(false);
+      expect((JSON.parse(feedText) as { brief: unknown }).brief).toBeNull();
+
+      const link = new URL(body.invites[0] ?? "");
+      const joined = await app.fetch(new Request(`${origin}/api${link.pathname}`));
+      const joinText = await joined.text();
+      expect(joined.status).toBe(200);
+      expect(joinText.includes(blocked)).toBe(false);
+      expect((JSON.parse(joinText) as { brief: unknown }).brief).toBeNull();
+
+      const pageLink = new URL(body.invites[1] ?? "");
+      const parts = pageLink.pathname.split("/");
+      const opened = await app.fetch(new Request(`${origin}/r/${body.roomId}/${parts[2]}/${parts[3]}`));
+      expect(opened.status).toBe(303);
+      const cookie = opened.headers
+        .getSetCookie()
+        .map((value) => value.split(";")[0])
+        .join("; ");
+      const page = await app.fetch(new Request(`${origin}/r/${body.roomId}`, { headers: { cookie } }));
+      const html = await page.text();
+      expect(page.status).toBe(200);
+      expect(html.includes(blocked)).toBe(false);
+      expect(html.includes("<h2>Room brief</h2>")).toBe(false);
+      expect(auditText(db).includes(blocked)).toBe(false);
+    } finally {
+      await app.close();
+      db.close();
+    }
+  });
 });
+
+function listedName(): string {
+  const text = readFileSync(new URL("../../fixtures/names.txt", import.meta.url), "utf8");
+  const name = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && !line.startsWith("#"));
+  if (!name) throw new Error("fixtures/names.txt has no name");
+  return name;
+}
+
+function databaseText(db: ReturnType<typeof openDatabase>): string {
+  const tables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+    .all() as { name: string }[];
+  const parts: string[] = [];
+  for (const table of tables) {
+    if (!/^[A-Za-z0-9_]+$/.test(table.name)) continue;
+    parts.push(JSON.stringify(db.prepare(`SELECT * FROM ${table.name}`).all()));
+  }
+  return parts.join("\n");
+}
+
+function auditText(db: ReturnType<typeof openDatabase>): string {
+  const rows = db.prepare("SELECT action, result, detail_json FROM audit_log").all();
+  return JSON.stringify(rows);
+}
+
+function readRoom(
+  app: ReturnType<typeof buildApp>,
+  roomId: string,
+  token: string,
+): Promise<{ status: number; text: string }> {
+  return app
+    .fetch(
+      new Request(`${origin}/api/r/${roomId}`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    )
+    .then(async (response) => ({ status: response.status, text: await response.text() }));
+}
 
 function badBriefs(clock: { now(): Date }): unknown[] {
   const good = {

@@ -169,7 +169,7 @@ export function registerHostRoute(app: Hono<AppEnv>, deps: RoomDeps): void {
     try {
       const parsed = c.get("parsedBody");
       const body = readBody(parsed);
-      body.brief = optionalBrief(parsed, deps.clock.now());
+      body.brief = optionalBrief(parsed, deps.clock.now(), deps.guard);
       const origin = requireHttpsOrigin(process.env.COMMONA_PUBLIC_ORIGIN);
       const created = createHostedRoom(deps, body, origin, expected);
       return jsonNoStore(c, created, 201);
