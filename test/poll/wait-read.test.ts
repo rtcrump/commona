@@ -515,7 +515,9 @@ describe("wait for news, house rules, and the task cap", () => {
 
   it("does not branch on the client name", () => {
     const root = fileURLToPath(new URL("../../src/", import.meta.url));
-    const hits = filesUnder(root).filter((path) => /user-agent/i.test(readFileSync(path, "utf8")));
+    // The join guide names the User-Agent header. The server must not read it.
+    const readsHeader = /(?:header|headers|get)\(\s*["']user-agent["']/i;
+    const hits = filesUnder(root).filter((path) => readsHeader.test(readFileSync(path, "utf8")));
     expect(hits).toEqual([]);
   });
 });

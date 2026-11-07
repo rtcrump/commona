@@ -426,8 +426,8 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     ensureBriefSchema(this.deps.db);
     const row = this.deps.db
       .prepare("SELECT task, end_condition, deadline FROM room_briefs WHERE room_id = ?")
-      .get(roomId) as { task: string; end_condition: string; deadline: string } | undefined;
-    if (!row) return null;
+      .get(roomId) as { task: string | null; end_condition: string | null; deadline: string | null } | undefined;
+    if (!row?.task || !row.end_condition || !row.deadline) return null;
     return { task: row.task, endCondition: row.end_condition, deadline: row.deadline };
   }
 

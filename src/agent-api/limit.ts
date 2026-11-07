@@ -1,4 +1,5 @@
 import { AuditAction, AuditResult, formatTimestamp, type AuthPrincipal } from "../../contract/index.js";
+import { ensureBriefSchema } from "../room/brief.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { ensureAgentApiSchema } from "./schema.js";
@@ -107,15 +108,12 @@ export function taskPostCap(deps: RoomDeps, roomId: string): number {
 
 /**
  * Store the brief's per-task cap. Tests and the brief writer use this.
- * Creates room_briefs when the brief table is not there yet, and adds post_cap when the table already exists.
+ * Uses the room brief table. A cap can be stored before the task text exists,
+ * and saving a brief later keeps the cap.
  */
 export function rememberBriefPostCap(db: RoomDeps["db"], roomId: string, postCap: number): void {
   if (!Number.isInteger(postCap) || postCap < 1) throw new Error("post cap must be a positive integer");
-  db.exec("CREATE TABLE IF NOT EXISTS room_briefs (room_id TEXT PRIMARY KEY, post_cap INTEGER NOT NULL)");
-  const columns = db.prepare("PRAGMA table_info(room_briefs)").all() as { name: string }[];
-  if (!columns.some((column) => column.name === "post_cap")) {
-    db.exec("ALTER TABLE room_briefs ADD COLUMN post_cap INTEGER");
-  }
+  ensureBriefSchema(db);
   db.prepare(
     `INSERT INTO room_briefs (room_id, post_cap) VALUES (?, ?)
      ON CONFLICT(room_id) DO UPDATE SET post_cap = excluded.post_cap`,
