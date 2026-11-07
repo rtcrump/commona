@@ -128,7 +128,9 @@ describe("worker room delete", () => {
     expect(await runInDurableObject(directory, (instance) => alarmStorage(instance).getAlarm())).not.toBeNull();
 
     await expectGone(room);
-    const stillThere = await SELF.fetch(`https://room.example.test/j/${stranger.inviteId}/${stranger.secret}`);
+    const stillThere = await SELF.fetch(`https://room.example.test/j/${stranger.inviteId}/${stranger.secret}`, {
+      headers: { accept: "text/html" },
+    });
     expect(stillThere.status).toBe(200);
     expect(await stillThere.text()).not.toContain(stranger.secret);
   });

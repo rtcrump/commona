@@ -136,6 +136,8 @@ export type FeedItem =
       threadId: string;
       round: number;
       createdAt: string;
+      /** Current display name of the author. Absent on feeds built before this field. */
+      authorName?: string;
     }
   | {
       kind: "file";
@@ -147,6 +149,8 @@ export type FeedItem =
       byteLength: number;
       metadata: Record<string, string>;
       createdAt: string;
+      /** Current display name of the author. Absent on feeds built before this field. */
+      authorName?: string;
     };
 
 export interface FeedResponse {

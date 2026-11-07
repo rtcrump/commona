@@ -9,6 +9,7 @@ import { isInviteId, redeemInvite } from "../join/service.js";
 import { newSecret } from "../onboarding/account.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
+import { readBrief } from "../room/brief.js";
 import { createPost } from "../room/posts.js";
 import { recentMessages } from "./messages.js";
 import { renderRoomMessage, renderRoomPage } from "./page.js";
@@ -152,6 +153,7 @@ function showForCookie(
   const page = renderRoomPage({
     title: roomTitle(deps, roomId),
     roomId,
+    brief: readBrief(deps, roomId),
     posts,
     nonce,
     ownerId: principal.ownerId,

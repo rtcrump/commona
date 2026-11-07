@@ -56,6 +56,7 @@ describe("agent json api", () => {
       roomId: room.roomId,
       title: "Sunday lunch",
       posts: [],
+      brief: null,
       close: TASK_CLOSE,
     });
 

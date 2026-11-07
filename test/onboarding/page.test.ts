@@ -217,9 +217,9 @@ describe("join pages", () => {
 
     const usedInvite = await createInvite(room);
     const usedId = usedInvite.id;
-    const usedGet = await call(room.baseUrl, "GET", usedInvite.openPath);
+    const usedGet = await call(room.baseUrl, "GET", usedInvite.openPath, { accept: "text/html" });
     expect(usedGet.status).toBe(200);
-    expect(JSON.parse(usedGet.body)).toEqual({ ok: true });
+    expect(usedGet.body).toContain("invited you");
     const usedSecret = cookieValue(usedGet.setCookies, "commona_invite");
     const accepted = await call(room.baseUrl, "POST", `/j/${usedId}/accept`, {
       cookie: `commona_invite=${usedSecret}`,
@@ -250,12 +250,12 @@ describe("join pages", () => {
     expect(freeze(revoked.body, revokedId)).toMatchSnapshot("revoked");
   });
 
-  it("returns JSON when the caller does not ask for HTML", async () => {
+  it("returns plain text when the caller does not ask for HTML", async () => {
     room = await startJoinHarness();
     const created = await createInvite(room);
     const unnamed = await call(room.baseUrl, "GET", `/j/${created.id}`);
-    expect(unnamed.contentType).toContain("json");
-    expect(JSON.parse(unnamed.body)).toEqual({ ok: true });
+    expect(unnamed.contentType).toContain("text/plain");
+    expect(unnamed.body).toContain("ask the person who sent it for a new link");
     expect(unnamed.setCookies.some((value) => value.startsWith("commona_invite="))).toBe(false);
     const plain = await createInvite(room);
     const html = await openWelcome(room, plain);

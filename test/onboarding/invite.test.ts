@@ -46,11 +46,12 @@ async function call(
   baseUrl: string,
   method: string,
   path: string,
-  opts: { token?: string; cookie?: string; body?: unknown } = {},
+  opts: { token?: string; cookie?: string; body?: unknown; accept?: string } = {},
 ): Promise<Hit> {
   const headers: Record<string, string> = {};
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   if (opts.cookie) headers.cookie = opts.cookie;
+  if (opts.accept) headers.accept = opts.accept;
   if (opts.body !== undefined) headers["content-type"] = "application/json";
   const response = await fetch(`${baseUrl}${path}`, {
     method,
@@ -231,10 +232,12 @@ describe.sequential("invite links", () => {
         .get(createdBody.invite.id) as { created_at: string; expires_at: string; secret_hash: string };
       expect(Date.parse(stored.expires_at) - Date.parse(stored.created_at)).toBe(48 * 60 * 60 * 1000);
 
-      const firstGet = await call(room.baseUrl, "GET", new URL(createdBody.invite.link).pathname);
+      const firstGet = await call(room.baseUrl, "GET", new URL(createdBody.invite.link).pathname, {
+        accept: "text/html",
+      });
       hits.push(firstGet);
       expect(firstGet.status).toBe(200);
-      expect(json(firstGet)).toEqual({ ok: true });
+      expect(firstGet.bodyText).toContain("invited you");
       const secret = inviteSecret(firstGet);
       expect(stored.secret_hash).toBe(hashToken(secret));
       expect(firstGet.bodyText).not.toContain(secret);
@@ -242,7 +245,7 @@ describe.sequential("invite links", () => {
       const secondGet = await call(room.baseUrl, "GET", `/j/${createdBody.invite.id}`);
       hits.push(secondGet);
       expect(secondGet.setCookies.some((value) => value.startsWith("commona_invite="))).toBe(false);
-      expect(json(secondGet)).toEqual({ ok: true });
+      expect(secondGet.bodyText).toContain("ask the person who sent it for a new link");
 
       const accepted = await call(room.baseUrl, "POST", `/j/${createdBody.invite.id}/accept`, {
         cookie: `commona_invite=${secret}`,
@@ -363,7 +366,7 @@ describe.sequential("invite links", () => {
       });
       hits.push(expiredCreate);
       const expiredId = (json(expiredCreate) as { invite: { id: string } }).invite.id;
-      const expiredGet = await call(room.baseUrl, "GET", linkPath(expiredCreate));
+      const expiredGet = await call(room.baseUrl, "GET", linkPath(expiredCreate), { accept: "text/html" });
       hits.push(expiredGet);
       const expiredSecret = inviteSecret(expiredGet);
       secrets.push(expiredSecret);
@@ -385,7 +388,7 @@ describe.sequential("invite links", () => {
       });
       hits.push(replayCreate);
       const replayId = (json(replayCreate) as { invite: { id: string } }).invite.id;
-      const replayGet = await call(room.baseUrl, "GET", linkPath(replayCreate));
+      const replayGet = await call(room.baseUrl, "GET", linkPath(replayCreate), { accept: "text/html" });
       hits.push(replayGet);
       const replaySecret = inviteSecret(replayGet);
       secrets.push(replaySecret);
@@ -407,7 +410,7 @@ describe.sequential("invite links", () => {
       });
       hits.push(revokeCreate);
       const revokeId = (json(revokeCreate) as { invite: { id: string } }).invite.id;
-      const revokeGet = await call(room.baseUrl, "GET", linkPath(revokeCreate));
+      const revokeGet = await call(room.baseUrl, "GET", linkPath(revokeCreate), { accept: "text/html" });
       hits.push(revokeGet);
       const revokeSecret = inviteSecret(revokeGet);
       secrets.push(revokeSecret);
@@ -436,7 +439,7 @@ describe.sequential("invite links", () => {
       });
       hits.push(crossCreate);
       const crossId = (json(crossCreate) as { invite: { id: string } }).invite.id;
-      const crossGet = await call(room.baseUrl, "GET", linkPath(crossCreate));
+      const crossGet = await call(room.baseUrl, "GET", linkPath(crossCreate), { accept: "text/html" });
       hits.push(crossGet);
       const crossSecret = inviteSecret(crossGet);
       secrets.push(crossSecret);
@@ -626,6 +629,138 @@ describe.sequential("invite links", () => {
       });
       expect(revoked.status).toBe(200);
       expect(json(revoked)).toEqual({ revoked: true });
+    } finally {
+      await room.stop();
+    }
+  });
+
+  it("lets the creating owner and the room creator revoke an owner-minted invite", async () => {
+    const clock = manualClock();
+    const room = await openHarness(clock);
+    try {
+      room.db
+        .prepare(
+          `INSERT INTO agents (id, owner_id, display_name, email, webhook_url, event_target, token_hash)
+           VALUES ('A2b', 'O2', 'Sibling Agent', 'sibling@example.test', NULL, NULL, NULL)`,
+        )
+        .run();
+      room.db
+        .prepare("INSERT INTO memberships (room_id, agent_id, owner_id, created_at) VALUES (?, 'A2b', 'O2', ?)")
+        .run(room.roomId, "2026-04-01T12:00:00.000Z");
+      const joined = await call(room.baseUrl, "POST", `/rooms/${room.roomId}/members`, {
+        token: room.outsider,
+        body: { agentId: "AX" },
+      });
+      expect(joined.status).toBe(201);
+      const sibling = room.tokens.issueAgentToken("A2b");
+      const ownersAgent = room.tokens.issueAgentToken("A2");
+
+      const mint = async (token: string) => {
+        const created = await call(room.baseUrl, "POST", `/rooms/${room.roomId}/invites`, {
+          token,
+          body: {},
+        });
+        expect(created.status).toBe(201);
+        const id = (json(created) as { invite: { id: string } }).invite.id;
+        const opened = await call(room.baseUrl, "GET", linkPath(created));
+        return { id, secret: inviteSecret(opened) };
+      };
+      const revoke = (token: string, id: string) =>
+        call(room.baseUrl, "DELETE", `/rooms/${room.roomId}/invites/${id}`, { token });
+      const stillOpen = (id: string) => {
+        const row = room.db.prepare("SELECT revoked_at FROM invites WHERE id = ?").get(id) as {
+          revoked_at: string | null;
+        };
+        expect(row.revoked_at).toBeNull();
+      };
+      const revokeAudit = (id: string) => {
+        const stored = room.db.prepare("SELECT revoked_at FROM invites WHERE id = ?").get(id) as {
+          revoked_at: string;
+        };
+        return room.db
+          .prepare(
+            `SELECT action, result, room, owner_id, agent_id
+             FROM audit_log
+             WHERE action = 'setting_change' AND result = 'ok' AND detail_json = ? AND ts = ?`,
+          )
+          .get(JSON.stringify({ itemId: id }), stored.revoked_at) as {
+          action: string;
+          result: string;
+          room: string;
+          owner_id: string;
+          agent_id: string;
+        };
+      };
+
+      const byOwner = await mint(room.ownerTwo);
+      const minted = room.db
+        .prepare("SELECT created_by_owner_id, created_by_agent_id FROM invites WHERE id = ?")
+        .get(byOwner.id) as { created_by_owner_id: string; created_by_agent_id: string | null };
+      expect(minted).toEqual({ created_by_owner_id: "O2", created_by_agent_id: null });
+
+      const siblingHit = await revoke(sibling, byOwner.id);
+      expect(siblingHit.status).toBe(403);
+      expect(json(siblingHit)).toEqual(GENERIC);
+      const agentHit = await revoke(ownersAgent, byOwner.id);
+      expect(agentHit.status).toBe(403);
+      expect(json(agentHit)).toEqual(GENERIC);
+      const otherOwner = await revoke(room.outsider, byOwner.id);
+      expect(otherOwner.status).toBe(403);
+      expect(json(otherOwner)).toEqual(GENERIC);
+      stillOpen(byOwner.id);
+
+      clock.advance(1000);
+      const byRoomCreator = await revoke(room.owner, byOwner.id);
+      expect(byRoomCreator.status).toBe(200);
+      expect(json(byRoomCreator)).toEqual({ revoked: true });
+      const redeemedAfterRoomCreator = await call(room.baseUrl, "POST", `/j/${byOwner.id}/accept`, {
+        cookie: `commona_invite=${byOwner.secret}`,
+        body: {},
+      });
+      expect(redeemedAfterRoomCreator.status).toBe(403);
+      expect(json(redeemedAfterRoomCreator)).toEqual(GENERIC);
+      expect(revokeAudit(byOwner.id)).toEqual({
+        action: "setting_change",
+        result: "ok",
+        room: room.roomId,
+        owner_id: "O1",
+        agent_id: "owner:O1",
+      });
+
+      const byCreator = await mint(room.ownerTwo);
+      clock.advance(1000);
+      const creatingOwner = await revoke(room.ownerTwo, byCreator.id);
+      expect(creatingOwner.status).toBe(200);
+      expect(json(creatingOwner)).toEqual({ revoked: true });
+      const redeemedAfterCreator = await call(room.baseUrl, "POST", `/j/${byCreator.id}/accept`, {
+        cookie: `commona_invite=${byCreator.secret}`,
+        body: {},
+      });
+      expect(redeemedAfterCreator.status).toBe(403);
+      expect(json(redeemedAfterCreator)).toEqual(GENERIC);
+      expect(revokeAudit(byCreator.id)).toEqual({
+        action: "setting_change",
+        result: "ok",
+        room: room.roomId,
+        owner_id: "O2",
+        agent_id: "owner:O2",
+      });
+
+      const byAgent = await mint(ownersAgent);
+      const agentMinted = room.db
+        .prepare("SELECT created_by_owner_id, created_by_agent_id FROM invites WHERE id = ?")
+        .get(byAgent.id) as { created_by_owner_id: string; created_by_agent_id: string | null };
+      expect(agentMinted).toEqual({ created_by_owner_id: "O2", created_by_agent_id: "A2" });
+      expect((await revoke(sibling, byAgent.id)).status).toBe(403);
+      expect((await revoke(room.ownerTwo, byAgent.id)).status).toBe(403);
+      expect((await revoke(room.owner, byAgent.id)).status).toBe(403);
+      expect((await revoke(room.outsider, byAgent.id)).status).toBe(403);
+      stillOpen(byAgent.id);
+      clock.advance(1000);
+      const agentRevoke = await revoke(ownersAgent, byAgent.id);
+      expect(agentRevoke.status).toBe(200);
+      expect(json(agentRevoke)).toEqual({ revoked: true });
+      expect(room.audit.verify().ok).toBe(true);
     } finally {
       await room.stop();
     }

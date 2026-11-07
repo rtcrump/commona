@@ -28,6 +28,7 @@ import { reserveAgentPost } from "../agent-api/limit.js";
 import { decodeUtf8Text } from "../guard/index.js";
 import { recordBlock, recordLoopStop } from "../notices/events.js";
 import { nowStamp, refuse, requireMember, requireRoom } from "./access.js";
+import { readBrief, type RoomBrief } from "./brief.js";
 import type { RoomDeps } from "./deps.js";
 import { feedPartyLookup } from "./feed-author.js";
 import { RoomHttpError } from "./http.js";
@@ -61,6 +62,10 @@ interface FileRow {
   block_category: GuardHit["category"] | null;
   block_location: GuardHit["location"] | null;
   created_at: string;
+}
+
+interface NamedFileRow extends FileRow {
+  author_name: string;
 }
 
 export function createPost(
@@ -273,7 +278,7 @@ export function readFeed(
   principal: AuthPrincipal,
   roomId: string,
   asAgentId: string | undefined,
-): FeedResponse {
+): FeedResponse & { brief: RoomBrief | null } {
   if (!isId(roomId)) throw RoomHttpError.badRequest();
   requireRoom(deps, roomId);
   if (principal.kind !== "agent") {
@@ -309,7 +314,7 @@ export function readFeed(
     result: AuditResult.Ok,
     detail: {},
   });
-  return { items };
+  return { brief: readBrief(deps, roomId), items };
 }
 
 export function readFile(deps: RoomDeps, principal: AuthPrincipal, roomId: string, fileId: string): FileDownload {
@@ -320,7 +325,7 @@ export function readFile(deps: RoomDeps, principal: AuthPrincipal, roomId: strin
     | FileRow
     | undefined;
   if (!row || row.held === 1) throw RoomHttpError.notFound();
-  const item = fileItem(row);
+  const item = fileItem(row, undefined);
   if (!visible(deps, roomId, item, principal.ownerId)) throw RoomHttpError.notFound();
   deps.audit.append({
     ts: nowStamp(deps),
@@ -445,33 +450,44 @@ function loadMessages(deps: RoomDeps, roomId: string): FeedItem[] {
     .prepare("SELECT * FROM posts WHERE room_id = ? AND held = 0 ORDER BY created_at, id")
     .all(roomId) as PostRow[];
   const parties = feedPartyLookup(deps.db);
-  return rows.map((row) => ({
-    kind: "message" as const,
-    id: row.id,
-    authorAgentId: row.author_agent_id,
-    authorOwnerId: row.author_owner_id,
-    ...parties(row.author_agent_id, row.author_owner_id),
-    text: row.text,
-    replyToId: row.reply_to_id,
-    threadId: row.thread_id,
-    round: row.round,
-    createdAt: row.created_at,
-  }));
+  return rows.map((row) => {
+    const party = parties(row.author_agent_id, row.author_owner_id);
+    return {
+      kind: "message" as const,
+      id: row.id,
+      authorAgentId: row.author_agent_id,
+      authorOwnerId: row.author_owner_id,
+      ...party,
+      authorName: party.author.displayName,
+      text: row.text,
+      replyToId: row.reply_to_id,
+      threadId: row.thread_id,
+      round: row.round,
+      createdAt: row.created_at,
+    };
+  });
 }
 
 function loadFiles(deps: RoomDeps, roomId: string): FeedItem[] {
   const rows = deps.db
-    .prepare("SELECT * FROM files WHERE room_id = ? AND held = 0 ORDER BY created_at, id")
-    .all(roomId) as FileRow[];
-  return rows.map(fileItem);
+    .prepare(
+      `SELECT files.*, agents.display_name AS author_name
+       FROM files
+       JOIN agents ON agents.id = files.author_agent_id
+       WHERE files.room_id = ? AND files.held = 0
+       ORDER BY files.created_at, files.id`,
+    )
+    .all(roomId) as NamedFileRow[];
+  return rows.map((row) => fileItem(row, row.author_name));
 }
 
-function fileItem(row: FileRow): FeedItem {
+function fileItem(row: FileRow, authorName: string | undefined): FeedItem {
   return {
     kind: "file",
     id: row.id,
     authorAgentId: row.author_agent_id,
     authorOwnerId: row.author_owner_id,
+    ...(authorName === undefined ? {} : { authorName }),
     name: row.name,
     mediaType: row.media_type,
     byteLength: row.byte_length,

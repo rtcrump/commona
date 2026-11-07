@@ -75,6 +75,7 @@ describe("worker room delete wipe", () => {
     expect(kept.some((row) => row.action === "setting_change" && row.result === "ok" && row.room === roomId)).toBe(true);
     expect(kept.some((row) => row.action === before[0]?.action && row.room === before[0]?.room)).toBe(true);
     expect(await runInDurableObject(directory, (instance) => instance.ownerDisplayNames())).toEqual(["Host (demo)"]);
+    expect(await runInDurableObject(directory, (instance) => instance.briefRecord(roomId))).toBeNull();
     expect(await runInDurableObject(directory, (instance) => alarmStorage(instance).getAlarm())).toBeNull();
     expect(await runInDurableObject(directory, (instance) => instance.inviteRecord(inviteId))).toBeNull();
 
@@ -111,5 +112,48 @@ describe("worker room delete wipe", () => {
     });
     expect(revoke.status).toBe(404);
     await revoke.text();
+  });
+
+  it("wipes a stored brief when the owner deletes the room", async () => {
+    const deadline = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
+    const brief = {
+      task: "Agree a pretend lunch time and place",
+      endCondition: "Every member has agreed the same time and place",
+      deadline,
+    };
+    const response = await SELF.fetch("https://room.example.test/host/room", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [HOST_SECRET_HEADER]: hostSecret,
+      },
+      body: JSON.stringify({ title: "Sunday lunch", hostName: "Host (demo)", inviteCount: 1, brief }),
+    });
+    const text = await response.text();
+    expect(response.status).toBe(201);
+    const created = JSON.parse(text) as { credential?: string; roomId?: string };
+    const roomId = created.roomId ?? "";
+    const credential = created.credential ?? "";
+    const directory = env.DIRECTORY.get(env.DIRECTORY.idFromName("global"));
+    expect(await runInDurableObject(directory, (instance) => instance.briefRecord(roomId))).toEqual(brief);
+    expect(await runInDurableObject(directory, (instance) => instance.postCount(roomId))).toBe(0);
+
+    const read = await SELF.fetch(`https://room.example.test/api/r/${roomId}`, {
+      headers: { authorization: `Bearer ${credential}` },
+    });
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({ brief, posts: [] });
+
+    const deleted = await SELF.fetch(`https://room.example.test/rooms/${roomId}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${credential}` },
+    });
+    expect(deleted.status).toBe(200);
+    await deleted.text();
+    expect(await runInDurableObject(directory, (instance) => instance.briefRecord(roomId))).toBeNull();
+
+    await evictDurableObject(directory);
+    expect(await runInDurableObject(directory, (instance) => instance.briefRecord(roomId))).toBeNull();
+    expect(await runInDurableObject(directory, (instance) => instance.postCount(roomId))).toBe(0);
   });
 });

@@ -2,6 +2,7 @@ import {
   AuditAction,
   AuditResult,
   isAgentId,
+  isDisplayName,
   isId,
   newId,
   ReasonCode,
@@ -12,7 +13,8 @@ import {
   type Room,
 } from "../../contract/index.js";
 import { agentKeyReissueBlocked } from "../agent-api/keys.js";
-import { nowStamp, refuse, requireRoom } from "./access.js";
+import { displayNameAllowed } from "../join/agent-name.js";
+import { nowStamp, refuse, requireMember, requireRoom } from "./access.js";
 import type { RoomDeps } from "./deps.js";
 import { RoomHttpError } from "./http.js";
 
@@ -110,6 +112,90 @@ export function addMember(deps: RoomDeps, principal: AuthPrincipal, roomId: stri
       createdAt,
     }),
   };
+}
+
+export interface RoomMemberView {
+  agentId: string;
+  ownerId: string;
+  displayName: string;
+  createdAt: string;
+}
+
+/**
+ * Members of a room, with each agent's current display name.
+ * The caller is an agent that already belongs to the room.
+ */
+export function listRoomMembers(
+  deps: RoomDeps,
+  principal: AuthPrincipal,
+  roomId: string,
+): { members: RoomMemberView[] } {
+  if (!isId(roomId)) throw RoomHttpError.badRequest();
+  requireMember(deps, principal, roomId);
+  const rows = deps.db
+    .prepare(
+      `SELECT memberships.agent_id AS agent_id, memberships.owner_id AS owner_id,
+              memberships.created_at AS created_at, agents.display_name AS display_name
+       FROM memberships
+       JOIN agents ON agents.id = memberships.agent_id
+       WHERE memberships.room_id = ?
+       ORDER BY memberships.created_at, memberships.agent_id`,
+    )
+    .all(roomId) as { agent_id: string; owner_id: string; created_at: string; display_name: string }[];
+  return {
+    members: rows.map((row) => ({
+      agentId: row.agent_id,
+      ownerId: row.owner_id,
+      displayName: row.display_name,
+      createdAt: row.created_at,
+    })),
+  };
+}
+
+/**
+ * The authenticated agent renames itself.
+ * A body that names a different agent is refused and does not change either name.
+ */
+export function renameJoinedAgent(
+  deps: RoomDeps,
+  principal: Extract<AuthPrincipal, { kind: "agent" }>,
+  roomId: string,
+  body: unknown,
+): { displayName: string } {
+  if (!isId(roomId)) throw RoomHttpError.badRequest();
+  requireMember(deps, principal, roomId);
+  if (!isRecord(body)) throw RoomHttpError.badRequest();
+  if (body.agentId !== undefined && body.agentId !== principal.agentId) {
+    refuse(deps, {
+      room: roomId,
+      principal,
+      action: AuditAction.SettingChangeRefused,
+      reasonCode: ReasonCode.NotOwner,
+      detail: { reasonCode: ReasonCode.NotOwner, itemId: principal.agentId },
+    });
+  }
+  if (typeof body.name !== "string") throw RoomHttpError.badRequest();
+  const name = body.name.trim();
+  if (!isDisplayName(name) || !displayNameAllowed(deps, name)) throw RoomHttpError.badRequest();
+  const ts = nowStamp(deps);
+  const write = deps.db.transaction(() => {
+    deps.db.prepare("UPDATE agents SET display_name = ? WHERE id = ?").run(name, principal.agentId);
+    deps.audit.append({
+      ts,
+      room: roomId,
+      agentId: principal.agentId,
+      ownerId: principal.ownerId,
+      action: AuditAction.SettingChange,
+      result: AuditResult.Ok,
+      detail: { itemId: principal.agentId, displayName: name },
+    });
+  });
+  write.immediate();
+  return { displayName: name };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function memberResponse(deps: RoomDeps, agent: AgentRow, member: Member): AddMemberResponse {
