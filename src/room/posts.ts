@@ -28,6 +28,7 @@ import { reserveAgentPost } from "../agent-api/limit.js";
 import { decodeUtf8Text } from "../guard/index.js";
 import { recordBlock, recordLoopStop } from "../notices/events.js";
 import { nowStamp, refuse, requireMember, requireRoom } from "./access.js";
+import { readBrief, type RoomBrief } from "./brief.js";
 import type { RoomDeps } from "./deps.js";
 import { feedPartyLookup } from "./feed-author.js";
 import { RoomHttpError } from "./http.js";
@@ -277,7 +278,7 @@ export function readFeed(
   principal: AuthPrincipal,
   roomId: string,
   asAgentId: string | undefined,
-): FeedResponse {
+): FeedResponse & { brief: RoomBrief | null } {
   if (!isId(roomId)) throw RoomHttpError.badRequest();
   requireRoom(deps, roomId);
   if (principal.kind !== "agent") {
@@ -313,7 +314,7 @@ export function readFeed(
     result: AuditResult.Ok,
     detail: {},
   });
-  return { items };
+  return { brief: readBrief(deps, roomId), items };
 }
 
 export function readFile(deps: RoomDeps, principal: AuthPrincipal, roomId: string, fileId: string): FileDownload {

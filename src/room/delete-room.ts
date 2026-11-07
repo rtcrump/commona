@@ -97,6 +97,7 @@ function purgeRoom(db: RoomDeps["db"], roomId: string): void {
   // so a revoke blocks reissue in every room. Deleting this room must not lift that.
   deleteWhere(db, "host_outbound", "DELETE FROM host_outbound WHERE room_id = ?", roomId);
   deleteWhere(db, "room_titles", "DELETE FROM room_titles WHERE room_id = ?", roomId);
+  deleteWhere(db, "room_briefs", "DELETE FROM room_briefs WHERE room_id = ?", roomId);
   deleteWhere(db, "notices", "DELETE FROM notices WHERE room_id = ?", roomId);
   deleteWhere(db, "wakes", "DELETE FROM wakes WHERE room_id = ?", roomId);
   deleteWhere(db, "files", "DELETE FROM files WHERE room_id = ?", roomId);

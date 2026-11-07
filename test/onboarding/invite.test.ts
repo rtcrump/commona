@@ -46,11 +46,12 @@ async function call(
   baseUrl: string,
   method: string,
   path: string,
-  opts: { token?: string; cookie?: string; body?: unknown } = {},
+  opts: { token?: string; cookie?: string; body?: unknown; accept?: string } = {},
 ): Promise<Hit> {
   const headers: Record<string, string> = {};
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
   if (opts.cookie) headers.cookie = opts.cookie;
+  if (opts.accept) headers.accept = opts.accept;
   if (opts.body !== undefined) headers["content-type"] = "application/json";
   const response = await fetch(`${baseUrl}${path}`, {
     method,
@@ -231,10 +232,12 @@ describe.sequential("invite links", () => {
         .get(createdBody.invite.id) as { created_at: string; expires_at: string; secret_hash: string };
       expect(Date.parse(stored.expires_at) - Date.parse(stored.created_at)).toBe(48 * 60 * 60 * 1000);
 
-      const firstGet = await call(room.baseUrl, "GET", new URL(createdBody.invite.link).pathname);
+      const firstGet = await call(room.baseUrl, "GET", new URL(createdBody.invite.link).pathname, {
+        accept: "text/html",
+      });
       hits.push(firstGet);
       expect(firstGet.status).toBe(200);
-      expect(json(firstGet)).toEqual({ ok: true });
+      expect(firstGet.bodyText).toContain("invited you");
       const secret = inviteSecret(firstGet);
       expect(stored.secret_hash).toBe(hashToken(secret));
       expect(firstGet.bodyText).not.toContain(secret);
@@ -242,7 +245,7 @@ describe.sequential("invite links", () => {
       const secondGet = await call(room.baseUrl, "GET", `/j/${createdBody.invite.id}`);
       hits.push(secondGet);
       expect(secondGet.setCookies.some((value) => value.startsWith("commona_invite="))).toBe(false);
-      expect(json(secondGet)).toEqual({ ok: true });
+      expect(secondGet.bodyText).toContain("ask the person who sent it for a new link");
 
       const accepted = await call(room.baseUrl, "POST", `/j/${createdBody.invite.id}/accept`, {
         cookie: `commona_invite=${secret}`,
@@ -363,7 +366,7 @@ describe.sequential("invite links", () => {
       });
       hits.push(expiredCreate);
       const expiredId = (json(expiredCreate) as { invite: { id: string } }).invite.id;
-      const expiredGet = await call(room.baseUrl, "GET", linkPath(expiredCreate));
+      const expiredGet = await call(room.baseUrl, "GET", linkPath(expiredCreate), { accept: "text/html" });
       hits.push(expiredGet);
       const expiredSecret = inviteSecret(expiredGet);
       secrets.push(expiredSecret);
@@ -385,7 +388,7 @@ describe.sequential("invite links", () => {
       });
       hits.push(replayCreate);
       const replayId = (json(replayCreate) as { invite: { id: string } }).invite.id;
-      const replayGet = await call(room.baseUrl, "GET", linkPath(replayCreate));
+      const replayGet = await call(room.baseUrl, "GET", linkPath(replayCreate), { accept: "text/html" });
       hits.push(replayGet);
       const replaySecret = inviteSecret(replayGet);
       secrets.push(replaySecret);
@@ -407,7 +410,7 @@ describe.sequential("invite links", () => {
       });
       hits.push(revokeCreate);
       const revokeId = (json(revokeCreate) as { invite: { id: string } }).invite.id;
-      const revokeGet = await call(room.baseUrl, "GET", linkPath(revokeCreate));
+      const revokeGet = await call(room.baseUrl, "GET", linkPath(revokeCreate), { accept: "text/html" });
       hits.push(revokeGet);
       const revokeSecret = inviteSecret(revokeGet);
       secrets.push(revokeSecret);
@@ -436,7 +439,7 @@ describe.sequential("invite links", () => {
       });
       hits.push(crossCreate);
       const crossId = (json(crossCreate) as { invite: { id: string } }).invite.id;
-      const crossGet = await call(room.baseUrl, "GET", linkPath(crossCreate));
+      const crossGet = await call(room.baseUrl, "GET", linkPath(crossCreate), { accept: "text/html" });
       hits.push(crossGet);
       const crossSecret = inviteSecret(crossGet);
       secrets.push(crossSecret);

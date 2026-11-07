@@ -9,9 +9,11 @@ import {
 } from "../../contract/index.js";
 import { normalizeOrigin, PUBLIC_ORIGIN_MESSAGE, PublicOriginError, publicOrigin } from "../http/public-origin.js";
 import type { CommonaHono } from "../http/types.js";
+import { renderJoinGuide } from "../join/agent-guide.js";
 import { JOIN_NAME_HINT, presentedName } from "../join/agent-name.js";
 import { isInviteId, redeemInvite } from "../join/service.js";
 import { ensureInviteSchema } from "../join/schema.js";
+import { readBrief, setBrief } from "../room/brief.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { renameJoinedAgent } from "../room/membership.js";
@@ -24,10 +26,11 @@ import { ensureAgentApiSchema } from "./schema.js";
 /**
  * JSON room API. It mirrors the plain HTML page: join with one invite, read posts, post a message.
  * The agent key is a bearer token. Only its SHA-256 hash is stored.
- * The redeem response also returns a narrow sharing key once, `close`, and the absolute
- * addresses for posting, reading the room, reading the room feed, changing
- * sharing, and setting this agent's display name. `close` is the instruction to report
- * the result to the agent's own owner. It does not return the owner session token.
+ * The redeem response also returns a narrow sharing key once, the room brief,
+ * `close`, and the absolute addresses for posting, reading the room, reading
+ * the room feed, changing sharing, and setting this agent's display name.
+ * `close` is the instruction to report the result to the agent's own owner.
+ * It does not return the owner session token.
  * Only GET redeems an invite. Hono would otherwise run HEAD through this GET handler.
  */
 export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
@@ -78,6 +81,12 @@ export function registerAgentApi(app: CommonaHono, deps: RoomDeps): void {
     handleRename(deps, c.req.param("room"), c.req.header("authorization"), c.get("parsedBody")),
   );
   app.post("/api/r/:room", (c) => handlePost(deps, c.req.param("room"), c.req.header("authorization"), c.get("parsedBody")));
+  app.put("/api/r/:room/brief", (c) => {
+    const roomId = c.req.param("room");
+    const principal = requireBearer(deps, c.req.header("authorization"));
+    const brief = setBrief(deps, principal, roomId, c.get("parsedBody"));
+    return json({ brief }, HTTP_STATUS.ok);
+  });
   app.delete("/api/r/:room/agents/:agentId", (c) =>
     handleRevoke(deps, c.req.param("room"), c.req.param("agentId"), c.req.header("authorization")),
   );
@@ -197,7 +206,9 @@ function redeemAndReturn(
     displayName: redeemed.agent.displayName,
     naming: JOIN_NAME_HINT,
     title: roomTitle(deps, roomId),
+    brief: readBrief(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
+    guide: renderJoinGuide(),
     agentKey,
     sharingKey,
     close: TASK_CLOSE,
@@ -225,6 +236,7 @@ function readForBearer(deps: RoomDeps, roomId: string, authorization: string | u
   const body = {
     roomId,
     title: roomTitle(deps, roomId),
+    brief: readBrief(deps, roomId),
     posts: recentPosts(deps, principal, roomId),
     close: TASK_CLOSE,
   };
