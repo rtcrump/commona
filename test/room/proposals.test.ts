@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { SharingLevel, type SharingLevel as SharingLevelName } from "../../contract/index.js";
+import { guard } from "../../src/guard/index.js";
 import { saveBrief } from "../../src/room/brief.js";
 import type { RoomDeps } from "../../src/room/deps.js";
 import { agentCookieName } from "../../src/room-page/routes.js";
@@ -56,7 +57,9 @@ describe("propose, agree, and room status", () => {
     expect(JSON.parse(plain.body)).toMatchObject({ outcome: "accepted", post: { text: note } });
 
     const read = await call(room.baseUrl, "GET", `/api/r/${room.roomId}`, { token: a1 });
-    expect(JSON.parse(read.body)).toMatchObject({ posts: expect.arrayContaining([{ text: note }]) });
+    expect(JSON.parse(read.body)).toMatchObject({
+      posts: expect.arrayContaining([expect.objectContaining({ text: note })]),
+    });
   });
 
   it("returns done with the agreed time and place once every member agrees", async () => {
@@ -454,7 +457,7 @@ function agents(room: JoinHarness): { a1: string; a2: string } {
 }
 
 function setBrief(room: JoinHarness, deadline: string): void {
-  saveBrief({ db: room.db } as RoomDeps, room.roomId, {
+  saveBrief({ db: room.db, guard } as RoomDeps, room.roomId, {
     task: "Agree a pretend lunch",
     endCondition: "Everyone agrees one time and place",
     deadline,
