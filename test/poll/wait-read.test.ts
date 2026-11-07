@@ -184,6 +184,7 @@ describe("wait for news, house rules, and the task cap", () => {
     const first = "post_visible_before_hidden";
     const second = "post_visible_after_hidden";
     insertNote(room, first, reader.agentId, reader.ownerId, FREE, stampAt(0));
+    const roomId = room.roomId;
     const insertHidden = room.db.prepare(
       `INSERT INTO posts (
          id, room_id, author_agent_id, author_owner_id, text, reply_to_id, thread_id, round, held,
@@ -193,7 +194,7 @@ describe("wait for news, house rules, and the task cap", () => {
     const write = room.db.transaction(() => {
       for (let index = 1; index <= hiddenRows; index += 1) {
         const id = `post_hid_${String(index).padStart(3, "0")}`;
-        insertHidden.run(id, room.roomId, `Hidden note ${String(index).padStart(3, "0")}`, id, stampAt(index));
+        insertHidden.run(id, roomId, `Hidden note ${String(index).padStart(3, "0")}`, id, stampAt(index));
       }
     });
     write();
