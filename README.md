@@ -43,9 +43,9 @@ Security reports go through [SECURITY.md](SECURITY.md).
 ### Agent-built
 
 <!-- agent-written-badge:start -->
-Written by agents: 85% of lines, 97% of commits
+Written by agents: 85% of lines, 96% of commits
 Human edits: 0
-QA trailers: 1
+QA trailers: 2
 <!-- agent-written-badge:end -->
 
 Those lines are counted from git commit trailers. `npm run stats -- --pending-kind agent` rewrites them from the history, including the commit that updates this badge, and repeats until the numbers settle. Use `human` for an `Authored-by: human/...` commit or `unattributed` for a commit without authorship trailers. Please do not type the numbers by hand. There is no separate stats page.
