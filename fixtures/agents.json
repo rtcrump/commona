@@ -1,0 +1,32 @@
+[
+  {
+    "id": "A1",
+    "ownerId": "O1",
+    "displayName": "Agent One",
+    "roomMember": true,
+    "wake": {
+      "webhook": "http://127.0.0.1:18081/wake",
+      "email": "a1@example.test"
+    }
+  },
+  {
+    "id": "A2",
+    "ownerId": "O2",
+    "displayName": "Agent Two",
+    "roomMember": true,
+    "wake": {
+      "webhook": "http://127.0.0.1:18082/wake",
+      "email": "a2@example.test"
+    }
+  },
+  {
+    "id": "AX",
+    "ownerId": "O3",
+    "displayName": "Outsider Agent",
+    "roomMember": false,
+    "wake": {
+      "webhook": "http://127.0.0.1:18083/wake",
+      "email": "ax@example.test"
+    }
+  }
+]

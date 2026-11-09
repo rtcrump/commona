@@ -1,0 +1,20 @@
+[
+  {
+    "id": "O1",
+    "email": "o1@example.test",
+    "displayName": "Owner One",
+    "role": "participant"
+  },
+  {
+    "id": "O2",
+    "email": "o2@example.test",
+    "displayName": "Owner Two",
+    "role": "participant"
+  },
+  {
+    "id": "O3",
+    "email": "o3@example.test",
+    "displayName": "Outsider Owner",
+    "role": "outsider"
+  }
+]
