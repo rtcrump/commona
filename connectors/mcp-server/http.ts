@@ -166,6 +166,18 @@ async function handle(
   const existingId = sessionId(request);
   let session = existingId ? ctx.sessions.get(existingId) : undefined;
   if (method === "initialize") {
+    // A guest session may skip the bearer only while it stays on its handoff.
+    // An initialize with no handoff has to present the bearer, and it must
+    // keep that handoff. It must not be replaced by ctx.config, the host identity.
+    if (!handoffPresent && existingId && session?.viaHandoff === true) {
+      if (ctx.bearer !== undefined && !bearerMatches(request, ctx.bearer)) {
+        json(response, 401, { error: "unauthorized" });
+        return;
+      }
+      const result = await session.server.handle(message);
+      json(response, 200, result, { "mcp-session-id": existingId });
+      return;
+    }
     let sessionConfig = ctx.config;
     const viaHandoff = handoffPresent;
     if (handoffPresent && handoff) {
@@ -218,12 +230,19 @@ async function handoffIsReal(
     config: ConnectorConfig;
     fetchImpl?: typeof fetch;
     adopted: Map<string, AdoptedLink>;
+    adopting?: Map<string, Promise<AdoptedLink>>;
+    store?: LinkStore;
   },
   handoff: string,
   roomId: string,
 ): Promise<boolean> {
   if (!handoff || !roomId || !ctx.config.baseUrl) return false;
-  if (ctx.adopted.has(adoptionKey(handoff, roomId))) return true;
+  if (ctx.adopted.has(adoptionKey(handoff, roomId))) {
+    const still = await boundHandoff(ctx, handoff, roomId);
+    if (still === "yes") return true;
+    if (still === "no") dropCachedHandoff(ctx, handoff, roomId);
+    return false;
+  }
   try {
     const response = await (ctx.fetchImpl ?? fetch)(`${ctx.config.baseUrl}/connect/handoff`, {
       method: "POST",
@@ -234,6 +253,29 @@ async function handoffIsReal(
   } catch {
     return false;
   }
+}
+
+/** Forget a handoff the room server refused, including the credential it was holding. */
+function dropCachedHandoff(
+  ctx: {
+    adopted: Map<string, AdoptedLink>;
+    adopting?: Map<string, Promise<AdoptedLink>>;
+    store?: LinkStore;
+  },
+  handoff: string,
+  roomId: string,
+): void {
+  const key = adoptionKey(handoff, roomId);
+  const link = ctx.adopted.get(key);
+  if (link) {
+    link.stop();
+    link.config.agentToken = undefined;
+    link.config.agentId = undefined;
+    link.config.roomId = undefined;
+    ctx.adopted.delete(key);
+  }
+  ctx.adopting?.delete(key);
+  ctx.store?.forget(handoff, roomId);
 }
 
 function adoptionKey(handoff: string, roomId: string): string {
@@ -258,7 +300,14 @@ async function adoptedLink(
 ): Promise<AdoptedLink> {
   const key = adoptionKey(handoff, roomId);
   const cached = ctx.adopted.get(key);
-  if (cached) return cached;
+  if (cached) {
+    const still = await boundHandoff(ctx, handoff, roomId);
+    if (still === "no") {
+      dropCachedHandoff(ctx, handoff, roomId);
+      throw new Error("connector link is dead");
+    }
+    return cached;
+  }
   const pending = ctx.adopting.get(key);
   if (pending) return pending;
   const flight = (async () => {
