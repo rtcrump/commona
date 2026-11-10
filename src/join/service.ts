@@ -16,6 +16,7 @@ import {
 import { clearRoomReissueBlock } from "../agent-api/keys.js";
 import { NEW_AGENT_NAME, NEW_OWNER_NAME, openAccount, newSecret } from "../onboarding/account.js";
 import type { RoomDeps } from "../room/deps.js";
+import { grantHostMessages } from "../room/host-grant.js";
 import { RoomHttpError } from "../room/http.js";
 import { grantDefaultRoomPosts } from "../sharing/room-default-share.js";
 import { requireDisplayName } from "./agent-name.js";
@@ -327,6 +328,8 @@ export function redeemInvite(
       sessionToken: account.sessionToken,
     };
     if (options.defaultRoomPosts) grantDefaultRoomPosts(deps, row.room_id, account.ownerId, inviteId);
+    // The guided join used to apply this after redeem. Every redeem, including the API join, applies it here.
+    grantHostMessages(deps, row.room_id, account.ownerId);
     return "ok" as const;
   });
   const outcome = write.immediate();
