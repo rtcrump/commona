@@ -1,0 +1,30 @@
+# Public demo Worker. This file does not deploy.
+# The hostname and the account id stay placeholders until the owner approves them.
+# This Worker does not bind the private directory.
+name = "commona-demo"
+main = "src/demo/worker.ts"
+compatibility_date = "2026-08-22"
+compatibility_flags = ["nodejs_compat"]
+account_id = "00000000000000000000000000000000"
+workers_dev = false
+preview_urls = false
+
+[vars]
+COMMONA_PUBLIC_ORIGIN = "https://example.invalid"
+
+[[routes]]
+pattern = "example.invalid"
+custom_domain = true
+
+[assets]
+directory = "./web/demo"
+binding = "ASSETS"
+run_worker_first = true
+html_handling = "auto-trailing-slash"
+not_found_handling = "none"
+
+# src/demo/worker.ts imports the stylesheet and the replay script as text.
+[[rules]]
+type = "Text"
+globs = ["**/*.txt", "**/*.css"]
+fallthrough = true

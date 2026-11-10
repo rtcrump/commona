@@ -1,0 +1,5 @@
+export { AuditForbiddenError, createAuditLog, recordChainTip, refusedLogRead } from "./log.js";
+export type { LogReadRefusalReason } from "./log.js";
+export { principalFromToken, registerLogRoute } from "./route.js";
+export type { LogRouteDeps } from "./route.js";
+export { audit } from "../runtime.js";
