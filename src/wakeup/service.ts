@@ -245,7 +245,6 @@ export function createWakeService(options: WakeServiceOptions): WakeService {
     if (!row) throw new ContractError("wake not found");
     if (row.state !== WakeState.Pending) return snapshot(row);
 
-    const event = wireWakeEvent(parseEvent(row.payloadJson));
     const address = loadAddress(db, row.recipientAgentId);
     // The recipient agent's secret signs the webhook. It is not written to the log or the audit row.
     const signingSecret = signingSecretFor(db, "agent", row.recipientAgentId);
@@ -257,6 +256,7 @@ export function createWakeService(options: WakeServiceOptions): WakeService {
         assertWakeWebhookUrl(address.webhook, { allowInsecureLocalhost });
         while (attempts < WAKE_ATTEMPT_LIMIT) {
           const attempt = attempts + 1;
+          const event = eventForAttempt(db, row);
           const result = await postWakeWebhook({
             url: address.webhook,
             event,
@@ -323,7 +323,7 @@ export function createWakeService(options: WakeServiceOptions): WakeService {
     const emailDetail = baseDetail(row, lastWebhook ? webhookDetail(lastWebhook, attempts) : {});
     try {
       if (!isMailbox(address.email)) throw new Error("recipient email is invalid");
-      const email = buildWakeEmail(event, address.email);
+      const email = buildWakeEmail(eventForAttempt(db, row), address.email);
       if (options.sendMail) {
         await options.sendMail(email);
       } else if (options.smtp) {
@@ -566,6 +566,47 @@ function loadItem(db: Sqlite, input: WakeEnqueueInput): LoadedItem {
     authorOwnerId: row.authorOwnerId,
     content,
   };
+}
+
+/**
+ * The event for this attempt. Sharing is read now, not from the payload
+ * stored when the wake was queued. A level that no longer allows the item
+ * sends the activity-only wake and leaves the message or file out.
+ */
+function eventForAttempt(db: Sqlite, row: WakeRow): WakeEvent {
+  const stored = parseEvent(row.payloadJson);
+  const item = loadItem(db, {
+    roomId: row.roomId,
+    authorAgentId: row.authorAgentId,
+    authorOwnerId: row.authorOwnerId,
+    itemKind: row.itemKind,
+    itemId: row.itemId,
+    round: row.round,
+  });
+  const level = sharingLevel(db, row.roomId, row.authorOwnerId, row.recipientOwnerId);
+  const disclosure = item.held
+    ? "activity_only"
+    : wakeDisclosure({
+        level,
+        itemKind: row.itemKind,
+        recipientOwnerId: row.recipientOwnerId,
+        authorOwnerId: row.authorOwnerId,
+      });
+  return buildEvent({
+    wakeId: row.id,
+    input: {
+      roomId: row.roomId,
+      authorAgentId: row.authorAgentId,
+      authorOwnerId: row.authorOwnerId,
+      itemKind: row.itemKind,
+      itemId: row.itemId,
+      round: row.round,
+    },
+    member: { agentId: row.recipientAgentId, ownerId: row.recipientOwnerId },
+    occurredAt: stored.occurredAt,
+    disclosure,
+    item,
+  });
 }
 
 function buildEvent(args: {
