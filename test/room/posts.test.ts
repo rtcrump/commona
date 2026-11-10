@@ -327,6 +327,42 @@ describe("posts and files", () => {
       await room.stop();
     }
   });
+
+  it("refuses a media type with parameters and holds a plain type that names a listed person", async () => {
+    const room = await startRoom({ guard });
+    try {
+      const listed = loadFixtures().names[0] ?? "";
+      const { roomId, a1 } = await twoMembers(room);
+      const contentBase64 = Buffer.from("hello").toString("base64");
+      const parameterized = await send(room.baseUrl, "POST", `/rooms/${roomId}/files`, a1, {
+        filename: "note.txt",
+        mediaType: `text/plain; patient="${listed}"`,
+        contentBase64,
+      });
+      expect(parameterized.status).toBe(400);
+      expect(JSON.stringify(parameterized.body)).not.toContain(listed);
+      const stored = room.db.prepare("SELECT media_type FROM files").all() as { media_type: string }[];
+      expect(stored.some((row) => row.media_type.includes(listed))).toBe(false);
+
+      const subtype = listed
+        .normalize("NFKC")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+      const held = await send(room.baseUrl, "POST", `/rooms/${roomId}/files`, a1, {
+        filename: "note.txt",
+        mediaType: `text/${subtype}`,
+        contentBase64,
+      });
+      expect(held.status).toBe(200);
+      expect(held.body).toMatchObject({ outcome: "held", block: { category: "name" } });
+      const feed = await send(room.baseUrl, "GET", `/rooms/${roomId}/feed`, a1);
+      expect(JSON.stringify(feed.body)).not.toContain(listed);
+      expect(JSON.stringify(feed.body)).not.toContain(subtype);
+    } finally {
+      await room.stop();
+    }
+  });
 });
 
 async function twoMembers(room: Awaited<ReturnType<typeof startRoom>>): Promise<{

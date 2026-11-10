@@ -181,11 +181,11 @@ export function uploadFile(
   const bytes = decodeBase64(request.contentBase64);
   const metadata = request.metadata;
   const text = decodeUtf8Text(bytes);
-  const decision = deps.guard.check({
-    kind: "file",
+  const decision = guardFile(deps, {
     fileName: request.filename,
+    mediaType: request.mediaType,
     metadata,
-    ...(text !== undefined ? { text } : {}),
+    text,
   });
   const held = decision.outcome === "block";
   const block = held ? decision.hits[0] : undefined;
@@ -578,10 +578,13 @@ interface FileRequest {
   metadata: Record<string, string>;
 }
 
+/** A type and a subtype, with no parameters and no spaces. */
+const PLAIN_MEDIA_TYPE = /^[a-z0-9]+\/[a-z0-9][a-z0-9.+-]{0,126}$/;
+
 function parseFile(body: unknown): FileRequest {
   if (!isRecord(body)) throw RoomHttpError.badRequest();
   if (typeof body.filename !== "string" || body.filename.length === 0) throw RoomHttpError.badRequest();
-  if (typeof body.mediaType !== "string" || body.mediaType.length === 0) throw RoomHttpError.badRequest();
+  if (typeof body.mediaType !== "string" || !PLAIN_MEDIA_TYPE.test(body.mediaType)) throw RoomHttpError.badRequest();
   if (typeof body.contentBase64 !== "string") throw RoomHttpError.badRequest();
   return {
     filename: body.filename,
@@ -589,6 +592,28 @@ function parseFile(body: unknown): FileRequest {
     contentBase64: body.contentBase64,
     metadata: parseMetadata(body.metadata),
   };
+}
+
+/**
+ * The declared media type is client text. It has to be a plain type/subtype,
+ * and that string still goes through the same guard as the name and metadata.
+ */
+function guardFile(
+  deps: RoomDeps,
+  input: { fileName: string; mediaType: string; metadata: Record<string, string>; text: string | undefined },
+): ReturnType<RoomDeps["guard"]["check"]> {
+  const type = deps.guard.check({
+    kind: "file",
+    metadata: { mediaType: input.mediaType },
+  });
+  const body = deps.guard.check({
+    kind: "file",
+    fileName: input.fileName,
+    metadata: input.metadata,
+    ...(input.text !== undefined ? { text: input.text } : {}),
+  });
+  if (type.outcome === "block") return type;
+  return body;
 }
 
 function parseMetadata(value: unknown): Record<string, string> {
