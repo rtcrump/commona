@@ -20,6 +20,8 @@
     "stats": "tsx scripts/agent-written.ts --write --include-workdir",
     "stats:check": "tsx scripts/agent-written.ts --check",
     "check:fake-data": "bash scripts/check-fake-data.sh",
+    "check:secrets": "bash scripts/secret-scan.sh",
+    "test:demo-browser": "node scripts/demo-browser-acceptance.mjs",
     "check:conventions": "python3 scripts/test_check_conventions.py"
   },
   "dependencies": {
