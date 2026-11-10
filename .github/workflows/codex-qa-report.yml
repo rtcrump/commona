@@ -1,0 +1,110 @@
+name: codex-qa-report
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+# Least privilege. The report is pushed to rtcrump/commona-dev with
+# COMMONA_DEV_TOKEN. This token only reads the review and the archive script.
+permissions:
+  contents: read
+  pull-requests: read
+
+# One archive at a time per pull request, so two reviews cannot pick the same round.
+concurrency:
+  group: codex-qa-report-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    # Exact login match. Copilot's login was confirmed from the review on
+    # pull request 8: copilot-pull-request-reviewer[bot]. Override with the
+    # repository variable COPILOT_REVIEWER_LOGINS, a JSON array of logins.
+    if: >-
+      github.event.review.user.login == 'chatgpt-codex-connector[bot]' ||
+      contains(fromJSON(vars.COPILOT_REVIEWER_LOGINS || '["copilot-pull-request-reviewer[bot]"]'), github.event.review.user.login)
+    runs-on: ubuntu-latest
+    env:
+      COPILOT_LOGINS: ${{ vars.COPILOT_REVIEWER_LOGINS || '["copilot-pull-request-reviewer[bot]"]' }}
+    steps:
+      - name: Check out the archive scripts
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      # Injection protection: the review body, html_url, commit_id, title,
+      # branch names, login, and every other event field are untrusted. They
+      # are passed only as environment variables. The run script does not
+      # interpolate event text, writes the body with printf '%s', and quotes
+      # every variable.
+      - name: Collect review and inline comments
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          RID: ${{ github.event.review.id }}
+          COMMIT_ID: ${{ github.event.review.commit_id }}
+          HTML_URL: ${{ github.event.review.html_url }}
+          REVIEWER: ${{ github.event.review.user.login }}
+          TITLE: ${{ github.event.pull_request.title }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BODY: ${{ github.event.review.body }}
+        run: |
+          set -euo pipefail
+          kind="$(python3 .github/scripts/reviewer_kind.py)"
+          case "${kind}" in
+            codex) status="blocking" ;;
+            copilot) status="advisory" ;;
+            *) printf '%s\n' "refusing review kind" >&2; exit 1 ;;
+          esac
+          case "${PR}" in
+            ''|*[!0-9]*) printf '%s\n' "PR number is not an integer" >&2; exit 1 ;;
+          esac
+          case "${RID}" in
+            ''|*[!0-9]*) printf '%s\n' "review id is not an integer" >&2; exit 1 ;;
+          esac
+          case "${REPO}" in
+            */*/*|'') printf '%s\n' "refusing repository" >&2; exit 1 ;;
+          esac
+          owner="${REPO%%/*}"
+          name="${REPO#*/}"
+          case "${owner}" in
+            ''|*[!A-Za-z0-9_.-]*) printf '%s\n' "refusing repository owner" >&2; exit 1 ;;
+          esac
+          case "${name}" in
+            ''|*[!A-Za-z0-9_.-]*) printf '%s\n' "refusing repository name" >&2; exit 1 ;;
+          esac
+          printf '%s' "${BODY}" > review-body.txt
+          gh api "repos/${REPO}/pulls/${PR}/reviews/${RID}/comments" --paginate \
+            --jq '.[] | "### \(.path):\(.line // .original_line)\n\(.body)\n"' > findings.txt
+          export KIND="${kind}"
+          export STATUS="${status}"
+          export BODY_FILE="review-body.txt"
+          export FINDINGS_FILE="findings.txt"
+          bash .github/scripts/write-review-report.sh
+          printf '%s\n' "${kind}" > review-kind.txt
+
+      - name: Check out commona-dev
+        uses: actions/checkout@v7
+        with:
+          repository: rtcrump/commona-dev
+          token: ${{ secrets.COMMONA_DEV_TOKEN }}
+          path: dev
+          fetch-depth: 0
+
+      - name: Commit report
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          BODY_FILE: report.md
+        run: |
+          set -euo pipefail
+          kind="$(tr -d '\n' < review-kind.txt)"
+          case "${kind}" in
+            codex|copilot) ;;
+            *) printf '%s\n' "refusing review kind" >&2; exit 1 ;;
+          esac
+          export KIND="${kind}"
+          bash .github/scripts/file-qa-report.sh

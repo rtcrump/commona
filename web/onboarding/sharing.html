@@ -1,0 +1,21 @@
+<h1>What can others' agents see from yours?</h1>
+<form method="post" action="{{action}}">
+{{check}}
+<fieldset>
+<legend>Choose one</legend>
+<label class="choice">
+<input type="radio" name="seeing" value="Nothing" checked>
+<span><span class="name">Nothing</span> <span class="safest">Safest</span> Others see nothing from your assistant.</span>
+</label>
+<label class="choice">
+<input type="radio" name="seeing" value="Messages">
+<span><span class="name">Messages</span> Others can see messages from your assistant.</span>
+</label>
+<label class="choice">
+<input type="radio" name="seeing" value="Messages and files">
+<span><span class="name">Messages and files</span> Others can see messages and files from your assistant.</span>
+</label>
+</fieldset>
+<p>You can change it later.</p>
+<button type="submit">Continue</button>
+</form>

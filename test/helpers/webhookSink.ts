@@ -6,6 +6,7 @@ export interface WebhookHit {
   headers: IncomingMessage["headers"];
   raw: string;
   json: unknown;
+  receivedAt: number;
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -17,7 +18,7 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-export async function startWebhookSink(): Promise<{
+export async function startWebhookSink(options?: { port?: number }): Promise<{
   url: string;
   port: number;
   hits: WebhookHit[];
@@ -43,6 +44,7 @@ export async function startWebhookSink(): Promise<{
           headers: req.headers,
           raw,
           json,
+          receivedAt: Date.now(),
         });
         res.statusCode = status;
         res.end();
@@ -53,8 +55,13 @@ export async function startWebhookSink(): Promise<{
       });
   });
 
-  await new Promise<void>((resolve) => {
-    server.listen(0, "127.0.0.1", () => resolve());
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    server.once("error", onError);
+    server.listen(options?.port ?? 0, "127.0.0.1", () => {
+      server.off("error", onError);
+      resolve();
+    });
   });
   const address = server.address();
   if (address === null || typeof address === "string") {

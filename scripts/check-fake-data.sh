@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Fail when the invented health number, or any fixtures/names.txt entry,
-# shows up outside fixtures/ and test/. The health number is assembled at
-# runtime so this script does not contain the literal.
+# shows up outside fixtures/, test/, and tests/. The acceptance harness
+# quotes the M1 truth set, so tests/ is allowed to contain those markers.
+# The health number is assembled at runtime so this script does not
+# contain the literal.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -24,7 +26,7 @@ scan=()
 fail=0
 for f in "${files[@]}"; do
   case "$f" in
-    fixtures/*|test/*) continue ;;
+    fixtures/*|test/*|tests/*) continue ;;
   esac
   scan+=("$f")
   lowpath="$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')"
@@ -45,13 +47,13 @@ done
 if ((${#scan[@]} > 0)); then
   if grep -n -F -H -e "$health" "${scan[@]}" > /tmp/commona-fake-health.txt; then
     cat /tmp/commona-fake-health.txt >&2
-    echo "health number leaked outside fixtures/ and test/" >&2
+    echo "health number leaked outside fixtures/, test/, and tests/" >&2
     fail=1
   fi
   for name in "${names[@]}"; do
     if grep -n -F -i -H -e "$name" "${scan[@]}" > /tmp/commona-fake-name.txt; then
       cat /tmp/commona-fake-name.txt >&2
-      echo "name list entry leaked outside fixtures/ and test/" >&2
+      echo "name list entry leaked outside fixtures/, test/, and tests/" >&2
       fail=1
     fi
   done

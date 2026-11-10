@@ -1,0 +1,56 @@
+(function () {
+  var doc = globalThis.document;
+  if (!doc || typeof doc.querySelector !== "function") return;
+  var root = doc.querySelector("[data-demo-replay]");
+  if (!root) return;
+  var motion = globalThis.matchMedia;
+  var reduce = false;
+  if (typeof motion === "function") {
+    reduce = motion.call(globalThis, "(prefers-reduced-motion: reduce)").matches === true;
+  }
+  var steps = Array.prototype.slice.call(root.querySelectorAll("[data-at]"));
+  var status = doc.querySelector("[data-demo-status]");
+  function mark(done) {
+    root.setAttribute("data-state", done ? "done" : "playing");
+    if (!status) return;
+    status.textContent = done
+      ? "The walk is agreed. Each assistant has reported to its own person."
+      : "Playing the short story.";
+  }
+  function showAll() {
+    for (var i = 0; i < steps.length; i += 1) steps[i].classList.remove("is-upcoming");
+    mark(true);
+  }
+  var started = 0;
+  var frameId = 0;
+  function frame(now) {
+    if (!started) started = now;
+    var elapsed = now - started;
+    var pending = false;
+    for (var i = 0; i < steps.length; i += 1) {
+      var step = steps[i];
+      var at = Number(step.getAttribute("data-at"));
+      var on = elapsed >= at;
+      step.classList.toggle("is-upcoming", !on);
+      if (!on) pending = true;
+    }
+    if (pending) frameId = globalThis.requestAnimationFrame(frame);
+    else mark(true);
+  }
+  function play() {
+    if (reduce || typeof globalThis.requestAnimationFrame !== "function") {
+      showAll();
+      return;
+    }
+    if (frameId && typeof globalThis.cancelAnimationFrame === "function") {
+      globalThis.cancelAnimationFrame(frameId);
+    }
+    started = 0;
+    mark(false);
+    for (var i = 0; i < steps.length; i += 1) steps[i].classList.add("is-upcoming");
+    frameId = globalThis.requestAnimationFrame(frame);
+  }
+  var button = doc.querySelector("[data-demo-play]");
+  if (button && typeof button.addEventListener === "function") button.addEventListener("click", play);
+  play();
+})();
