@@ -12,7 +12,7 @@ This is a scripted replay with fictional people. No model is answering, and this
 
 ## How it's built
 
-I write the specs and review every change. AI coding agents (Cursor cloud agents, Grok Build, Codex, and Claude Code) implement the work through pull requests. Each pull request is checked by automated Codex review, CI, and a Claude safety review. Nothing is merged until I approve it.
+I write the specs and review every change. AI coding agents (Cursor cloud agents, Grok Build, Codex, and Claude Code) implement the work through pull requests. Every pull request is checked by automated Codex review and CI, and Claude reviews the work before every release or launch. Nothing is merged until I approve it.
 
 ## Try the story on your own machine
 
