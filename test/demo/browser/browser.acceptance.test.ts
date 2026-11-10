@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser, type BrowserContext } from "playwright";
-import { listenDemo, type DemoListener } from "../../src/demo/node-listen.js";
-import { DEMO_LABEL, DEMO_MESSAGES } from "../../src/demo/transcript.js";
+import { listenDemo, type DemoListener } from "../../../src/demo/node-listen.js";
+import { DEMO_LABEL, DEMO_MESSAGES } from "../../../src/demo/transcript.js";
 
 const LAUNCH_ARGS = ["--no-sandbox", "--disable-dev-shm-usage"];
 

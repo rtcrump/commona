@@ -9,7 +9,8 @@ export default defineConfig({
     exclude: [
       "tests/acceptance/**",
       "test/worker/**",
-      "test/demo/browser.acceptance.test.ts",
+      "test/demo/browser/**",
+      "test/delivery/browser-hook-fixture-*/**",
       "node_modules/**",
       "dist/**",
     ],
