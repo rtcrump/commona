@@ -105,7 +105,7 @@ function fakeRoom(config: ConnectorConfig): RoomClient {
       };
     },
     async feed() {
-      return { items: [] };
+      return { items: [], status: "open", proposals: [] };
     },
     async post() {
       throw new Error("not used");

@@ -259,6 +259,33 @@ file_report "${dir}/conflict" 9 codex >/tmp/qa-conflict.out 2>/tmp/qa-conflict.e
 grep -F 'push conflict; retrying once' /tmp/qa-conflict.err >/dev/null || fail 'no conflict retry'
 git --git-dir="${dir}/conflict/origin.git" cat-file -e HEAD:development/qa-reports/pr-9-round-1.md || fail 'conflict push'
 git --git-dir="${dir}/conflict/origin.git" log --format='%s' | grep -F 'other report' >/dev/null || fail 'rebase dropped the other commit'
+# GitHub rejects a raced push with "cannot lock ref" instead of non-fast-forward.
+setup_pair "${dir}/lock"
+wrapper="${dir}/lock/bin"
+mkdir -p "${wrapper}"
+cat > "${wrapper}/git" <<'WRAP'
+#!/bin/bash
+if [ "$1" = "push" ]; then
+  marker="${LOCK_PUSH_MARKER:?}"
+  if [ ! -f "${marker}" ]; then
+    : > "${marker}"
+    printf '%s\n' "! [remote rejected] HEAD -> main (cannot lock ref 'refs/heads/main': is at abc but expected def)" >&2
+    printf '%s\n' "error: failed to push some refs to 'https://example.invalid/commona-dev'" >&2
+    exit 1
+  fi
+fi
+exec /usr/bin/git "$@"
+WRAP
+chmod +x "${wrapper}/git"
+printf 'body-codex\n' > "${dir}/lock/report.md"
+(
+  cd "${dir}/lock"
+  PATH="${wrapper}:${PATH}" LOCK_PUSH_MARKER="${dir}/lock/pushed" \
+    PR=11 KIND=codex BODY_FILE=report.md \
+    bash "${root}/.github/scripts/file-qa-report.sh"
+) >/tmp/qa-lock.out 2>/tmp/qa-lock.err
+grep -F 'push conflict; retrying once' /tmp/qa-lock.err >/dev/null || fail 'no ref-lock retry'
+git --git-dir="${dir}/lock/origin.git" cat-file -e HEAD:development/qa-reports/pr-11-round-1.md || fail 'ref-lock push'
 setup_pair "${dir}/auth"
 printf 'x\n' > "${dir}/auth/report.md"
 git -C "${dir}/auth/dev" remote set-url origin "${dir}/missing.git"

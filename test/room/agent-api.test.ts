@@ -56,6 +56,8 @@ describe("agent json api", () => {
       title: "Sunday lunch",
       posts: [],
       brief: null,
+      status: "open",
+      proposals: [],
       close: TASK_CLOSE,
     });
 

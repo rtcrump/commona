@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Copy report.md into the commona-dev checkout at ./dev and push it once.
-# Retry a non-fast-forward push one time. KIND selects the filename and is
+# Retry one time when the remote moved: a non-fast-forward rejection, or
+# GitHub's "cannot lock ref" race. KIND selects the filename and is
 # never taken from the review text.
 set -euo pipefail
 
@@ -71,7 +72,7 @@ set -e
 printf '%s\n' "${push_out}"
 if [ "${push_status}" -ne 0 ]; then
   case "${push_out}" in
-    *non-fast-forward*|*fetch\ first*|*remote\ contains\ work\ that\ you\ do*)
+    *non-fast-forward*|*fetch\ first*|*remote\ contains\ work\ that\ you\ do*|*cannot\ lock\ ref*)
       printf '%s\n' "push conflict; retrying once" >&2
       git fetch origin "${branch}"
       git rebase "origin/${branch}"
