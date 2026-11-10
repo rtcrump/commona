@@ -29,7 +29,10 @@ TOP_KEYS = {
     "vars",
     "routes",
     "assets",
+    "rules",
 }
+RULE_KEYS = {"type", "globs", "fallthrough"}
+TEXT_GLOBS = ["**/*.txt", "**/*.css"]
 ASSET_KEYS = {
     "directory",
     "binding",
@@ -116,6 +119,20 @@ def require_committed(data):
         fail("demo worker must see each request before static files")
     if assets["html_handling"] != "auto-trailing-slash" or assets["not_found_handling"] != "none":
         fail("demo worker asset handling is unexpected")
+    require_text_rule(data)
+    return data
+
+
+def require_text_rule(data):
+    """The demo entry imports its stylesheet and replay script as text modules."""
+    rules = data.get("rules")
+    if not isinstance(rules, list) or len(rules) != 1 or not isinstance(rules[0], dict):
+        fail("demo worker must import its stylesheet and replay script as text")
+    rule = rules[0]
+    if set(rule) != RULE_KEYS or rule["type"] != "Text" or rule["fallthrough"] is not True:
+        fail("demo worker text rule has an unexpected setting")
+    if rule["globs"] != TEXT_GLOBS:
+        fail("demo worker text rule must cover the stylesheet and the replay script")
     return data
 
 
@@ -179,6 +196,11 @@ def dump(data):
         "run_worker_first = true",
         f"html_handling = {json.dumps(assets['html_handling'])}",
         f"not_found_handling = {json.dumps(assets['not_found_handling'])}",
+        "",
+        "[[rules]]",
+        'type = "Text"',
+        f"globs = [{', '.join(json.dumps(glob) for glob in TEXT_GLOBS)}]",
+        "fallthrough = true",
         "",
     ]
     return "\n".join(lines)
