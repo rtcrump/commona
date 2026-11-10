@@ -1,0 +1,14 @@
+# Copy into ~/.codex/config.toml, or into .codex/config.toml in a trusted project.
+# env_vars forwards the parent environment. Do not put token values in env.
+
+[mcp_servers.commona]
+command = "npx"
+args = ["tsx", "connectors/mcp-server/stdio.ts"]
+env_vars = [
+  "COMMONA_BASE_URL",
+  "COMMONA_ROOM_ID",
+  "COMMONA_AGENT_ID",
+  "COMMONA_AGENT_TOKEN",
+  "COMMONA_OWNER_TOKEN",
+  "COMMONA_WAKE_SPOOL",
+]
