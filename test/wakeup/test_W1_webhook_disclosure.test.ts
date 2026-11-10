@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AuditAction,
   AuditResult,
+  WAKE_RETRY_DELAYS_MS,
   WAKE_EVENT_TYPE,
   WAKE_HEADER_EVENT,
   WAKE_HEADER_ROOM_ID,
@@ -20,6 +21,7 @@ import {
   setSharing,
   setupRoom,
   stopRoom,
+  useService,
 } from "./room.js";
 
 describe("W1 webhook disclosure", () => {
@@ -110,6 +112,41 @@ describe("W1 webhook disclosure", () => {
       expect(shown[0]?.content).toMatchObject({ kind: "message", text: MESSAGE_TEXT });
       await room.service.deliver(shown[0]?.wakeId ?? "");
       expect(hitsFor(room.webhook.hits, "A2")[0]?.json).toEqual(shown[0]);
+    } finally {
+      await stopRoom(room);
+    }
+  });
+
+  it("drops message content on the retry after sharing is set to none", async () => {
+    const room = await setupRoom();
+    try {
+      insertMessage(room.db);
+      setSharing(room.db, "O1", "O2", "messages");
+      room.webhook.setStatus(500);
+      const service = useService(room, {
+        sleep: async (ms) => {
+          room.sleeps.push(ms);
+          setSharing(room.db, "O1", "O2", "none");
+          room.webhook.setStatus(204);
+        },
+      });
+      const queued = service.enqueue(enqueueInput())[0];
+      expect(queued?.content).toMatchObject({ kind: "message", text: MESSAGE_TEXT });
+      const stored = room.db.prepare("SELECT payload_json FROM wakes WHERE id = ?").get(queued?.wakeId) as {
+        payload_json: string;
+      };
+      expect(stored.payload_json).toContain(MESSAGE_TEXT);
+
+      const result = await service.deliver(queued?.wakeId ?? "");
+      expect(result).toMatchObject({ state: WakeState.WebhookSucceeded, attempts: 2 });
+      expect(room.sleeps).toEqual([WAKE_RETRY_DELAYS_MS[0]]);
+      const hits = hitsFor(room.webhook.hits, "A2");
+      expect(hits).toHaveLength(2);
+      expect(JSON.stringify(hits[0]?.json)).toContain(MESSAGE_TEXT);
+      expect(hits[1]?.json).toMatchObject({ disclosure: "activity_only", wakeId: queued?.wakeId });
+      expect(hits[1]?.json).not.toHaveProperty("content");
+      expect(JSON.stringify(hits[1]?.json)).not.toContain(MESSAGE_TEXT);
+      expect(stored.payload_json).toContain(MESSAGE_TEXT);
     } finally {
       await stopRoom(room);
     }

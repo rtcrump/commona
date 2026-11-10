@@ -117,6 +117,57 @@ describe("worker wakes", () => {
     });
   });
 
+  it("omits message content when sharing is none before the alarm retry", async () => {
+    const room = await openRoomWithSharingKey();
+    await runInDurableObject(directory(), (instance) => {
+      instance.saveAgentWebhook(room.hostAgentId, webhookUrl);
+      instance.recordWakeFetches(500);
+    });
+    await postNote(room.roomId, room.guestKey, note);
+
+    const pending = await waitForWakes(
+      room.roomId,
+      (found) => found.length === 1 && found[0]?.state === "pending" && found[0]?.attempts === 1,
+    );
+    const wakeId = pending[0]?.id ?? "";
+    const firstFetches = await runInDurableObject(directory(), (instance) => instance.wakeFetches());
+    const first = JSON.parse(firstFetches[0]?.body ?? "") as {
+      content?: { text?: string };
+      author: { ownerId: string };
+      recipient: { ownerId: string };
+    };
+    expect(first.content?.text).toBe(note);
+
+    const lowered = await SELF.fetch(`https://room.example.test/api/rooms/${room.roomId}/sharing`, {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${room.sharingKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        fromOwnerId: first.author.ownerId,
+        toOwnerId: first.recipient.ownerId,
+        level: "none",
+      }),
+    });
+    expect(lowered.status).toBe(200);
+    expect(await lowered.text()).not.toContain(note);
+
+    await runInDurableObject(directory(), (instance) => {
+      instance.setRecordedWakeStatus(200);
+      instance.setWakeDue(wakeId, Date.now());
+    });
+    expect(await runDurableObjectAlarm(directory())).toBe(true);
+    const done = await waitForWakes(room.roomId, (found) => found.some((row) => row.state === "webhook_succeeded"));
+    expect(done).toEqual([expect.objectContaining({ id: wakeId, state: "webhook_succeeded", attempts: 2 })]);
+    const fetches = await runInDurableObject(directory(), (instance) => instance.wakeFetches());
+    expect(fetches).toHaveLength(2);
+    const retry = JSON.parse(fetches[1]?.body ?? "") as { disclosure?: string; content?: unknown };
+    expect(retry.disclosure).toBe("activity_only");
+    expect(retry).not.toHaveProperty("content");
+    expect(fetches[1]?.body).not.toContain(note);
+  });
+
   it("retries a refused webhook when the durable object alarm runs", async () => {
     const room = await openRoom();
     await runInDurableObject(directory(), (instance) => {
@@ -383,6 +434,38 @@ async function deleteRoom(roomId: string, hostKey: string): Promise<void> {
   expect(deleted.status).toBe(200);
   expect(text).not.toContain(hostSecret);
   expect(text.includes(hostKey)).toBe(false);
+}
+
+async function openRoomWithSharingKey(): Promise<{
+  roomId: string;
+  hostAgentId: string;
+  guestKey: string;
+  sharingKey: string;
+}> {
+  const response = await SELF.fetch("https://room.example.test/host/room", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      [HOST_SECRET_HEADER]: hostSecret,
+    },
+    body: JSON.stringify({ title: "Sunday lunch", hostName: "Host (demo)", inviteCount: 1 }),
+  });
+  const body = await response.text();
+  expect(response.status).toBe(201);
+  const created = JSON.parse(body) as { invites?: string[]; roomId?: string; agentId?: string };
+  const link = created.invites?.[0] ?? "";
+  const secret = new URL(link).pathname.split("/")[3] ?? "";
+  const roomId = created.roomId ?? "";
+  const opened = await SELF.fetch(`https://room.example.test/api/r/${roomId}?t=${encodeURIComponent(secret)}`);
+  const openedText = await opened.text();
+  expect(opened.status).toBe(200);
+  const joined = JSON.parse(openedText) as { agentKey: string; sharingKey: string };
+  return {
+    roomId,
+    hostAgentId: created.agentId ?? "",
+    guestKey: joined.agentKey,
+    sharingKey: joined.sharingKey,
+  };
 }
 
 async function openRoom(): Promise<{
