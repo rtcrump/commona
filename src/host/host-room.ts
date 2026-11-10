@@ -169,6 +169,7 @@ export function registerHostRoute(app: Hono<AppEnv>, deps: RoomDeps): void {
     try {
       const parsed = c.get("parsedBody");
       const body = readBody(parsed);
+      assertLabelsAllowed(deps, body);
       body.brief = optionalBrief(parsed, deps.clock.now(), deps.guard);
       const origin = requireHttpsOrigin(process.env.COMMONA_PUBLIC_ORIGIN);
       const created = createHostedRoom(deps, body, origin, expected);
@@ -293,6 +294,17 @@ function readBody(body: unknown): HostRoomBody {
     hostName: requireLabel(hostName, "host display name must be a short label"),
     inviteCount: requireCount(inviteCount),
   };
+}
+
+/** The same name block a brief and a join display name go through, before any row is written. */
+function assertLabelsAllowed(deps: RoomDeps, body: HostRoomBody): void {
+  if (labelBlocked(deps, body.title) || labelBlocked(deps, body.hostName)) {
+    throw new HostInputError("Invalid request.");
+  }
+}
+
+function labelBlocked(deps: RoomDeps, label: string): boolean {
+  return deps.guard.check({ kind: "message", text: label }).outcome === "block";
 }
 
 function requireLabel(raw: string, shapeMessage: string): string {
