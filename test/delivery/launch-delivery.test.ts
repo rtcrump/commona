@@ -26,6 +26,9 @@ describe("commona-demo worker config", () => {
     expect(demo).toContain('pattern = "example.invalid"');
     expect(demo).toContain("custom_domain = true");
     expect(demo).toContain("workers_dev = false");
+    expect(demo).toContain('type = "Text"');
+    expect(demo).toContain('"**/*.css"');
+    expect(demo).toContain('"**/*.txt"');
     expect(demo).not.toContain("DIRECTORY");
     expect(demo).not.toContain("DirectoryObject");
     expect(room).toContain('name = "commona"');
@@ -51,6 +54,8 @@ describe("commona-demo worker config", () => {
       expect(rendered).toContain(`account_id = "${account}"`);
       expect(rendered).toContain('COMMONA_PUBLIC_ORIGIN = "https://demo.example.test"');
       expect(rendered).toContain('pattern = "demo.example.test"');
+      expect(rendered).toContain('type = "Text"');
+      expect(rendered).toContain('"**/*.css"');
       expect(rendered).not.toContain("DIRECTORY");
       expect(rendered).not.toContain("example.invalid");
       expect(rendered).not.toContain("00000000000000000000000000000000");

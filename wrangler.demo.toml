@@ -22,3 +22,9 @@ binding = "ASSETS"
 run_worker_first = true
 html_handling = "auto-trailing-slash"
 not_found_handling = "none"
+
+# src/demo/worker.ts imports the stylesheet and the replay script as text.
+[[rules]]
+type = "Text"
+globs = ["**/*.txt", "**/*.css"]
+fallthrough = true
