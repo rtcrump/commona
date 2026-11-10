@@ -27,4 +27,6 @@ jobs:
       # They fail until the room, wake-up, sharing, name block, and audit modules
       # exist, and that failure is reported by the harness rather than by this job.
       - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
       - run: npm run check:fake-data
