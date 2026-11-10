@@ -97,7 +97,8 @@ describe("open-join acceptance", () => {
     }
     const limited = await postJson(room.roomId, joined.agentKey, "Grok Bot: one too many");
     expect(limited.status).toBe(429);
-    expect(limited.headers.get("retry-after")).toBe("3600");
+    expect(retryAfterSeconds(limited.headers.get("retry-after"))).toBeGreaterThanOrEqual(3590);
+    expect(retryAfterSeconds(limited.headers.get("retry-after"))).toBeLessThanOrEqual(3600);
     await limited.arrayBuffer();
 
     const revoked = await SELF.fetch(`https://room.example.test/api/r/${room.roomId}/agents/${joined.agentId}`, {
@@ -355,6 +356,11 @@ function revokeRow(audit: readonly AuditRow[], revokedAgentId: string): AuditRow
     const detail = JSON.parse(row.detailJson) as { itemId?: unknown };
     return detail.itemId === revokedAgentId;
   });
+}
+
+/** Whole seconds left in the hour. The posts themselves take real time, so this is 3600 or just under. */
+function retryAfterSeconds(header: string | null): number {
+  return Number(header);
 }
 
 async function roomAudit(roomId: string): Promise<AuditRow[]> {
