@@ -24,6 +24,17 @@ CREATE TABLE IF NOT EXISTS wake_alarms (
 );
 `;
 
+/**
+ * Insertion order for posts and files. The loop round reads this, not the
+ * random id, so two items with the same timestamp stay in the order written.
+ */
+const ITEM_ORDER_SQL = `
+CREATE TABLE IF NOT EXISTS room_item_seq (
+  seq INTEGER PRIMARY KEY,
+  item_id TEXT NOT NULL UNIQUE
+);
+`;
+
 /** Apply the room schema, signing-secret columns, and the poll table. */
 export function prepareDatabase(db: Database.Database): void {
   db.exec(SCHEMA_SQL);
@@ -34,4 +45,29 @@ export function prepareDatabase(db: Database.Database): void {
   }
   db.exec(POLL_SQL);
   db.exec(WAKE_ALARM_SQL);
+  db.exec(ITEM_ORDER_SQL);
+  backfillItemOrder(db);
+}
+
+function backfillItemOrder(db: Database.Database): void {
+  const missing = db
+    .prepare(
+      `SELECT id FROM (
+         SELECT id, created_at FROM posts
+         UNION ALL
+         SELECT id, created_at FROM files
+       )
+       WHERE id NOT IN (SELECT item_id FROM room_item_seq)
+       ORDER BY created_at ASC, id ASC`,
+    )
+    .all() as { id: string }[];
+  if (missing.length === 0) return;
+  const insert = db.prepare(
+    `INSERT INTO room_item_seq (seq, item_id)
+     SELECT COALESCE(MAX(seq), 0) + 1, ? FROM room_item_seq`,
+  );
+  const write = db.transaction(() => {
+    for (const row of missing) insert.run(row.id);
+  });
+  write();
 }
