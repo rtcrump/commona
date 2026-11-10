@@ -1,34 +1,31 @@
-<p align="center">
-  <img src="brand/commona-icon.png" alt="Commona icon" width="128">
-</p>
-
 # Commona
 
-## What Commona is
+Commona is a shared workspace for people whose AI assistants need to work together, with each person deciding what to share.
 
-**Your agent can work with someone else's agent, and you decide what it is allowed to share.**
+**Live demo:** not live yet. The public hostname is still waiting for approval, so this address is only a placeholder, and the repository homepage should use that same approved address once it exists: <https://pending-public-hostname.invalid>
 
-Commona is a small HTTP server for a room with more than one owner. Each person brings an agent they already have.
+![Scripted Commona demo with fake data and no account. Two fictional assistants plan a short walk. Sharing stays closed until Nia approves messages with Sol and Sol approves messages with Nia. The walk is then agreed for Saturday at 10:00 at the east park gate.](docs/images/public-demo.png)
 
-This page is for you if you run the server or change the code.
+[![CI on main](https://github.com/rtcrump/commona/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rtcrump/commona/actions/workflows/ci.yml)
 
-## Run it locally
+This is a scripted replay with fictional people. No model is answering, and this is not a live conversation. You do not need an account. The story is the same for every visitor.
 
-**On a checkout today** you can run the tests. You cannot read a room or enter the chat in a browser.
+## How it's built
+
+I write the specs and review every change. AI coding agents (Cursor cloud agents, Grok Build, Codex, and Claude Code) implement the work through pull requests. Every pull request is checked by automated Codex review and CI, and Claude reviews the work before every release or launch. Nothing is merged until I approve it.
+
+## Try the story on your own machine
+
+You can read the same fake-data story on your computer. It does not deploy, and it does not open a private room.
 
 ```bash
 npm install
-npm test
-npm start
+npm run demo
 ```
 
-You need Node.js 22.5.0 or newer. `npm test` runs the unit tests. It does not run the 19 acceptance tests. `npm run m1` runs those, in this order: R1–R3, W1–W3, S1–S5, P1–P5, and L1–L3.
+You need Node.js 22.5.0 or newer. Open the address the command prints. The package stays private at version `0.1.0`. Nothing is published to npm.
 
-`GET /health` answers `{ "ok": true, "service": "commona" }`. A unit test checks that answer. Tests mint owner tokens in process. The members route returns an agent token the first time that agent is created. A repeat join in the same room does not return a new token. A membership test covers both.
-
-The package is private. The version is `0.0.0`. `package.json` has no `bin`. Nothing is published. `npx commona init` is the install command at launch. It is not a command you can run yet.
-
-`npm start` runs the local Worker with `wrangler dev`. It does not deploy. Deploy steps, free-plan limits, and what happens when a limit is passed are in [docs/hosting/cloudflare.md](docs/hosting/cloudflare.md).
+`npm test` runs the Node tests and the Worker tests.
 
 ## Contributing
 
@@ -38,12 +35,12 @@ Every commit needs an author trailer. The conventions check on a pull request re
 
 Please use the fake fixtures. Do not add a real name, a real contact, or a real health number.
 
-Security reports go through [SECURITY.md](SECURITY.md).
+Security reports go through [SECURITY.md](SECURITY.md). Notes for this version are in [docs/release-notes/v0.1.0.md](docs/release-notes/v0.1.0.md).
 
 ### Agent-built
 
 <!-- agent-written-badge:start -->
-Written by agents: 85% of lines, 97% of commits
+Written by agents: 86% of lines, 97% of commits
 Human edits: 0
 QA trailers: 1
 <!-- agent-written-badge:end -->
