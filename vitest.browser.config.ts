@@ -7,5 +7,7 @@ export default defineConfig({
     environment: "node",
     include: ["test/demo/browser/**/*.test.ts"],
     exclude: ["node_modules/**", "dist/**"],
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
   },
 });

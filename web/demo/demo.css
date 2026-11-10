@@ -1,0 +1,145 @@
+:root {
+  --ink: #1c1915;
+  --paper: #f4f1ea;
+  --card: #ffffff;
+  --action: #1b4332;
+  --action-ink: #ffffff;
+  --link: #0b3a82;
+  --quiet-paper: #e7f0ea;
+  --line: #d9d2c5;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  max-width: 100%;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Georgia, "Iowan Old Style", Palatino, "Palatino Linotype", serif;
+  font-size: 1.125rem;
+  line-height: 1.5;
+}
+
+.skip {
+  background: var(--action);
+  color: var(--action-ink);
+  left: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  position: absolute;
+  top: -5rem;
+}
+
+.skip:focus-visible {
+  top: 0.5rem;
+}
+
+main {
+  margin: 0 auto;
+  max-width: 60rem;
+  padding: 1.25rem 1rem 3rem;
+}
+
+.banner {
+  background: var(--quiet-paper);
+  border: 2px solid var(--action);
+  color: var(--ink);
+  font-family: "Segoe UI", sans-serif;
+  font-size: 1rem;
+  margin: 0 0 1.25rem;
+  padding: 0.75rem 1rem;
+}
+
+h1 {
+  font-size: 2rem;
+  line-height: 1.25;
+  margin: 0 0 0.75rem;
+}
+
+h2 {
+  font-size: 1.5rem;
+  line-height: 1.3;
+  margin: 2rem 0 0.75rem;
+}
+
+h3, h4 {
+  font-size: 1.2rem;
+  line-height: 1.35;
+  margin: 0 0 0.5rem;
+}
+
+h4 { font-size: 1.05rem; margin-top: 1rem; }
+
+p { margin: 0 0 0.75rem; }
+
+a { color: var(--link); }
+a:visited { color: var(--link); }
+
+.lead { font-size: 1.25rem; }
+
+button,
+.skip:focus-visible {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+button {
+  background: var(--action);
+  border: 0;
+  color: var(--action-ink);
+  font: 1rem "Segoe UI", sans-serif;
+  padding: 0.5rem 1rem;
+}
+
+:focus-visible {
+  outline: 3px solid var(--link);
+  outline-offset: 2px;
+}
+
+.replay-stage,
+.story-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.replay-step,
+.story-step {
+  background: var(--card);
+  border: 1px solid var(--line);
+  overflow-wrap: anywhere;
+  padding: 1rem;
+}
+
+.replay-step.is-upcoming {
+  display: none;
+}
+
+.replay-step[data-tone="approval"],
+.story-step[data-tone="approval"] {
+  background: var(--quiet-paper);
+  border-color: var(--action);
+}
+
+.replay-step[data-tone="report"],
+.story-step[data-tone="report"] {
+  border-color: var(--action);
+}
+
+@media (min-width: 48rem) {
+  .story-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .story-step[data-owner="both"] {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .replay-step.is-upcoming {
+    display: block;
+  }
+}
