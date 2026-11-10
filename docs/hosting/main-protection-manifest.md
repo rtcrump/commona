@@ -6,7 +6,7 @@ This page records the main-branch settings the owner still has to apply. Nothing
 
 Merges to main go through a pull request. The pull request must pass the GitHub Actions check `required-test` from `.github/workflows/ci.yml`.
 
-That job installs dependencies, then runs lint, typecheck, the Node tests, the Worker tests, the fake-data check, demo browser acceptance, and a redacted secret scan. Demo browser acceptance runs `test/demo/browser` when that directory contains tests. Until those tests are in the revision, the step says so and does not fail the job. The secret scan reads commits reachable from the revision under test. It redacts values and does not scan other branches.
+That job installs dependencies, then runs lint, typecheck, the Node tests, the Worker tests, the fake-data check, demo browser acceptance, and a redacted secret scan. Demo browser acceptance runs `test/demo/browser` through `vitest.browser.config.ts` when that directory contains tests. The Node suite does not include that directory. Until those tests are in the revision, the step says so and does not fail the job. The secret scan reads commits reachable from the revision under test. It redacts values and does not scan other branches.
 
 The conventions workflow keeps its own job. Do not treat a check named `check` as this test job. On the first green run, copy the check name GitHub shows if the UI prefixes the workflow, and require that exact name. Do not remove other required checks.
 

@@ -30,8 +30,9 @@ jobs:
       # tests/acceptance. Those 19 tests are `npm run m1`.
       - run: npm test
       - run: npm run check:fake-data
-      # Browser acceptance lives with the public demo. Until that directory
-      # exists, the script reports the skip and exits 0. When tests are
-      # present, a failure fails this job.
+      # Browser acceptance lives with the public demo and uses
+      # vitest.browser.config.ts. The Node config excludes that directory.
+      # Until the tests exist, the script reports the skip and exits 0.
+      # When tests are present, a failure fails this job.
       - run: npm run test:demo-browser
       - run: npm run check:secrets
