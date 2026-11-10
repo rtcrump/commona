@@ -6,25 +6,33 @@ on:
 permissions:
   contents: read
 jobs:
-  check:
+  required-test:
+    name: required-test
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       # The badge test reads git log. The default pull_request checkout is a
       # depth-1 merge commit, which the stats script skips, so the badge comes
-      # out 0%. Check out the head with its history.
-      - uses: actions/checkout@v7
+      # out 0%. Check out the head with its history. The secret scan reads
+      # that same history and no other branch.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           cache: npm
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      # `npm test` does not run tests/acceptance. Those 19 tests are `npm run m1`.
-      # They fail until the room, wake-up, sharing, name block, and audit modules
-      # exist, and that failure is reported by the harness rather than by this job.
+      # `npm test` runs the Node suite and the Worker suite. It does not run
+      # tests/acceptance. Those 19 tests are `npm run m1`.
       - run: npm test
       - run: npm run check:fake-data
+      # Browser acceptance lives with the public demo and uses
+      # vitest.browser.config.ts. The Node config excludes that directory.
+      # Until the tests exist, the script reports the skip and exits 0.
+      # When tests are present, a failure fails this job.
+      - run: npm run test:demo-browser
+      - run: npm run check:secrets
