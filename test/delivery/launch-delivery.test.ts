@@ -179,36 +179,56 @@ describe("delivery workflows", () => {
 });
 
 describe("demo browser acceptance hook", () => {
-  it("skips when the public demo suite is not in this revision", () => {
-    const result = spawnSync(process.execPath, ["scripts/demo-browser-acceptance.mjs"], { encoding: "utf8" });
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("test/demo/browser is not in this revision");
+  it("skips when the selected directory has no tests", () => {
+    const script = readFileSync("scripts/demo-browser-acceptance.mjs", "utf8");
+    expect(script).toContain('pathFromEnv("DEMO_BROWSER_DIR", "test/demo/browser")');
+    expect(script).toContain('pathFromEnv("DEMO_BROWSER_CONFIG", "vitest.browser.config.ts")');
+    expect(script).not.toContain("vitest.config.ts");
+    expect(script).not.toContain('rmSync("test/demo/browser"');
+
+    const empty = mkdtempSync(join("test/delivery", "browser-hook-fixture-"));
+    try {
+      const result = spawnSync(process.execPath, ["scripts/demo-browser-acceptance.mjs"], {
+        encoding: "utf8",
+        env: { ...process.env, DEMO_BROWSER_DIR: empty },
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`${empty} has no tests in this revision`);
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
   });
 
-  it("runs browser-directory tests with the config that includes them", () => {
+  it("runs a temporary fixture with the config that includes it", () => {
     const nodeConfig = readFileSync("vitest.config.ts", "utf8");
     const browserConfig = readFileSync("vitest.browser.config.ts", "utf8");
-    const script = readFileSync("scripts/demo-browser-acceptance.mjs", "utf8");
     expect(nodeConfig).toContain("test/demo/browser/**");
     expect(browserConfig).toContain('include: ["test/demo/browser/**/*.test.ts"]');
     expect(browserConfig).not.toMatch(/exclude:\s*\[[^\]]*test\/demo\/browser/);
-    expect(script).toContain('const config = "vitest.browser.config.ts"');
-    expect(script).not.toContain("vitest.config.ts");
 
-    const dir = "test/demo/browser/nested";
-    const file = join(dir, "hook-smoke.test.ts");
-    mkdirSync(dir, { recursive: true });
+    const fixture = mkdtempSync(join("test/delivery", "browser-hook-fixture-"));
+    const nested = join(fixture, "nested");
+    const config = join(fixture, "vitest.fixture.config.ts");
+    mkdirSync(nested, { recursive: true });
     writeFileSync(
-      file,
+      join(nested, "hook-smoke.test.ts"),
       'import { expect, it } from "vitest";\nit("runs the demo browser hook", () => { expect(1).toBe(1); });\n',
     );
+    const include = `${fixture}/**/*.test.ts`.replaceAll("\\", "/");
+    writeFileSync(
+      config,
+      `import { defineConfig } from "vitest/config";\nexport default defineConfig({ test: { environment: "node", include: ${JSON.stringify([include])}, exclude: ["node_modules/**", "dist/**"] } });\n`,
+    );
     try {
-      const result = spawnSync(process.execPath, ["scripts/demo-browser-acceptance.mjs"], { encoding: "utf8" });
+      const result = spawnSync(process.execPath, ["scripts/demo-browser-acceptance.mjs"], {
+        encoding: "utf8",
+        env: { ...process.env, DEMO_BROWSER_DIR: fixture, DEMO_BROWSER_CONFIG: config },
+      });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("1 passed");
       expect(result.stdout).not.toContain("No test files found");
     } finally {
-      rmSync("test/demo/browser", { recursive: true, force: true });
+      rmSync(fixture, { recursive: true, force: true });
     }
   });
 });

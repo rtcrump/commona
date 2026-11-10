@@ -12,6 +12,7 @@ coverage/
 .wrangler/
 .tools/
 .wrangler-demo-deploy.toml
+test/delivery/browser-hook-fixture-*/
 m1-report.md
 m1-report.json
 *.tsbuildinfo

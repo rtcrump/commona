@@ -3,13 +3,23 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import process from "node:process";
 
-const dir = "test/demo/browser";
-const config = "vitest.browser.config.ts";
-
 function finish(message, code = 0) {
   process.stdout.write(`${message}\n`);
   process.exit(code);
 }
+
+function pathFromEnv(name, fallback) {
+  const value = process.env[name];
+  if (value === undefined || value === "") return fallback;
+  if (value.startsWith("-") || value.includes("\0") || value.includes("\n") || value.includes("\r")) {
+    finish(`demo browser acceptance: refusing ${name}`, 1);
+  }
+  return value;
+}
+
+// Tests may point these at a temporary fixture. CI leaves them unset.
+const dir = pathFromEnv("DEMO_BROWSER_DIR", "test/demo/browser");
+const config = pathFromEnv("DEMO_BROWSER_CONFIG", "vitest.browser.config.ts");
 
 function hasTests(path) {
   if (!existsSync(path)) return false;
@@ -25,7 +35,7 @@ function hasTests(path) {
 }
 
 if (!hasTests(dir)) {
-  finish("demo browser acceptance: skipped, test/demo/browser is not in this revision");
+  finish(`demo browser acceptance: skipped, ${dir} has no tests in this revision`);
 }
 
 if (!existsSync(config)) {
