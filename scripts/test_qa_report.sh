@@ -183,17 +183,14 @@ print("milestone skill: ok")
 PY
 python3 - <<'PY'
 from pathlib import Path
-for line in Path(".github/workflows/claude-safety-review.yml").read_text().splitlines():
-    stripped = line.strip()
-    if stripped.startswith("#"):
-        continue
-    if "--json-schema" in line:
-        raise SystemExit("claude workflow still passes a json schema")
-text = Path(".github/workflows/claude-safety-review.yml").read_text()
-if "--max-turns 30" not in text:
-    raise SystemExit("claude review turn cap drifted")
-if "Bash(gh pr diff:*)" not in text or "Bash(gh pr view:*)" not in text:
-    raise SystemExit("claude review cannot read the pull request diff")
+workflow = Path(".github/workflows/claude-safety-review.yml")
+if workflow.exists():
+    raise SystemExit("claude-safety-review workflow should be deleted")
+for path in Path(".github/workflows").glob("*.yml"):
+    text = path.read_text()
+    if "claude-safety-review" in text or "anthropics/claude-code-action" in text:
+        raise SystemExit(f"claude action workflow still present: {path}")
+print("claude workflow removed: ok")
 PY
 unset EXECUTION_FILE
 unset RUNNER_TEMP
