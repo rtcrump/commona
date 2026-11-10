@@ -120,9 +120,6 @@ jobs:
             printf '%s\n' "Claude created a commit. Reviewers do not push code." >&2
             exit 1
           fi
-          # The review action restores this file from main. Put the pull
-          # request copy back, then still fail if anything else changed.
-          git checkout -- CLAUDE.md
           if [ -n "$(git status --porcelain)" ]; then
             git status --porcelain >&2
             printf '%s\n' "Claude changed the worktree. Reviewers do not push code." >&2
