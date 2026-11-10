@@ -108,6 +108,7 @@ export function createPost(
       block?.location ?? null,
       createdAt,
     );
+  recordItemOrder(deps, id);
   const post: Post = {
     id,
     roomId,
@@ -181,11 +182,11 @@ export function uploadFile(
   const bytes = decodeBase64(request.contentBase64);
   const metadata = request.metadata;
   const text = decodeUtf8Text(bytes);
-  const decision = deps.guard.check({
-    kind: "file",
+  const decision = guardFile(deps, {
     fileName: request.filename,
+    mediaType: request.mediaType,
     metadata,
-    ...(text !== undefined ? { text } : {}),
+    text,
   });
   const held = decision.outcome === "block";
   const block = held ? decision.hits[0] : undefined;
@@ -215,6 +216,7 @@ export function uploadFile(
       block?.location ?? null,
       createdAt,
     );
+  recordItemOrder(deps, id);
   const file: RoomFile = {
     id,
     roomId,
@@ -540,22 +542,36 @@ function parsePost(body: unknown): { text: string; replyToId: string | null } {
   return { text: body.text, replyToId: typeof reply === "string" ? reply : null };
 }
 
-/** One more than the latest accepted post or file by a different agent. The reply flag is not used. */
+/**
+ * One more than the latest accepted post or file by a different agent.
+ * Latest is insertion order, shared by posts and files. The reply flag is not used.
+ */
 function roundAfterOtherAgent(deps: RoomDeps, roomId: string, authorAgentId: string): number {
   const prior = deps.db
     .prepare(
-      `SELECT round FROM (
-         SELECT round, created_at, id FROM posts
+      `SELECT items.round AS round FROM (
+         SELECT id, round FROM posts
          WHERE room_id = ? AND held = 0 AND author_agent_id <> ?
          UNION ALL
-         SELECT round, created_at, id FROM files
+         SELECT id, round FROM files
          WHERE room_id = ? AND held = 0 AND author_agent_id <> ?
-       )
-       ORDER BY created_at DESC, id DESC
+       ) AS items
+       JOIN room_item_seq AS ord ON ord.item_id = items.id
+       ORDER BY ord.seq DESC
        LIMIT 1`,
     )
     .get(roomId, authorAgentId, roomId, authorAgentId) as { round: number } | undefined;
   return roundForPost({ authorKind: "agent", parentRound: prior?.round ?? null });
+}
+
+/** Record the write so a later exchange can find it without sorting random ids. */
+function recordItemOrder(deps: RoomDeps, itemId: string): void {
+  deps.db
+    .prepare(
+      `INSERT INTO room_item_seq (seq, item_id)
+       SELECT COALESCE(MAX(seq), 0) + 1, ? FROM room_item_seq`,
+    )
+    .run(itemId);
 }
 
 function resolveParent(
@@ -578,10 +594,13 @@ interface FileRequest {
   metadata: Record<string, string>;
 }
 
+/** A type and a subtype, with no parameters and no spaces. */
+const PLAIN_MEDIA_TYPE = /^[a-z0-9]+\/[a-z0-9][a-z0-9.+-]{0,126}$/;
+
 function parseFile(body: unknown): FileRequest {
   if (!isRecord(body)) throw RoomHttpError.badRequest();
   if (typeof body.filename !== "string" || body.filename.length === 0) throw RoomHttpError.badRequest();
-  if (typeof body.mediaType !== "string" || body.mediaType.length === 0) throw RoomHttpError.badRequest();
+  if (typeof body.mediaType !== "string" || !PLAIN_MEDIA_TYPE.test(body.mediaType)) throw RoomHttpError.badRequest();
   if (typeof body.contentBase64 !== "string") throw RoomHttpError.badRequest();
   return {
     filename: body.filename,
@@ -589,6 +608,28 @@ function parseFile(body: unknown): FileRequest {
     contentBase64: body.contentBase64,
     metadata: parseMetadata(body.metadata),
   };
+}
+
+/**
+ * The declared media type is client text. It has to be a plain type/subtype,
+ * and that string still goes through the same guard as the name and metadata.
+ */
+function guardFile(
+  deps: RoomDeps,
+  input: { fileName: string; mediaType: string; metadata: Record<string, string>; text: string | undefined },
+): ReturnType<RoomDeps["guard"]["check"]> {
+  const type = deps.guard.check({
+    kind: "file",
+    metadata: { mediaType: input.mediaType },
+  });
+  const body = deps.guard.check({
+    kind: "file",
+    fileName: input.fileName,
+    metadata: input.metadata,
+    ...(input.text !== undefined ? { text: input.text } : {}),
+  });
+  if (type.outcome === "block") return type;
+  return body;
 }
 
 function parseMetadata(value: unknown): Record<string, string> {

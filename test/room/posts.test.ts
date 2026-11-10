@@ -221,6 +221,52 @@ describe("posts and files", () => {
     }
   });
 
+  it("keeps rounds from falling when the clock does not move", async () => {
+    const clock = { now: () => new Date("2026-01-02T03:04:05.000Z") };
+    const room = await startRoom({ clock });
+    try {
+      const messages = loadFixtures().normalMessages;
+      const { roomId, a1, a2 } = await twoMembers(room);
+      const contentBase64 = Buffer.from("hello").toString("base64");
+      const rounds: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const token = i % 2 === 0 ? a1 : a2;
+        if (i % 2 === 1) {
+          const uploaded = await send(room.baseUrl, "POST", `/rooms/${roomId}/files`, token, {
+            filename: `note-${i}.txt`,
+            mediaType: "text/plain",
+            contentBase64,
+          });
+          expect(uploaded.status).toBe(201);
+        } else {
+          const posted = await send(room.baseUrl, "POST", `/rooms/${roomId}/posts`, token, {
+            text: messages[i] ?? "",
+          });
+          expect(posted.status).toBe(201);
+        }
+        const row = room.db
+          .prepare(
+            `SELECT items.round AS round FROM (
+               SELECT id, round FROM posts WHERE room_id = ?
+               UNION ALL
+               SELECT id, round FROM files WHERE room_id = ?
+             ) AS items
+             JOIN room_item_seq AS ord ON ord.item_id = items.id
+             ORDER BY ord.seq DESC
+             LIMIT 1`,
+          )
+          .get(roomId, roomId) as { round: number };
+        rounds.push(row.round);
+      }
+      expect(rounds).toEqual([1, 2, 3, 4, 5, 6]);
+      for (let i = 1; i < rounds.length; i++) expect(rounds[i]).toBeGreaterThanOrEqual(rounds[i - 1] ?? 0);
+      expect(room.wakes.calls.map((call) => call.round)).toEqual([1, 2, 3]);
+      expect(room.wakes.calls.every((call) => call.round <= 3)).toBe(true);
+    } finally {
+      await room.stop();
+    }
+  });
+
   it("stops waking when two agents trade fresh posts that are not replies", async () => {
     const room = await startRoom();
     try {
@@ -323,6 +369,42 @@ describe("posts and files", () => {
       });
       expect(binary.status).toBe(201);
       expect(binary.body).toMatchObject({ outcome: "accepted" });
+    } finally {
+      await room.stop();
+    }
+  });
+
+  it("refuses a media type with parameters and holds a plain type that names a listed person", async () => {
+    const room = await startRoom({ guard });
+    try {
+      const listed = loadFixtures().names[0] ?? "";
+      const { roomId, a1 } = await twoMembers(room);
+      const contentBase64 = Buffer.from("hello").toString("base64");
+      const parameterized = await send(room.baseUrl, "POST", `/rooms/${roomId}/files`, a1, {
+        filename: "note.txt",
+        mediaType: `text/plain; patient="${listed}"`,
+        contentBase64,
+      });
+      expect(parameterized.status).toBe(400);
+      expect(JSON.stringify(parameterized.body)).not.toContain(listed);
+      const stored = room.db.prepare("SELECT media_type FROM files").all() as { media_type: string }[];
+      expect(stored.some((row) => row.media_type.includes(listed))).toBe(false);
+
+      const subtype = listed
+        .normalize("NFKC")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+      const held = await send(room.baseUrl, "POST", `/rooms/${roomId}/files`, a1, {
+        filename: "note.txt",
+        mediaType: `text/${subtype}`,
+        contentBase64,
+      });
+      expect(held.status).toBe(200);
+      expect(held.body).toMatchObject({ outcome: "held", block: { category: "name" } });
+      const feed = await send(room.baseUrl, "GET", `/rooms/${roomId}/feed`, a1);
+      expect(JSON.stringify(feed.body)).not.toContain(listed);
+      expect(JSON.stringify(feed.body)).not.toContain(subtype);
     } finally {
       await room.stop();
     }

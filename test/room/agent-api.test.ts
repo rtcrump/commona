@@ -226,7 +226,8 @@ describe("agent json api", () => {
       form: { nonce: nonceOf(page.body), text: NOTE },
     });
     expect(limitedForm.status).toBe(429);
-    expect(limitedForm.retryAfter).toBe("3600");
+    expect(retryAfterSeconds(limitedForm.retryAfter)).toBeGreaterThanOrEqual(3590);
+    expect(retryAfterSeconds(limitedForm.retryAfter)).toBeLessThanOrEqual(3600);
     expect(limitedForm.body).toContain("Try again later.");
 
     const limited = await call(room.baseUrl, "POST", `/api/r/${room.roomId}`, {
@@ -234,7 +235,8 @@ describe("agent json api", () => {
       json: { text: NOTE },
     });
     expect(limited.status).toBe(429);
-    expect(limited.retryAfter).toBe("3600");
+    expect(retryAfterSeconds(limited.retryAfter)).toBeGreaterThanOrEqual(3590);
+    expect(retryAfterSeconds(limited.retryAfter)).toBeLessThanOrEqual(3600);
     expect(JSON.parse(limited.body)).toEqual({ error: { code: "validation", message: "Try again later." } });
     expect(hitCount(room, agent.id)).toBe(30);
     expect(postCount(room)).toBe(30);
@@ -410,6 +412,11 @@ function nonceOf(html: string): string {
 function usedAt(room: JoinHarness, inviteId: string): string | null {
   const row = room.db.prepare("SELECT used_at FROM invites WHERE id = ?").get(inviteId) as { used_at: string | null };
   return row.used_at;
+}
+
+/** Whole seconds left in the hour. The posts themselves take real time, so this is 3600 or just under. */
+function retryAfterSeconds(header: string | null): number {
+  return Number(header);
 }
 
 function hitCount(room: JoinHarness, agentId: string): number {

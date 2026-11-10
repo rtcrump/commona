@@ -175,7 +175,8 @@ describe("worker agent json api", () => {
       body: JSON.stringify({ text: note }),
     });
     expect(limited.status).toBe(429);
-    expect(limited.headers.get("retry-after")).toBe("3600");
+    expect(retryAfterSeconds(limited.headers.get("retry-after"))).toBeGreaterThanOrEqual(3590);
+    expect(retryAfterSeconds(limited.headers.get("retry-after"))).toBeLessThanOrEqual(3600);
     expect(await limited.json()).toEqual({ error: { code: "validation", message: "Try again later." } });
 
     const stub = env.DIRECTORY.get(env.DIRECTORY.idFromName("global"));
@@ -187,6 +188,11 @@ describe("worker agent json api", () => {
     expect(JSON.stringify(audit).includes(joined.agentKey)).toBe(false);
   }, 60_000);
 });
+
+/** Whole seconds left in the hour. The posts themselves take real time, so this is 3600 or just under. */
+function retryAfterSeconds(header: string | null): number {
+  return Number(header);
+}
 
 interface Joined {
   agentId: string;
