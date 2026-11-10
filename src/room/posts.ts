@@ -108,6 +108,7 @@ export function createPost(
       block?.location ?? null,
       createdAt,
     );
+  recordItemOrder(deps, id);
   const post: Post = {
     id,
     roomId,
@@ -215,6 +216,7 @@ export function uploadFile(
       block?.location ?? null,
       createdAt,
     );
+  recordItemOrder(deps, id);
   const file: RoomFile = {
     id,
     roomId,
@@ -540,22 +542,36 @@ function parsePost(body: unknown): { text: string; replyToId: string | null } {
   return { text: body.text, replyToId: typeof reply === "string" ? reply : null };
 }
 
-/** One more than the latest accepted post or file by a different agent. The reply flag is not used. */
+/**
+ * One more than the latest accepted post or file by a different agent.
+ * Latest is insertion order, shared by posts and files. The reply flag is not used.
+ */
 function roundAfterOtherAgent(deps: RoomDeps, roomId: string, authorAgentId: string): number {
   const prior = deps.db
     .prepare(
-      `SELECT round FROM (
-         SELECT round, created_at, id FROM posts
+      `SELECT items.round AS round FROM (
+         SELECT id, round FROM posts
          WHERE room_id = ? AND held = 0 AND author_agent_id <> ?
          UNION ALL
-         SELECT round, created_at, id FROM files
+         SELECT id, round FROM files
          WHERE room_id = ? AND held = 0 AND author_agent_id <> ?
-       )
-       ORDER BY created_at DESC, id DESC
+       ) AS items
+       JOIN room_item_seq AS ord ON ord.item_id = items.id
+       ORDER BY ord.seq DESC
        LIMIT 1`,
     )
     .get(roomId, authorAgentId, roomId, authorAgentId) as { round: number } | undefined;
   return roundForPost({ authorKind: "agent", parentRound: prior?.round ?? null });
+}
+
+/** Record the write so a later exchange can find it without sorting random ids. */
+function recordItemOrder(deps: RoomDeps, itemId: string): void {
+  deps.db
+    .prepare(
+      `INSERT INTO room_item_seq (seq, item_id)
+       SELECT COALESCE(MAX(seq), 0) + 1, ? FROM room_item_seq`,
+    )
+    .run(itemId);
 }
 
 function resolveParent(

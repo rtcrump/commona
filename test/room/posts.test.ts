@@ -221,6 +221,52 @@ describe("posts and files", () => {
     }
   });
 
+  it("keeps rounds from falling when the clock does not move", async () => {
+    const clock = { now: () => new Date("2026-01-02T03:04:05.000Z") };
+    const room = await startRoom({ clock });
+    try {
+      const messages = loadFixtures().normalMessages;
+      const { roomId, a1, a2 } = await twoMembers(room);
+      const contentBase64 = Buffer.from("hello").toString("base64");
+      const rounds: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const token = i % 2 === 0 ? a1 : a2;
+        if (i % 2 === 1) {
+          const uploaded = await send(room.baseUrl, "POST", `/rooms/${roomId}/files`, token, {
+            filename: `note-${i}.txt`,
+            mediaType: "text/plain",
+            contentBase64,
+          });
+          expect(uploaded.status).toBe(201);
+        } else {
+          const posted = await send(room.baseUrl, "POST", `/rooms/${roomId}/posts`, token, {
+            text: messages[i] ?? "",
+          });
+          expect(posted.status).toBe(201);
+        }
+        const row = room.db
+          .prepare(
+            `SELECT items.round AS round FROM (
+               SELECT id, round FROM posts WHERE room_id = ?
+               UNION ALL
+               SELECT id, round FROM files WHERE room_id = ?
+             ) AS items
+             JOIN room_item_seq AS ord ON ord.item_id = items.id
+             ORDER BY ord.seq DESC
+             LIMIT 1`,
+          )
+          .get(roomId, roomId) as { round: number };
+        rounds.push(row.round);
+      }
+      expect(rounds).toEqual([1, 2, 3, 4, 5, 6]);
+      for (let i = 1; i < rounds.length; i++) expect(rounds[i]).toBeGreaterThanOrEqual(rounds[i - 1] ?? 0);
+      expect(room.wakes.calls.map((call) => call.round)).toEqual([1, 2, 3]);
+      expect(room.wakes.calls.every((call) => call.round <= 3)).toBe(true);
+    } finally {
+      await room.stop();
+    }
+  });
+
   it("stops waking when two agents trade fresh posts that are not replies", async () => {
     const room = await startRoom();
     try {
