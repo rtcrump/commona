@@ -39,7 +39,11 @@ These paths are safety-core. They are the name block, sharing, the audit log, si
 
 The same list is `.github/safety-core-paths.txt`. A pull request that changes one of these paths, or that carries the `critical-core` label, is a safety-core pull request. The label alone is enough.
 
-A safety-core pull request passes only when both the Codex review and the Claude review are clean, with no P0 and no P1. A Copilot review is advisory only. It is filed and does not decide the pass.
+A safety-core pull request also needs a clean Claude Code milestone review on its final head before merge.
+
+Codex reviews a safety-core pull request. A clean review has no P0 and no P1. A Copilot review is advisory only. It is filed and does not decide the pass.
+
+The Claude Code milestone review is not an Actions check. The skill is `.claude/skills/commona-safety-review/SKILL.md`. Who runs it, when, and how the comment is recorded are in `docs/claude-milestone-review.md`. A safety-core pull request, or one with the `critical-core` label, is a milestone. The reviewer does not commit.
 
 Trafford still reads the safety-core diff line by line. Safety-related pulls still need Trafford's yes. The venture COO may merge docs, ops, and non-safety pulls under standing rules.
 

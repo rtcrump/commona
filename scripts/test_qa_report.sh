@@ -122,17 +122,75 @@ EXECUTION_FILE="${runner}/claude-execution-output.json" python3 "${body_py}" > "
 grep -F 'assistant only' "${runner}/assistant.txt" >/dev/null || fail 'assistant text missing'
 python3 - <<'PY'
 from pathlib import Path
-for line in Path(".github/workflows/claude-safety-review.yml").read_text().splitlines():
-    stripped = line.strip()
-    if stripped.startswith("#"):
+skill = Path(".claude/skills/commona-safety-review/SKILL.md").read_text()
+criteria = (
+    "Review the named pull request for safety-core defects only. "
+    "Read the diff, then read only the safety-core files that diff touches, "
+    "plus AGENTS.md, SECURITY.md, and .github/safety-core-paths.txt. "
+    "Flag P0 or P1 when a change could leak data across owners; "
+    "let a patient name, health number, or date of birth through, "
+    "apart from the known limits in SECURITY.md; "
+    "edit, delete, or truncate audit entries undetected; "
+    "bypass the loop limit; or skip join auth. "
+    "Real data in fixtures is P0. Changing acceptance test wording is P1. "
+    "Known limits and style nits are not findings. "
+    "A clean review has no P0 and no P1. "
+    "Do not commit. Do not push. Do not edit files. "
+    "Do not open a branch or a pull request. Reviewers only review. "
+    "Do not retry a tool that was denied."
+)
+if criteria not in skill:
+    raise SystemExit("skill dropped the review criteria")
+if "The reviewer still cannot commit." not in skill:
+    raise SystemExit("skill lets the reviewer commit")
+if "Fix rounds stop at 3, then escalate." not in skill:
+    raise SystemExit("skill dropped the fix-round cap")
+if "is a milestone" not in skill or "`critical-core`" not in skill:
+    raise SystemExit("skill dropped the milestone rule")
+agents = Path("AGENTS.md").read_text()
+start = agents.index("These paths are safety-core.")
+end = agents.index("The same list is `.github/safety-core-paths.txt`.")
+path_block = agents[start:end]
+if path_block not in skill:
+    raise SystemExit("skill rephrased the safety-core path list")
+for line in Path(".github/safety-core-paths.txt").read_text().splitlines():
+    if not line.strip() or line.startswith("#"):
         continue
-    if "--json-schema" in line:
-        raise SystemExit("claude workflow still passes a json schema")
-text = Path(".github/workflows/claude-safety-review.yml").read_text()
-if "--max-turns 30" not in text:
-    raise SystemExit("claude review turn cap drifted")
-if "Bash(gh pr diff:*)" not in text or "Bash(gh pr view:*)" not in text:
-    raise SystemExit("claude review cannot read the pull request diff")
+    if line not in skill:
+        raise SystemExit(f"skill missing safety-core path {line}")
+doc = Path("docs/claude-milestone-review.md").read_text()
+record = (
+    "## Claude Code milestone review\n"
+    "Head: <full commit SHA>\n"
+    "Verdict: CLEAN\n"
+)
+if record not in doc or record not in skill:
+    raise SystemExit("milestone comment form drifted")
+if "Verdict: FINDINGS" not in doc or "Verdict: FINDINGS" not in skill:
+    raise SystemExit("findings verdict missing")
+for path in (skill, doc, agents, Path("CLAUDE.md").read_text()):
+    if "clean or fail" in path:
+        raise SystemExit("old clean or fail wording is back")
+if "commona-dev" in doc:
+    raise SystemExit("milestone doc still files a commona-dev report")
+old = "passes only when both the Codex review and the Claude review are clean"
+for name in ("AGENTS.md", "CLAUDE.md"):
+    if old in Path(name).read_text():
+        raise SystemExit(f"{name} still treats Claude as a required check")
+if "Claude workflow" in Path(".github/safety-core-paths.txt").read_text():
+    raise SystemExit("path list still points at the Claude workflow")
+print("milestone skill: ok")
+PY
+python3 - <<'PY'
+from pathlib import Path
+workflow = Path(".github/workflows/claude-safety-review.yml")
+if workflow.exists():
+    raise SystemExit("claude-safety-review workflow should be deleted")
+for path in Path(".github/workflows").glob("*.yml"):
+    text = path.read_text()
+    if "claude-safety-review" in text or "anthropics/claude-code-action" in text:
+        raise SystemExit(f"claude action workflow still present: {path}")
+print("claude workflow removed: ok")
 PY
 unset EXECUTION_FILE
 unset RUNNER_TEMP
