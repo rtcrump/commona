@@ -20,6 +20,7 @@ import { auditHostRefusal, isHostRefusal, useHostSecret } from "../host/host-roo
 import { createHttpApp } from "../http/server.js";
 import type { CommonaHono } from "../http/types.js";
 import { createOwnerNotifier } from "../notices/store.js";
+import { rememberBriefPostCap as writeBriefPostCap } from "../agent-api/limit.js";
 import { feedRoomId, reserveAgentPoll } from "../poll/agent-poll.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
@@ -415,13 +416,18 @@ export class DirectoryObject extends DurableObject<CommonaEnv> {
     return { tokenHash: owner.token_hash };
   }
 
+  /** Test helper. Stores the brief's per-task post cap for one room. */
+  rememberBriefPostCap(roomId: string, postCap: number): void {
+    writeBriefPostCap(this.deps.db, roomId, postCap);
+  }
+
   /** The room brief, for a test. Null after a delete wipes the row. */
   briefRecord(roomId: string): { task: string; endCondition: string; deadline: string } | null {
     ensureBriefSchema(this.deps.db);
     const row = this.deps.db
       .prepare("SELECT task, end_condition, deadline FROM room_briefs WHERE room_id = ?")
-      .get(roomId) as { task: string; end_condition: string; deadline: string } | undefined;
-    if (!row) return null;
+      .get(roomId) as { task: string | null; end_condition: string | null; deadline: string | null } | undefined;
+    if (!row?.task || !row.end_condition || !row.deadline) return null;
     return { task: row.task, endCondition: row.end_condition, deadline: row.deadline };
   }
 

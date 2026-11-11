@@ -21,9 +21,10 @@ export const BRIEF_MAX_MS = 30 * 24 * 60 * 60 * 1000;
 export const BRIEF_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS room_briefs (
   room_id TEXT PRIMARY KEY REFERENCES rooms(id),
-  task TEXT NOT NULL,
-  end_condition TEXT NOT NULL,
-  deadline TEXT NOT NULL
+  task TEXT,
+  end_condition TEXT,
+  deadline TEXT,
+  post_cap INTEGER
 );
 `;
 
@@ -43,6 +44,10 @@ export class BriefInputError extends Error {
 export function ensureBriefSchema(db: RoomDeps["db"]): void {
   if (applied.has(db)) return;
   db.exec(BRIEF_SCHEMA_SQL);
+  const columns = db.prepare("PRAGMA table_info(room_briefs)").all() as { name: string }[];
+  if (!columns.some((column) => column.name === "post_cap")) {
+    db.exec("ALTER TABLE room_briefs ADD COLUMN post_cap INTEGER");
+  }
   applied.add(db);
 }
 
@@ -50,8 +55,9 @@ export function readBrief(deps: RoomDeps, roomId: string): RoomBrief | null {
   ensureBriefSchema(deps.db);
   const row = deps.db
     .prepare("SELECT task, end_condition, deadline FROM room_briefs WHERE room_id = ?")
-    .get(roomId) as { task: string; end_condition: string; deadline: string } | undefined;
-  if (!row) return null;
+    .get(roomId) as { task: string | null; end_condition: string | null; deadline: string | null } | undefined;
+  // A row may hold only the task cap. That is not a brief, and it is not shown.
+  if (!row?.task || !row.end_condition || !row.deadline) return null;
   const brief = { task: row.task, endCondition: row.end_condition, deadline: row.deadline };
   // A blocked name is not shown. The row is not copied into a response or a log.
   if (briefNamesBlocked(deps.guard, brief)) return null;

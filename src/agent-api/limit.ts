@@ -1,4 +1,5 @@
 import { AuditAction, AuditResult, formatTimestamp, type AuthPrincipal } from "../../contract/index.js";
+import { ensureBriefSchema } from "../room/brief.js";
 import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { ensureAgentApiSchema } from "./schema.js";
@@ -6,17 +7,29 @@ import { ensureAgentApiSchema } from "./schema.js";
 /** Posts allowed for one agent in a sliding hour. */
 export const POSTS_PER_HOUR = 30;
 
+/**
+ * Posts allowed for one agent in one room, for one task.
+ * The brief can set another number in room_briefs.post_cap. A missing brief uses this.
+ */
+export const DEFAULT_TASK_POSTS = 12;
+
 const HOUR_MS = 60 * 60 * 1000;
 
-/** Thrown when this agent has already posted 30 times in the last hour. */
+/** Thrown when this agent has already posted 30 times in the last hour, or has hit the task cap. */
 export class AgentPostLimited extends Error {
-  readonly retryAfter: number;
+  /** Seconds until the hourly window moves. Null when the task cap does not reset on a timer. */
+  readonly retryAfter: number | null;
 
-  constructor(retryAfter: number) {
-    super("Try again later.");
+  constructor(retryAfter: number | null, message = "Try again later.") {
+    super(message);
     this.name = "AgentPostLimited";
     this.retryAfter = retryAfter;
   }
+}
+
+/** Plain sentence for a task-cap refusal. The hourly refusal keeps its own sentence. */
+export function taskCapMessage(cap: number): string {
+  return `This task allows ${cap} posts in this room. That limit has been reached.`;
 }
 
 /**
@@ -30,6 +43,22 @@ export function reserveAgentPost(deps: RoomDeps, principal: AuthPrincipal, roomI
   if (!room) throw RoomHttpError.notFound();
   ensureAgentApiSchema(deps.db);
   const agentId = principal.agentId;
+  const cap = taskPostCap(deps, roomId);
+  const posted = deps.db
+    .prepare("SELECT COUNT(*) AS n FROM posts WHERE room_id = ? AND author_agent_id = ?")
+    .get(roomId, agentId) as { n: number };
+  if (Number(posted.n) >= cap) {
+    deps.audit.append({
+      ts: formatTimestamp(deps.clock.now()),
+      room: roomId,
+      agentId: principal.agentId,
+      ownerId: principal.ownerId,
+      action: AuditAction.Post,
+      result: AuditResult.Refused,
+      detail: { httpStatus: 429, itemKind: "message" },
+    });
+    throw new AgentPostLimited(null, taskCapMessage(cap));
+  }
   const nowMs = deps.clock.now().getTime();
   const cutoff = nowMs - HOUR_MS;
   const outcome = deps.db.transaction(() => {
@@ -56,4 +85,37 @@ export function reserveAgentPost(deps: RoomDeps, principal: AuthPrincipal, roomI
     detail: { httpStatus: 429, itemKind: "message" },
   });
   throw new AgentPostLimited(outcome.retryAfter);
+}
+
+/**
+ * The brief's per-task cap for this room, or {@link DEFAULT_TASK_POSTS} when the brief has not set one.
+ * Reads room_briefs.post_cap when that table and column exist. Does not create them.
+ */
+export function taskPostCap(deps: RoomDeps, roomId: string): number {
+  const table = deps.db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'room_briefs'")
+    .get() as { name: string } | undefined;
+  if (!table) return DEFAULT_TASK_POSTS;
+  const columns = deps.db.prepare("PRAGMA table_info(room_briefs)").all() as { name: string }[];
+  if (!columns.some((column) => column.name === "post_cap")) return DEFAULT_TASK_POSTS;
+  const row = deps.db.prepare("SELECT post_cap FROM room_briefs WHERE room_id = ?").get(roomId) as
+    | { post_cap: number | null }
+    | undefined;
+  const cap = Number(row?.post_cap);
+  if (!Number.isInteger(cap) || cap < 1) return DEFAULT_TASK_POSTS;
+  return cap;
+}
+
+/**
+ * Store the brief's per-task cap. Tests and the brief writer use this.
+ * Uses the room brief table. A cap can be stored before the task text exists,
+ * and saving a brief later keeps the cap.
+ */
+export function rememberBriefPostCap(db: RoomDeps["db"], roomId: string, postCap: number): void {
+  if (!Number.isInteger(postCap) || postCap < 1) throw new Error("post cap must be a positive integer");
+  ensureBriefSchema(db);
+  db.prepare(
+    `INSERT INTO room_briefs (room_id, post_cap) VALUES (?, ?)
+     ON CONFLICT(room_id) DO UPDATE SET post_cap = excluded.post_cap`,
+  ).run(roomId, postCap);
 }
