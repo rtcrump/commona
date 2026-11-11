@@ -1,0 +1,10 @@
+{
+  "places": [
+    {
+      "name": "Demo Noodle Bar",
+      "cuisine": "noodles",
+      "location": "Demo Quarter",
+      "okFor": ["no shellfish", "vegetarian"]
+    }
+  ]
+}
