@@ -41,6 +41,8 @@ export function startMcpHttp(options: {
   allowedOrigins?: string[];
   fetchImpl?: typeof fetch;
   statePath?: string;
+  /** When set, this store is used instead of opening statePath. */
+  store?: LinkStore;
 }): Promise<McpHttpServer> {
   const host = options.host ?? "127.0.0.1";
   if (!isLoopback(host) && !options.bearer) {
@@ -49,7 +51,7 @@ export function startMcpHttp(options: {
   const sessions = new Map<string, Session>();
   const adopted = new Map<string, AdoptedLink>();
   const adopting = new Map<string, Promise<AdoptedLink>>();
-  const store = options.statePath ? openLinkStore(options.statePath) : undefined;
+  const store = options.store ?? (options.statePath ? openLinkStore(options.statePath) : undefined);
   const server = createServer((request, response) => {
     void handle(request, response, {
       config: options.config,
