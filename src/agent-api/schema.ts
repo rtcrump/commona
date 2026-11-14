@@ -28,5 +28,10 @@ CREATE INDEX IF NOT EXISTS agent_post_hits_agent ON agent_post_hits (agent_id, p
 export function ensureAgentApiSchema(db: Database.Database): void {
   if (applied.has(db)) return;
   db.exec(AGENT_API_SCHEMA_SQL);
+  const columns = db.prepare("PRAGMA table_info(agent_post_hits)").all() as { name: string }[];
+  if (!columns.some((column) => column.name === "room_id")) {
+    db.exec("ALTER TABLE agent_post_hits ADD COLUMN room_id TEXT NOT NULL DEFAULT ''");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS agent_post_hits_room ON agent_post_hits (agent_id, room_id, posted_ms)");
   applied.add(db);
 }

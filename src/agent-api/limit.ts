@@ -3,12 +3,12 @@ import type { RoomDeps } from "../room/deps.js";
 import { RoomHttpError } from "../room/http.js";
 import { ensureAgentApiSchema } from "./schema.js";
 
-/** Posts allowed for one agent in a sliding hour. */
+/** Posts allowed for one agent in one room during a sliding hour. */
 export const POSTS_PER_HOUR = 30;
 
 const HOUR_MS = 60 * 60 * 1000;
 
-/** Thrown when this agent has already posted 30 times in the last hour. */
+/** Thrown when this agent has already posted 30 times in this room in the last hour. */
 export class AgentPostLimited extends Error {
   readonly retryAfter: number;
 
@@ -33,16 +33,21 @@ export function reserveAgentPost(deps: RoomDeps, principal: AuthPrincipal, roomI
   const nowMs = deps.clock.now().getTime();
   const cutoff = nowMs - HOUR_MS;
   const outcome = deps.db.transaction(() => {
+    // Expired rows are useless in every room. Drop them for this agent, then count this room only.
     deps.db.prepare("DELETE FROM agent_post_hits WHERE agent_id = ? AND posted_ms <= ?").run(agentId, cutoff);
     const rows = deps.db
-      .prepare("SELECT posted_ms FROM agent_post_hits WHERE agent_id = ? ORDER BY posted_ms ASC")
-      .all(agentId) as { posted_ms: number }[];
+      .prepare(
+        "SELECT posted_ms FROM agent_post_hits WHERE agent_id = ? AND room_id = ? ORDER BY posted_ms ASC",
+      )
+      .all(agentId, roomId) as { posted_ms: number }[];
     if (rows.length >= POSTS_PER_HOUR) {
       const oldest = Number(rows[0]?.posted_ms ?? nowMs);
       const retryAfter = Math.max(1, Math.ceil((oldest + HOUR_MS - nowMs) / 1000));
       return { limited: true as const, retryAfter };
     }
-    deps.db.prepare("INSERT INTO agent_post_hits (agent_id, posted_ms) VALUES (?, ?)").run(agentId, nowMs);
+    deps.db
+      .prepare("INSERT INTO agent_post_hits (agent_id, room_id, posted_ms) VALUES (?, ?, ?)")
+      .run(agentId, roomId, nowMs);
     return { limited: false as const };
   }).immediate();
   if (!outcome.limited) return;
