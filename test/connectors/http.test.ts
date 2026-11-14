@@ -1,7 +1,8 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { openLinkStore, type LinkStore } from "../../connectors/mcp-server/bound-link.js";
 import { loadConfig } from "../../connectors/mcp-server/config.js";
 import { startMcpHttp } from "../../connectors/mcp-server/http.js";
 
@@ -70,6 +71,8 @@ describe("mcp streamable http", () => {
       if (path.endsWith("/feed")) return jsonResponse({ posts: [] });
       return jsonResponse({ error: "missing" }, 404);
     };
+    const savedLinks = openLinkStore(statePath);
+    const failing = forgetThatThrows(savedLinks);
     const server = await startMcpHttp({
       config: {
         baseUrl: "http://room.example.test",
@@ -79,10 +82,9 @@ describe("mcp streamable http", () => {
         wakePollMs: 60_000,
       },
       bearer: "test-bearer",
-      statePath,
+      store: failing.store,
       fetchImpl,
     });
-    let locked = false;
     try {
       const link = `${server.url}?handoff=${encodeURIComponent(handoff)}&room=${encodeURIComponent(roomId)}`;
       const opened = await postJson(link, initializeBody());
@@ -92,8 +94,7 @@ describe("mcp streamable http", () => {
       expect(saved.links).toHaveLength(1);
 
       handoffLive = false;
-      chmodSync(stateDir, 0o555);
-      locked = true;
+      failing.failNext();
 
       const retired = await postJson(link, initializeBody());
       expect(retired.status).toBe(401);
@@ -102,6 +103,7 @@ describe("mcp streamable http", () => {
       expect(retired.body).not.toContain(handoff);
       const kept = JSON.parse(readFileSync(statePath, "utf8")) as { links?: unknown[] };
       expect(kept.links).toHaveLength(1);
+      expect(failing.throws).toBe(1);
 
       const stillUp = await postJson(server.url, initializeBody(), { authorization: "Bearer test-bearer" });
       expect(stillUp.status).toBe(200);
@@ -109,7 +111,6 @@ describe("mcp streamable http", () => {
       expect(stillUp.body).not.toContain(guestToken);
       expect(stillUp.body).not.toContain("host-token-fake");
     } finally {
-      if (locked) chmodSync(stateDir, 0o700);
       await server.close();
       rmSync(stateDir, { recursive: true, force: true });
     }
@@ -217,6 +218,7 @@ describe("mcp streamable http", () => {
       if (path.endsWith("/feed")) return jsonResponse({ posts: [] });
       return jsonResponse({ error: "missing" }, 404);
     };
+    const failing = forgetThatThrows(openLinkStore(statePath));
     const server = await startMcpHttp({
       config: {
         baseUrl: "http://room.example.test",
@@ -226,10 +228,9 @@ describe("mcp streamable http", () => {
         wakePollMs: 60_000,
       },
       bearer: "test-bearer",
-      statePath,
+      store: failing.store,
       fetchImpl,
     });
-    let locked = false;
     try {
       const link = `${server.url}?handoff=${encodeURIComponent(handoff)}&room=${encodeURIComponent(guestRoom)}`;
       const opened = await postJson(link, initializeBody());
@@ -245,8 +246,7 @@ describe("mcp streamable http", () => {
       expect(dropped.body).not.toContain(guestToken);
 
       handoffLive = false;
-      chmodSync(stateDir, 0o555);
-      locked = true;
+      failing.failNext();
       const retired = await postJson(link, initializeBody());
       expect(retired.status).toBe(401);
       expect(retired.body).toContain("unauthorized");
@@ -254,6 +254,7 @@ describe("mcp streamable http", () => {
       expect(retired.body).not.toContain(guestToken);
       const kept = JSON.parse(readFileSync(statePath, "utf8")) as { links?: unknown[] };
       expect(kept.links).toHaveLength(1);
+      expect(failing.throws).toBe(1);
 
       const stillUp = await postJson(server.url, initializeBody(), { authorization: "Bearer test-bearer" });
       expect(stillUp.status).toBe(200);
@@ -262,7 +263,6 @@ describe("mcp streamable http", () => {
       const hostUse = calls.filter((call) => call.authorization.includes(hostToken) || call.url.includes(hostRoom));
       expect(hostUse).toEqual([]);
     } finally {
-      if (locked) chmodSync(stateDir, 0o700);
       await server.close();
       rmSync(stateDir, { recursive: true, force: true });
     }
@@ -271,6 +271,29 @@ describe("mcp streamable http", () => {
 
 function toolBody(name: string): Record<string, unknown> {
   return { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: {} } };
+}
+
+function forgetThatThrows(inner: LinkStore): { store: LinkStore; failNext(): void; throws: number } {
+  const gate = { fail: false, throws: 0 };
+  return {
+    failNext() {
+      gate.fail = true;
+    },
+    get throws() {
+      return gate.throws;
+    },
+    store: {
+      find: (handoff, roomId) => inner.find(handoff, roomId),
+      remember: (handoff, roomId, agentId, credential) => inner.remember(handoff, roomId, agentId, credential),
+      forget(handoff, roomId) {
+        if (gate.fail) {
+          gate.throws += 1;
+          throw new Error("cleanup write failed");
+        }
+        inner.forget(handoff, roomId);
+      },
+    },
+  };
 }
 
 function initializeBody(): Record<string, unknown> {
