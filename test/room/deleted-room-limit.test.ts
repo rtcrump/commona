@@ -84,4 +84,28 @@ describe("post limit on a deleted room", () => {
     expect(hits.n).toBe(1);
     room.db.close();
   });
+
+  it("drops expired hits in other rooms when this room reserves a post", () => {
+    const room = deps();
+    const other = "room_33333333-3333-4333-8333-333333333333";
+    const stale = "room_44444444-4444-4444-8444-444444444444";
+    const now = Date.parse("2026-04-01T12:00:00.000Z");
+    const insertRoom = room.db.prepare(
+      "INSERT INTO rooms (id, created_at, created_by_owner_id) VALUES (?, ?, ?)",
+    );
+    insertRoom.run(other, "2026-04-01T12:00:00.000Z", "O1");
+    insertRoom.run(stale, "2026-04-01T12:00:00.000Z", "O1");
+    const insertHit = room.db.prepare(
+      "INSERT INTO agent_post_hits (agent_id, room_id, posted_ms) VALUES (?, ?, ?)",
+    );
+    insertHit.run("A1", stale, now - 2 * 60 * 60 * 1000);
+    insertHit.run("A1", other, now);
+    reserveAgentPost(room, { kind: "agent", ownerId: "O1", agentId: "A1" }, other);
+    const count = (id: string) =>
+      (room.db.prepare("SELECT COUNT(*) AS n FROM agent_post_hits WHERE room_id = ?").get(id) as { n: number }).n;
+    expect(count(stale)).toBe(0);
+    expect(count(other)).toBe(2);
+    expect(count(roomId)).toBe(30);
+    room.db.close();
+  });
 });

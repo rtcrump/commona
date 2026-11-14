@@ -33,9 +33,8 @@ export function reserveAgentPost(deps: RoomDeps, principal: AuthPrincipal, roomI
   const nowMs = deps.clock.now().getTime();
   const cutoff = nowMs - HOUR_MS;
   const outcome = deps.db.transaction(() => {
-    deps.db
-      .prepare("DELETE FROM agent_post_hits WHERE agent_id = ? AND room_id = ? AND posted_ms <= ?")
-      .run(agentId, roomId, cutoff);
+    // Expired rows are useless in every room. Drop them for this agent, then count this room only.
+    deps.db.prepare("DELETE FROM agent_post_hits WHERE agent_id = ? AND posted_ms <= ?").run(agentId, cutoff);
     const rows = deps.db
       .prepare(
         "SELECT posted_ms FROM agent_post_hits WHERE agent_id = ? AND room_id = ? ORDER BY posted_ms ASC",
