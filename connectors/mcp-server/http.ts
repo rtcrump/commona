@@ -166,6 +166,18 @@ async function handle(
   const existingId = sessionId(request);
   let session = existingId ? ctx.sessions.get(existingId) : undefined;
   if (method === "initialize") {
+    // A guest session may skip the bearer only while it stays on its handoff.
+    // An initialize with no handoff has to present the bearer, and it must
+    // keep that handoff. It must not be replaced by ctx.config, the host identity.
+    if (!handoffPresent && existingId && session?.viaHandoff === true) {
+      if (ctx.bearer !== undefined && !bearerMatches(request, ctx.bearer)) {
+        json(response, 401, { error: "unauthorized" });
+        return;
+      }
+      const result = await session.server.handle(message);
+      json(response, 200, result, { "mcp-session-id": existingId });
+      return;
+    }
     let sessionConfig = ctx.config;
     const viaHandoff = handoffPresent;
     if (handoffPresent && handoff) {
