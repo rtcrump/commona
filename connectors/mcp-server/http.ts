@@ -218,12 +218,19 @@ async function handoffIsReal(
     config: ConnectorConfig;
     fetchImpl?: typeof fetch;
     adopted: Map<string, AdoptedLink>;
+    adopting?: Map<string, Promise<AdoptedLink>>;
+    store?: LinkStore;
   },
   handoff: string,
   roomId: string,
 ): Promise<boolean> {
   if (!handoff || !roomId || !ctx.config.baseUrl) return false;
-  if (ctx.adopted.has(adoptionKey(handoff, roomId))) return true;
+  if (ctx.adopted.has(adoptionKey(handoff, roomId))) {
+    const still = await boundHandoff(ctx, handoff, roomId);
+    if (still === "yes") return true;
+    if (still === "no") dropCachedHandoff(ctx, handoff, roomId);
+    return false;
+  }
   try {
     const response = await (ctx.fetchImpl ?? fetch)(`${ctx.config.baseUrl}/connect/handoff`, {
       method: "POST",
@@ -233,6 +240,33 @@ async function handoffIsReal(
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+/** Forget a handoff the room server refused, including the credential it was holding. */
+function dropCachedHandoff(
+  ctx: {
+    adopted: Map<string, AdoptedLink>;
+    adopting?: Map<string, Promise<AdoptedLink>>;
+    store?: LinkStore;
+  },
+  handoff: string,
+  roomId: string,
+): void {
+  const key = adoptionKey(handoff, roomId);
+  const link = ctx.adopted.get(key);
+  if (link) {
+    link.stop();
+    link.config.agentToken = undefined;
+    link.config.agentId = undefined;
+    link.config.roomId = undefined;
+    ctx.adopted.delete(key);
+  }
+  ctx.adopting?.delete(key);
+  try {
+    ctx.store?.forget(handoff, roomId);
+  } catch {
+    // The credential is already gone from memory. A failed cleanup write must not stop the connector.
   }
 }
 
@@ -258,7 +292,14 @@ async function adoptedLink(
 ): Promise<AdoptedLink> {
   const key = adoptionKey(handoff, roomId);
   const cached = ctx.adopted.get(key);
-  if (cached) return cached;
+  if (cached) {
+    const still = await boundHandoff(ctx, handoff, roomId);
+    if (still === "no") {
+      dropCachedHandoff(ctx, handoff, roomId);
+      throw new Error("connector link is dead");
+    }
+    return cached;
+  }
   const pending = ctx.adopting.get(key);
   if (pending) return pending;
   const flight = (async () => {
