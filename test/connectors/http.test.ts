@@ -1,4 +1,8 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { openLinkStore, type LinkStore } from "../../connectors/mcp-server/bound-link.js";
 import { loadConfig } from "../../connectors/mcp-server/config.js";
 import { startMcpHttp } from "../../connectors/mcp-server/http.js";
 
@@ -46,4 +50,123 @@ describe("mcp streamable http", () => {
       await server.close();
     }
   });
+
+  it("still answers when forgetting a retired handoff cannot be saved", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "commona-mcp-"));
+    const statePath = join(stateDir, "links.json");
+    const handoff = "handoff-retired-fake";
+    const roomId = "room-guest-fake";
+    const guestToken = "guest-token-fake";
+    let handoffLive = true;
+    const fetchImpl: typeof fetch = async (input) => {
+      const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const path = new URL(raw).pathname;
+      if (path === "/connect/handoff") {
+        return jsonResponse(handoffLive ? { ok: true } : { error: "refused" }, handoffLive ? 200 : 403);
+      }
+      if (path === "/connect/claim") {
+        return jsonResponse({ credential: guestToken, agentId: "agent-guest-fake", roomId });
+      }
+      if (path === "/connect/arrive" || path === "/connect/pending") return jsonResponse({});
+      if (path.endsWith("/feed")) return jsonResponse({ posts: [] });
+      return jsonResponse({ error: "missing" }, 404);
+    };
+    const savedLinks = openLinkStore(statePath);
+    const failing = forgetThatThrows(savedLinks);
+    const server = await startMcpHttp({
+      config: {
+        baseUrl: "http://room.example.test",
+        roomId: "room-host-fake",
+        agentId: "agent-host-fake",
+        agentToken: "host-token-fake",
+        wakePollMs: 60_000,
+      },
+      bearer: "test-bearer",
+      store: failing.store,
+      fetchImpl,
+    });
+    try {
+      const link = `${server.url}?handoff=${encodeURIComponent(handoff)}&room=${encodeURIComponent(roomId)}`;
+      const opened = await postJson(link, initializeBody());
+      expect(opened.status).toBe(200);
+      expect(opened.sessionId).not.toBe("");
+      const saved = JSON.parse(readFileSync(statePath, "utf8")) as { links?: unknown[] };
+      expect(saved.links).toHaveLength(1);
+
+      handoffLive = false;
+      failing.failNext();
+
+      const retired = await postJson(link, initializeBody());
+      expect(retired.status).toBe(401);
+      expect(retired.body).toContain("unauthorized");
+      expect(retired.body).not.toContain(guestToken);
+      expect(retired.body).not.toContain(handoff);
+      const kept = JSON.parse(readFileSync(statePath, "utf8")) as { links?: unknown[] };
+      expect(kept.links).toHaveLength(1);
+      expect(failing.throws).toBe(1);
+
+      const stillUp = await postJson(server.url, initializeBody(), { authorization: "Bearer test-bearer" });
+      expect(stillUp.status).toBe(200);
+      expect(stillUp.sessionId).not.toBe("");
+      expect(stillUp.body).not.toContain(guestToken);
+      expect(stillUp.body).not.toContain("host-token-fake");
+    } finally {
+      await server.close();
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
 });
+
+function forgetThatThrows(inner: LinkStore): { store: LinkStore; failNext(): void; throws: number } {
+  const gate = { fail: false, throws: 0 };
+  return {
+    failNext() {
+      gate.fail = true;
+    },
+    get throws() {
+      return gate.throws;
+    },
+    store: {
+      find: (handoff, roomId) => inner.find(handoff, roomId),
+      remember: (handoff, roomId, agentId, credential) => inner.remember(handoff, roomId, agentId, credential),
+      forget(handoff, roomId) {
+        if (gate.fail) {
+          gate.throws += 1;
+          throw new Error("cleanup write failed");
+        }
+        inner.forget(handoff, roomId);
+      },
+    },
+  };
+}
+
+function initializeBody(): Record<string, unknown> {
+  return {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } },
+  };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+async function postJson(
+  url: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; body: string; sessionId: string }> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...headers },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(2_000),
+  });
+  return {
+    status: response.status,
+    body: await response.text(),
+    sessionId: response.headers.get("mcp-session-id") ?? "",
+  };
+}

@@ -82,6 +82,29 @@ function recordFetch(calls: string[]): typeof fetch {
   };
 }
 
+async function mcpTool(
+  url: string,
+  sessionId: string,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{ status: number; body: string }> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "mcp-session-id": sessionId,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name, arguments: args },
+    }),
+  });
+  return { status: response.status, body: await response.text() };
+}
+
 async function initializeMcp(url: string): Promise<{ status: number; body: string; sessionId: string }> {
   const response = await fetch(url, {
     method: "POST",
@@ -972,6 +995,60 @@ describe("guided connect", () => {
     expect(dump).not.toContain(credential);
     expect(dump).toContain(hashToken(secret));
     expect(dump).toContain(hashToken(newSecret));
+  });
+
+  it("drops a claimed link from this process when the owner replaces it", async () => {
+    room = await startJoinHarness();
+    stateDir = mkdtempSync(join(tmpdir(), "commona-mcp-"));
+    const statePath = join(stateDir, "links.json");
+    connector = await startMcpHttp({
+      config: { baseUrl: room.baseUrl, wakePollMs: 20 },
+      bearer: "test-bearer",
+      statePath,
+    });
+    process.env.COMMONA_CONNECT_URL = connector.url;
+
+    const person = await joinPerson(room, room.roomId, "Alex");
+    const page = await openGuided(room, person);
+    const copied = await call(room.baseUrl, "POST", `/j/${person.id}/connect/link`, {
+      cookie: jar(person, page.form),
+      json: { nonce: page.nonce },
+    });
+    const link = new URL((JSON.parse(copied.body) as { url: string }).url);
+    const secret = link.searchParams.get("handoff") ?? "";
+    const opened = await initializeMcp(link.toString());
+    expect(opened.status).toBe(200);
+    expect(opened.body).toContain("2025-06-18");
+    expect(opened.sessionId.length).toBeGreaterThan(0);
+
+    const note = "CANARY-LINK-READ";
+    const posted = await mcpTool(link.toString(), opened.sessionId, "commona_post", { text: note });
+    expect(posted.status).toBe(200);
+    expect(posted.body).toContain(note);
+    const read = await mcpTool(link.toString(), opened.sessionId, "commona_read_feed", {});
+    expect(read.status).toBe(200);
+    expect(read.body).toContain(note);
+
+    const replacedPage = await openGuided(room, person);
+    const copiedAgain = await call(room.baseUrl, "POST", `/j/${person.id}/connect/link`, {
+      cookie: jar(person, replacedPage.form),
+      json: { nonce: replacedPage.nonce },
+    });
+    const replacement = new URL((JSON.parse(copiedAgain.body) as { url: string }).url);
+    const newSecret = replacement.searchParams.get("handoff") ?? "";
+    expect(newSecret).not.toBe(secret);
+
+    const retired = await initializeMcp(link.toString());
+    expect(retired.sessionId).toBe("");
+    expect(retired.body).not.toContain("2025-06-18");
+    expect(retired.body).not.toContain(secret);
+    expect(retired.body).not.toContain(newSecret);
+    const reread = await mcpTool(link.toString(), opened.sessionId, "commona_read_feed", {});
+    expect(reread.status).toBe(200);
+    expect(reread.body).toContain('"isError":true');
+    expect(reread.body).not.toContain(note);
+    const saved = readFileSync(statePath, "utf8");
+    expect(saved).not.toContain(hashToken(secret));
   });
 
   it("saves the bound link before arrival reporting finishes", async () => {
