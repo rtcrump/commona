@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { hashToken, systemClock } from "../../contract/index.js";
-import { reserveAgentPost } from "../../src/agent-api/limit.js";
+import { hashToken } from "../../contract/index.js";
+import { AgentPostLimited, reserveAgentPost } from "../../src/agent-api/limit.js";
 import { ensureAgentApiSchema } from "../../src/agent-api/schema.js";
 import { createAuditLog } from "../../src/audit/log.js";
 import { createTokenStore } from "../../src/auth/store.js";
@@ -36,9 +36,9 @@ function deps(): RoomDeps {
   );
   ensureAgentApiSchema(db);
   const now = Date.parse("2026-04-01T12:00:00.000Z");
-  const insert = db.prepare("INSERT INTO agent_post_hits (agent_id, posted_ms) VALUES (?, ?)");
-  for (let index = 0; index < 30; index += 1) insert.run("A1", now);
-  const clock = systemClock;
+  const insert = db.prepare("INSERT INTO agent_post_hits (agent_id, room_id, posted_ms) VALUES (?, ?, ?)");
+  for (let index = 0; index < 30; index += 1) insert.run("A1", roomId, now);
+  const clock = { now: () => new Date(now) };
   return {
     db,
     clock,
@@ -64,6 +64,24 @@ describe("post limit on a deleted room", () => {
     expect((caught as RoomHttpError).status).toBe(404);
     const hits = room.db.prepare("SELECT COUNT(*) AS n FROM agent_post_hits").get() as { n: number };
     expect(hits.n).toBe(30);
+    room.db.close();
+  });
+
+  it("does not carry a full hour in one room over to another room", () => {
+    const room = deps();
+    const other = "room_33333333-3333-4333-8333-333333333333";
+    room.db.prepare("INSERT INTO rooms (id, created_at, created_by_owner_id) VALUES (?, ?, ?)").run(
+      other,
+      "2026-04-01T12:00:00.000Z",
+      "O1",
+    );
+    const principal = { kind: "agent" as const, ownerId: "O1", agentId: "A1" };
+    expect(() => reserveAgentPost(room, principal, roomId)).toThrow(AgentPostLimited);
+    expect(() => reserveAgentPost(room, principal, other)).not.toThrow();
+    const hits = room.db.prepare("SELECT COUNT(*) AS n FROM agent_post_hits WHERE room_id = ?").get(other) as {
+      n: number;
+    };
+    expect(hits.n).toBe(1);
     room.db.close();
   });
 });
